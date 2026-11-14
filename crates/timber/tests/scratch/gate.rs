@@ -108,12 +108,17 @@ impl Gate {
         }
     }
 
-    /// sluice in `dir`, as the scratch host runs it.
+    /// sluice in `dir`, as the scratch host runs it: with none of the
+    /// `HERDR_*` variables of the session running these tests, through
+    /// which sluice would tell that session's pane of the scratch landings.
     fn sluice(&self, dir: &Path, args: &[&str]) -> Output {
         let mut command = Command::new(sluice());
         for (name, _) in std::env::vars_os() {
             let name = name.to_string_lossy().to_string();
-            if name.starts_with("SLUICE_") || name.starts_with("MOON_") {
+            if name.starts_with("SLUICE_")
+                || name.starts_with("MOON_")
+                || name.starts_with("HERDR_")
+            {
                 command.env_remove(&name);
             }
         }
