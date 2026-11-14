@@ -45,18 +45,22 @@ let
 
   # sluice's own release build, for the tools layer's tests of the sluice
   # landing (crates/timber/tests/landing_sluice.rs): the version timber
-  # reads the records of. Linux takes the build's dynamic loader and
-  # libraries from nixpkgs. On a system sluice releases nothing for,
-  # sluice is not in the shell, and those tests fail at their first step
-  # naming it.
+  # reads the records of, and the release the hosts run, so the shell's
+  # sluice reads the host's ~/.config/sluice/config.toml, which the host
+  # writes for its own sluice. Its builds are Nix's: on Linux the loader
+  # and libgcc_s, on macOS libiconv, are store paths of the machine that
+  # built them, set here to this tree's, as flume's devenv.nix does. Bump
+  # the version and the three checksums from the release's assets. On a
+  # system sluice releases nothing for, sluice is not in the shell, and
+  # those tests fail at their first step naming it.
   sluice =
     let
-      version = "0.37.0";
+      version = "0.93.2";
       system = pkgs.stdenv.hostPlatform.system;
       hashes = {
-        aarch64-darwin = "bd34de2c1768c45143da4349899dab6a9e19e3dac1f8eca022f6f2fec6b60fb1";
-        aarch64-linux = "663c2e87d8bcc9027d53713e609b8813cff8258baff48ca04aed11f8abb8bdeb";
-        x86_64-linux = "d137876bea447e04f6d83527fa7bfd060ecb35856a357a48d6d8032c36cc7848";
+        aarch64-darwin = "708225703851a928f0921e8bb2f9bb7a0b8c78565558550ab829b0c23a1bd53f";
+        aarch64-linux = "f634c8c83f4ad962717f3adfe795ca6599ed98ff0a020b7e8a3fd8ff436af764";
+        x86_64-linux = "3ee2d64e09ee1cf74f7a4df61c489600b2382284a212e1497c08a618c81c0345";
       };
     in
     if hashes ? ${system} then
@@ -64,16 +68,23 @@ let
         pname = "sluice";
         inherit version;
         src = pkgs.fetchurl {
-          url = "https://github.com/agentplot/sluice/releases/download/v${version}/sluice-${system}.tar.gz";
+          url = "https://github.com/boomdrivedev/sluice/releases/download/v${version}/sluice-${system}.tar.gz";
           sha256 = hashes.${system};
         };
         sourceRoot = ".";
-        nativeBuildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.autoPatchelfHook ];
-        buildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.stdenv.cc.cc.lib ];
+        nativeBuildInputs = lib.optionals pkgs.stdenv.hostPlatform.isElf [ pkgs.autoPatchelfHook ];
+        buildInputs =
+          lib.optionals pkgs.stdenv.hostPlatform.isElf [ pkgs.stdenv.cc.cc.lib ]
+          ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
         installPhase = ''
           runHook preInstall
           install -Dm755 -t $out/bin sluice
           runHook postInstall
+        '';
+        postFixup = lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+          for lib in $(otool -L $out/bin/sluice | awk '/\/nix\/store\/.*libiconv/ { print $1 }'); do
+            install_name_tool -change "$lib" ${pkgs.libiconv}/lib/libiconv.2.dylib $out/bin/sluice
+          done
         '';
       }
     else
