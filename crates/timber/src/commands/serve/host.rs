@@ -349,17 +349,23 @@ enum Found {
 }
 
 /// One `GET /serving.json` at `address`, waiting a second for any
-/// answer: nothing where the connection is refused or reset, or reaches
-/// the asker itself; unreadable naming the address and what answered
-/// where it is not timber's document.
+/// answer: nothing where the connection is refused, reset or left
+/// unanswered, or reaches the asker itself; unreadable naming the
+/// address and what answered where it is not timber's document.
 fn ask(address: SocketAddr) -> Answer<Found> {
     let mut stream = match TcpStream::connect_timeout(&address, ASKED) {
         Ok(stream) => stream,
-        // Refused, or reset while a process is still starting to listen.
+        // Refused, or reset while a process is still starting to listen;
+        // or left unanswered for the second, which is how macOS answers a
+        // connection to a socket bound and not yet listening, as a
+        // starting process's is between its bind and its listen, where
+        // Linux refuses it. None answers there yet (114).
         Err(e)
             if matches!(
                 e.kind(),
-                io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
+                io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::TimedOut
             ) =>
         {
             return Ok(Found::Nothing)
@@ -619,11 +625,30 @@ mod tests {
     }
 
     /// A port no one listens on: below the range the system hands to
-    /// connections, so no connection is given it, and never bound to see
-    /// it free, so no git another test runs holds it.
-    fn nothing() -> SocketAddr {
-        let port = 30_000 + (std::process::id() % 2_000) as u16;
+    /// connections, so no connection is given it, apart for each test by
+    /// `k`, and never bound to see it free, so no git another test runs
+    /// holds it.
+    fn nothing(k: u16) -> SocketAddr {
+        let port = 30_000 + (std::process::id() % 1_000) as u16 * 2 + k;
         SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    /// `listener` answering each connection as the host's serving process
+    /// of process id 7 does.
+    fn serving_on(listener: TcpListener) {
+        std::thread::spawn(move || {
+            let body = r#"{"serving":"timber","revision":"r","pid":7}"#;
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut asked = [0u8; 1024];
+                let _ = stream.read(&mut asked);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
     }
 
     #[test]
@@ -665,25 +690,42 @@ mod tests {
 
     #[test]
     fn nothing_running_runs_start_once_and_answers_when_it_does() {
-        let address = nothing();
+        let address = nothing(0);
         let started = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&started);
         let found = find_or_start(address, move || {
             counted.fetch_add(1, Ordering::SeqCst);
-            let listener = TcpListener::bind(address).unwrap();
-            std::thread::spawn(move || {
-                let body = r#"{"serving":"timber","revision":"r","pid":7}"#;
-                for stream in listener.incoming() {
-                    let mut stream = stream.unwrap();
-                    let mut asked = [0u8; 1024];
-                    let _ = stream.read(&mut asked);
-                    let _ = write!(
-                        stream,
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
-                        body.len()
-                    );
-                }
-            });
+            serving_on(TcpListener::bind(address).unwrap());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(found.pid, 7);
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_socket_bound_and_not_yet_listening_is_none_answering_and_start_runs_once() {
+        use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+
+        // A starting process's socket between its bind and its listen:
+        // macOS leaves a connection to it unanswered, Linux refuses it.
+        // The start makes that socket listen, never binds the port again:
+        // a git another test spawns can hold a copy of the socket.
+        let address = nothing(1);
+        let starting = tokio::net::TcpSocket::new_v4().unwrap();
+        starting.bind(address).unwrap();
+        let started = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&started);
+        let found = find_or_start(address, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            // SAFETY: the descriptor is the socket's own, which it gives up.
+            let socket = unsafe { OwnedFd::from_raw_fd(starting.into_raw_fd()) };
+            // SAFETY: `listen` reads no memory of the caller's.
+            let listened = unsafe { libc::listen(socket.as_raw_fd(), 128) };
+            assert_eq!(listened, 0, "{}", io::Error::last_os_error());
+            let listener = TcpListener::from(socket);
+            listener.set_nonblocking(false).unwrap();
+            serving_on(listener);
             Ok(())
         })
         .unwrap();
