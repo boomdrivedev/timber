@@ -14,9 +14,7 @@ keep one entry for that version naming its component, version, tag,
 revision, branch, the index's digest and the store it was offered to,
 the store as the host's bindings name it, and, where the index names
 notes, the last release tag and the revisions of the commits its notes
-were rendered from; and nothing the store or git holds besides: no
-artifact, no claim, no notes' text and no credential (61, 64, 118, 134,
-core.20, core.21).
+were rendered from (61, 118, 134, core.20).
 
 #### Scenario: An entry after a publish
 
@@ -105,10 +103,7 @@ A rebuild SHALL write the host's record from what the store and git
 hold: for each component the policy file declares at a landed revision,
 each tag carrying its prefix that names a revision the branch landed,
 and whose name the store resolves to that component's index at that
-version, one entry, the same file a publish of it writes. Where that
-index names notes, the entry's commits SHALL be those the version rule
-derives the version from again at the tag's revision, under the policy
-file at that revision (21, 61 to 63, 134).
+version, one entry, the same file a publish of it writes (61 to 63).
 
 #### Scenario: S12, everything kept is deleted and rebuilt
 
@@ -206,3 +201,25 @@ answer SHALL stand (58, 60, 132, 134, core.19).
 
 - **WHEN** `timber status` is asked as text and with `--json` after a publish
 - **THEN** the text prints the notes indented beneath the version's line, and the JSON carries the notes beside the version in the one answer form, `answer` naming `ok` with the text
+
+### Requirement: An entry keeps nothing the store or git holds besides
+
+An entry SHALL keep nothing the store or git holds besides what it
+names: no artifact, no claim, no notes' text and no credential (61, 64,
+core.20, core.21).
+
+#### Scenario: An entry of a version with notes and claims
+
+- **WHEN** a version whose index names two artifacts, each with claims attached, and notes is published
+- **THEN** its entry holds no artifact's bytes or digest, no envelope, no notes' text and no credential
+
+### Requirement: A rebuilt entry's notes are derived again at the tag's revision
+
+Where the index of a rebuilt entry names notes, the entry's commits
+SHALL be those the version rule derives the version from again at the
+tag's revision, under the policy file at that revision (21, 63, 134).
+
+#### Scenario: A version with notes rebuilt
+
+- **WHEN** a version whose index names notes is published, and the record is deleted and rebuilt
+- **THEN** the rebuilt entry names the commits the version rule derives at the tag's revision, the same commits the publish's entry named

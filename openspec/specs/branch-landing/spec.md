@@ -61,11 +61,8 @@ landing twice, with no remote bound and with one, its scenario of
 verdicts as the landing recorded them named not applicable in both,
 since the branch records none, and its scenario of a landing read as
 last fetched not applicable with no remote, since the repository is
-then the landing itself (93, C.6). S13 SHALL play over the branch
-landing and the moon build: a revision on a branch sluice does not run
-is published with no verdict carried; verify under a policy that
-requires a verdict counts none, and under one that requires provenance
-alone counts the provenance (S13, 15, 111).
+then the landing itself (93, C.6). S13 SHALL play against it as "S13
+plays over the branch landing and the moon build" says.
 
 #### Scenario: The landing group over a branch
 
@@ -106,3 +103,16 @@ remote bound, the repository is the landing and every answer says so.
 
 - **WHEN** landed and verdicts-of are answered with no remote bound
 - **THEN** each says it was read from the landing itself
+
+### Requirement: S13 plays over the branch landing and the moon build
+
+S13 SHALL play over the branch landing and the moon build: a revision
+on a branch sluice does not run is published with no verdict carried;
+verify under a policy that requires a verdict counts none, and under
+one that requires provenance alone counts the provenance (S13, 15,
+111).
+
+#### Scenario: S13 published with no verdict
+
+- **WHEN** S13 plays over a rig binding the branch landing and the moon build, and publishes a revision of a branch no landing gate runs
+- **THEN** the version is offered with no verdict carried; verify under a policy requiring a verdict counts none, and under one requiring provenance alone counts the provenance

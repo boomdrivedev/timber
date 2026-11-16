@@ -1,7 +1,12 @@
 # environment-reports Specification
 
 ## Purpose
-TBD - created by archiving change the-clan-push-profile. Update Purpose after archive.
+What an apply says of an environment: one report claim of timber's own
+kind, signed as the host that ran a converged apply and attached beside
+the index applied, counted only through a signer the policy lets claim
+one, and an environment's newest report read from its channel's chain,
+absent or unreadable and never guessed (11, 43, 91, 116, 141, rules
+core.8, core.27, core.71).
 
 ## Requirements
 
@@ -100,13 +105,7 @@ claims of that environment that count under the policy, and of those the
 one whose apply came last by the moment each names, the later in the
 chain's order where two name one moment. The target's convergence time
 SHALL order nothing (40, rule core.50). The reports SHALL be told newest
-first, and none older than the first that counts SHALL be told. The
-gate and apply SHALL read the newest report from the chain as the ledger
-holds it and the store as it answers, with no copy, and a chain answered
-as last read SHALL make it unreadable naming the chain (rule core.45).
-Status SHALL read it across the chain its channels part read, as last
-read included, with the reports fetched into the host's copy (60, 61,
-98).
+first, and none older than the first that counts SHALL be told.
 
 #### Scenario: srv rolled back
 
@@ -145,3 +144,22 @@ as it lists every attestation (69, 80).
 
 - **WHEN** a version applied to `srv` is verified
 - **THEN** the answer lists the report claim, its signer and `srv`
+
+### Requirement: Each reader reads the newest report from the chain it reads
+
+The gate and apply SHALL read an environment's newest report from the
+chain as the ledger holds it and the store as it answers, with no copy,
+and a chain answered as last read SHALL make it unreadable naming the
+chain (rule core.45). Status SHALL read it across the chain its channels
+part read, as last read included, with the reports fetched into the
+host's copy (60, 61, 98).
+
+#### Scenario: Apply on a chain as last read
+
+- **WHEN** apply reads `srv`'s newest report while the ledger answers `srv`'s channel's chain as last read
+- **THEN** `srv`'s newest report is unreadable naming the chain, and no copy of the reports is read or written
+
+#### Scenario: Status with the reports fetched
+
+- **WHEN** status is asked while `srv`'s channel's chain moved to two indexes and the store answers the claims of both
+- **THEN** status reads `srv`'s newest report across both indexes, with their reports fetched into the host's copy

@@ -223,8 +223,7 @@ variable is unset or empty), SHALL, on a sign that finds no key file
 there, make its directory with mode 0700 where it makes it, make an
 Ed25519 key in OpenSSH's format with no passphrase, mode 0600, write its
 public half beside it as `signing.key.pub`, one line naming the signer,
-and sign with it (118, C.8). Only sign makes it. A key file that
-is there SHALL be read as any bound key is, never replaced.
+and sign with it (118, C.8).
 
 #### Scenario: The first sign
 
@@ -279,3 +278,13 @@ host's name, carrying the operating system's words where it has them.
 
 - **WHEN** `signing.key.pub` is there and holds no OpenSSH public key line naming a signer
 - **THEN** a publish answers unreadable naming `signing.key.pub`, carrying the parser's words, and nothing is signed
+
+### Requirement: Only a sign makes the given host key, and none is replaced
+
+Only a sign SHALL make the given host key. A key file that is there
+SHALL be read as any bound key is, never replaced (118, C.8, core.54).
+
+#### Scenario: A key already at the given path
+
+- **WHEN** a key file of mode 0600 is at the given path and the given host key is asked to sign
+- **THEN** it signs with that key, and neither the key nor `signing.key.pub` is written

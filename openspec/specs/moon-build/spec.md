@@ -37,9 +37,7 @@ checkout holding exactly the revision asked and nothing of any other
 checkout but moon's outputs directory, which it shares with the
 checkout the build is bound over, as every checkout on a host shares it,
 continuing past a task that fails, and replaying what moon has cached
-(74, C.3). It SHALL answer the outputs present, or refused naming every
-output whose task declared files the run left absent or whose task did
-not run. timber SHALL never run an output's command itself (15,
+(74, C.3). timber SHALL never run an output's command itself (15,
 core.10).
 
 #### Scenario: Three outputs in one asking
@@ -150,3 +148,14 @@ with no run report SHALL answer an empty list.
 
 - **WHEN** a task passes and its archive is removed from the outputs directory before left is asked
 - **THEN** left does not name its hash
+
+### Requirement: Ensure answers the outputs present, or refused naming those it could not make
+
+Ensure SHALL answer the outputs present, or refused naming every output
+whose task declared files the run left absent or whose task did not
+run (74, C.3).
+
+#### Scenario: An output whose task did not run
+
+- **WHEN** ensure is asked for two outputs, and moon's run leaves the task of one of them not run
+- **THEN** ensure is refused naming that output, and not the other

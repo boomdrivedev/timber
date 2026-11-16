@@ -1,7 +1,12 @@
 # environment-status Specification
 
 ## Purpose
-TBD - created by archiving change the-notes-between-what-an-environment-runs-and-should. Update Purpose after archive.
+What `timber status` answers of a branch's environments: each
+environment the policy declares, what it should run from its channel's
+head and what it runs from its newest counted report, its state, what it
+waits on and the versions between with their notes, with four counts of
+them, the reports fetched into the host's copy and read from it where
+the store does not answer (37, 41, 60, 98, 132, 134).
 
 ## Requirements
 

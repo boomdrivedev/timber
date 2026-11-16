@@ -1,7 +1,11 @@
 # store-ledger Specification
 
 ## Purpose
-TBD - created by archiving change the-ledger-and-promotion. Update Purpose after archive.
+The ledger seam bound to the store (C.14): each channel's chain held as
+the promotion claims attached to the indexes they move to, walked from
+the channel's name, two claims naming one predecessor refused as a fork,
+an append that attaches the claim and moves the name, and a store that
+does not answer read as last read (105, 109, 120 to 122).
 
 ## Requirements
 
@@ -12,9 +16,8 @@ attached to the indexes they move to, through the bound store's seam
 alone (C.14, core.2). Chain SHALL resolve the channel's name in the
 store, spelled with its component where the repository declares
 components (125), take the promotion claims of that channel and
-component attached to the index it names, and walk each back by the
-index it moved from and the digest of the claim it follows, answering
-the claims from the first in order (121). A channel whose name names
+component attached to the index it names, and walk them back as "Each
+claim is walked back to the first" says. A channel whose name names
 nothing SHALL be absent.
 
 #### Scenario: Three promotions and a move back
@@ -59,16 +62,12 @@ naming the head as walked after the refusal (35, 109).
 
 ### Requirement: A store that does not answer is read as last read
 
-Each chain this host reads, an empty one among them, SHALL be kept,
-with when it was read, under the repository's common git directory
-beside the record of published versions (61, 62). Where the store
-cannot be reached, chain SHALL answer the chain as kept, saying when it
-was read and carrying the store's words, an empty chain kept as an
-empty chain with that time and those words (60, as amended at
-boomdrivedev/blueprints b64d367, C.14); with nothing kept, the chain SHALL
-be unreadable with the store's words. Append SHALL be unreadable with
-the store's words. What is kept SHALL hold no credential and nothing
-the store holds that is not the chain (64).
+Where the store cannot be reached, chain SHALL answer the chain as kept,
+saying when it was read and carrying the store's words, an empty chain
+kept as an empty chain with that time and those words (60, as amended
+at boomdrivedev/blueprints b64d367, C.14); with nothing kept, the chain
+SHALL be unreadable with the store's words. Append SHALL be unreadable
+with the store's words.
 
 #### Scenario: The store gone after a read
 
@@ -84,3 +83,27 @@ the store holds that is not the chain (64).
 
 - **WHEN** the keeper's conformance group runs over the store ledger bound to an OCI layout in a temporary directory
 - **THEN** every scenario passes
+
+### Requirement: Each claim is walked back to the first
+
+Chain SHALL walk each claim back by the index it moved from and the
+digest of the claim it follows, answering the claims from the first in
+order (121).
+
+#### Scenario: Two promotions walked back
+
+- **WHEN** `stable` was promoted to 0.1.0 and then to 0.2.0
+- **THEN** the chain takes the claim on 0.2.0's index, walks back by the index it moved from and the claim it follows to the claim on 0.1.0's index, and answers 0.1.0's claim first
+
+### Requirement: Each chain read is kept beside the record
+
+Each chain this host reads, an empty one among them, SHALL be kept,
+with when it was read, under the repository's common git directory
+beside the record of published versions (61, 62). What is kept SHALL
+hold no credential and nothing the store holds that is not the chain
+(64).
+
+#### Scenario: Two chains read and kept
+
+- **WHEN** a host reads `stable`'s chain of two claims and `beta`'s, which holds none
+- **THEN** both are kept, each with when it was read, under the repository's common git directory beside the record, and what is kept holds no credential and no claim of another chain

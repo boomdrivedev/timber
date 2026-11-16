@@ -1,7 +1,12 @@
 # clan-push-target Specification
 
 ## Purpose
-TBD - created by archiving change the-clan-push-profile. Update Purpose after archive.
+The target profile bound as `clan` (B.7, C.12): one machine of a clan
+fleet switched, by the fleet's own tool and with the host's own key, to
+the one root its version's closure artifact names, checked against the
+evaluation of the version's revision and realised from substituters
+alone; and what timber applied kept in a marker on the machine, which
+current and report read (42, 45, 119, I3, rule core.73).
 
 ## Requirements
 

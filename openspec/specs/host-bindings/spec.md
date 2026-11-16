@@ -33,11 +33,9 @@ The file SHALL bind the store, the landing and the signer for the host,
 and nothing the repository's authors bind (92): `[store]` naming a
 layout by its path (C.2) or a registry by its repository (C.1);
 `[landing]` naming sluice or a plain branch,
-each with an optional remote (C.5, C.6); and `[signing]` naming either
-the host's signer and the path of its key file, in sluice's `[signing]`
-shape (C.8), or a key in a key service by its key ARN alone, `kms =
-"<key ARN>"`, whose ARN is the signer's name (C.7). A path SHALL be
-absolute or begin with `~/`.
+each with an optional remote (C.5, C.6); and `[signing]` naming the
+signer, as "`[signing]` names a host key or a key service's key" says.
+A path SHALL be absolute or begin with `~/`.
 
 #### Scenario: A layout, sluice and a host key
 
@@ -104,12 +102,8 @@ The binding SHALL take the build, the projections and the targets from
 the repository, not the host (92): moon is bound as the build, its tasks
 named per output in the policy file at the landed revision (C.3), and
 the file and image projections are bound by their ecosystem names, the
-policy file naming each output's (C.10, C.11). Every target profile built
-SHALL be bound by its profile name, each environment's `target` in the
-policy file picking among them (C.10, C.12); a target that reads the
-store SHALL read it through a store binding of its own, opened and never
-made. The policy seam SHALL be bound to the policy file at the landed
-revision (C.10).
+policy file naming each output's (C.10, C.11). The policy seam SHALL be
+bound to the policy file at the landed revision (C.10).
 
 #### Scenario: The bindings file names no build
 
@@ -202,10 +196,7 @@ names, verified by what its profile verifies it by: a host key by its
 key's public half, the file beside the key that ssh-keygen names
 `<key>.pub`, read when sync binds and never the key itself; a key in a
 key service by its key ARN, which is its name. So a host consumes what
-it published itself (118, C.10). The
-binding SHALL carry the trusted signers to sync alone, the host's own
-before those `[trust]` names; a file naming no `[signing]` and no
-`[trust]` SHALL trust no signer.
+it published itself (118, C.10).
 
 #### Scenario: The host's own signer trusted
 
@@ -267,10 +258,7 @@ The binding SHALL bind both signer profiles on every host: the one
 so a claim made by either kind of signer is told on any host whatever it
 signs with (80, 92). A host whose file names no `[signing]` SHALL bind
 the given host key first, signing as the host's name, for publish and
-promote, and both profiles verify-only for every other command. For
-status, both profiles SHALL be bound verify-only and the key service
-profile bound to reach no service, whatever `[signing]` names, since
-status reaches no signer (60).
+promote, and both profiles verify-only for every other command.
 
 #### Scenario: A host key host
 
@@ -305,11 +293,7 @@ holding the refs, the repository the command runs in holding them where
 none is named (C.13); or `store`, holding the chain in the store the
 host binds, through a binding of its own that never makes the store
 (C.14). `[ledger]` naming no profile, two, or an option its profile does
-not read SHALL be unreadable naming the table. A file that names no
-`[ledger]` SHALL bind the git ref on the remote the landing is bound
-to, written or given, or with no remote where the landing has none
-(118). A `[targets]` table, or any table naming a target, SHALL be
-unreadable naming it, since the targets are the repository's to bind.
+not read SHALL be unreadable naming the table.
 
 #### Scenario: A git ref ledger with a remote
 
@@ -348,11 +332,9 @@ binds such a host, of what status asks: the landing, sluice where the
 repository's own tree holds `.config/sluice.toml` and the plain branch
 otherwise, and the git ref ledger, each with the remote `origin` where
 the repository has one and no remote where it has none; the policy from
-the repository; the given layout as the store, opened and never made;
-and the signer profiles verify-only, reaching no service (60, 92, 118,
-C.5, C.6, C.13). A layout that is not there SHALL be bound as a store
-whose every operation answers unreadable with the opening's words. It
-SHALL write nothing to bind them.
+the repository; the given layout as the store; and the signer profiles
+verify-only, reaching no service (60, 92, 118,
+C.5, C.6, C.13).
 
 #### Scenario: A clone with no bindings file
 
@@ -377,9 +359,7 @@ environments' reports and for a store ledger and never made, and, where
 named, its `[ledger]`; it SHALL need no `[signing]`, and a file naming
 no `[ledger]` SHALL bind a ledger whose every chain is absent naming
 `[ledger]` in the file, so each channel is shown absent naming it (60,
-118). A store that cannot be opened SHALL be bound as a store whose
-every operation answers unreadable with the opening's words, so the
-channels are read and each environment is answered from its copy (61).
+118).
 
 #### Scenario: A file naming a landing and no ledger
 
@@ -400,11 +380,7 @@ publish step tells the host's own gate; or `job = "<words>"`, a job
 outside timber, woken by a store's or a forge's event, tells a gate
 elsewhere, and the words say which. The core SHALL name neither (130).
 timber SHALL run nothing for `job`, and SHALL carry its words as
-written. A `[gate]` naming no key, two keys, a key other than these, a
-`publish` that is not an empty table, or a `job` that is not a string
-with words in it SHALL be unreadable naming the file and the table, and
-SHALL leave nothing written for every command that reads the file (58,
-59, core.19).
+written.
 
 #### Scenario: The host's publish tells its own gate
 
@@ -487,12 +463,12 @@ placed.
 
 Each of `[store]`, `[landing]`, `[ledger]`, `[signing]` and `[gate]` the
 file names SHALL bind what it names, exactly as written; each it leaves
-out SHALL bind its given binding (118): the store the layout at
-`$XDG_DATA_HOME/timber/layout`, or `~/.local/share/timber/layout`
-(C.2); the ledger the git ref on the landing's remote, written or
-given, or the repository's own refs where it has none (C.13); the
-signer the given host key at `timber/host/signing.key` under the same
-data directory (C.8); the gate told by the host's own publish (130).
+out SHALL bind its given binding (118): the store the given layout
+(C.2); the ledger the git ref on the
+landing's remote, written or given, or the repository's own refs where
+it has none (C.13); the signer the given host key at
+`timber/host/signing.key` under that layout's data directory (C.8); the gate
+told by the host's own publish (130).
 
 #### Scenario: A registry and nothing else
 
@@ -707,3 +683,117 @@ core.1).
 
 - **WHEN** the file names `[credentials] dash0-dashboards`, and `timber apply` binds its targets
 - **THEN** the target family is handed that credential's path and the bindings file's path
+
+### Requirement: `[signing]` names a host key or a key service's key
+
+`[signing]` SHALL name either the host's signer and the path of its key
+file, in sluice's `[signing]` shape (C.8), or a key in a key service by
+its key ARN alone, `kms = "<key ARN>"`, whose ARN is the signer's name
+(C.7).
+
+#### Scenario: A host key's signing table
+
+- **WHEN** the file's `[signing]` names the signer `laptop` and a key path beginning `~/`
+- **THEN** publish signs as `laptop` with the key at that path under the home directory
+
+### Requirement: Every target profile is bound by its name
+
+Every target profile built SHALL be bound by its profile name, each
+environment's `target` in the policy file picking among them (C.10,
+C.12); a target that reads the store SHALL read it through a store
+binding of its own, opened and never made.
+
+#### Scenario: An environment picking its target
+
+- **WHEN** the policy file's environment `fleet` names `target.clan = { machine = "m1", closure = "system" }`
+- **THEN** an apply of `fleet` is handed to the target profile bound as `clan`
+
+### Requirement: Sync alone carries the trusted signers
+
+The binding SHALL carry the trusted signers to sync alone, the host's
+own before those `[trust]` names; a file naming no `[signing]` and no
+`[trust]` SHALL trust no signer (118).
+
+#### Scenario: Trust carried to sync alone
+
+- **WHEN** the file names `[signing]` for the signer `laptop` and `[trust.gate]`, and verify and sync are bound
+- **THEN** verify's binding carries no trusted signer, and sync's carries `laptop` and then `gate`
+
+### Requirement: Status binds both signer profiles verify-only
+
+For status, both signer profiles SHALL be bound verify-only and the key
+service profile bound to reach no service, whatever `[signing]` names,
+since status reaches no signer (60).
+
+#### Scenario: A host key host asking status
+
+- **WHEN** a host whose `[signing]` names a host key is bound for status
+- **THEN** both signer profiles are bound verify-only, and the binding names no signer
+
+### Requirement: A file with no ledger table binds the git ref on the landing's remote
+
+A file that names no `[ledger]` SHALL bind the git ref on the remote the
+landing is bound to, written or given, or with no remote where the
+landing has none (118).
+
+#### Scenario: No ledger table, the landing on upstream
+
+- **WHEN** the file names no `[ledger]`, and its `[landing]` names the remote `upstream`
+- **THEN** the ledger is the git ref on `upstream`
+
+### Requirement: The targets are not the host's file's to name
+
+A `[targets]` table, or any table naming a target, SHALL be unreadable
+naming it, since the targets are the repository's to bind (92).
+
+#### Scenario: A table naming a target profile
+
+- **WHEN** the bindings file holds a table naming the target profile `nix_cache`
+- **THEN** every command bound by the file answers unreadable naming that table
+
+### Requirement: Status's given layout is opened and never made
+
+Where the host holds no bindings file, status SHALL be bound to the
+given layout as the store, opened and never made, and a layout that is
+not there SHALL be bound as a store whose every operation answers unreadable with the
+opening's words. Status SHALL write nothing to bind the given bindings
+(60).
+
+#### Scenario: A clone with no remote and no layout
+
+- **WHEN** status is bound on a host with no bindings file and no given layout, in a clone with no remote
+- **THEN** the landing is the plain branch and the ledger the git ref, each with no remote, and no file or directory is made
+
+### Requirement: A store status cannot open answers unreadable
+
+A store status cannot open SHALL be bound as a store whose every
+operation answers unreadable with the opening's words, so the channels
+are read and each environment is answered from its copy (61).
+
+#### Scenario: Environments answered from the copy
+
+- **WHEN** status is bound by a file whose `[store]` names a layout that is not there, and the host's copy holds an environment's reports
+- **THEN** that environment is answered from the copy, and the channels are read
+
+### Requirement: A gate table timber cannot read is unreadable
+
+A `[gate]` naming no key, two keys, a key other than these, a `publish`
+that is not an empty table, or a `job` that is not a string with words
+in it SHALL be unreadable naming the file and the table, and SHALL
+leave nothing written for every command that reads the file (58, 59,
+core.19).
+
+#### Scenario: A gate table naming no key
+
+- **WHEN** `[gate]` holds no key
+- **THEN** publish and verify answer unreadable naming the file and `[gate]`, and nothing is written
+
+### Requirement: The given store is the layout in the data directory
+
+Where the file leaves out `[store]`, the store SHALL be the layout at
+`$XDG_DATA_HOME/timber/layout`, or `~/.local/share/timber/layout` (C.2).
+
+#### Scenario: No data directory set
+
+- **WHEN** `XDG_DATA_HOME` is unset and the file names no `[store]`
+- **THEN** the store is the layout at `~/.local/share/timber/layout`
