@@ -242,7 +242,8 @@ let
   # `openspec init --tools claude --profile custom`, with the user's
   # OpenSpec configuration naming the family's ten workflows, propose,
   # explore, new, continue, apply, ff, sync, archive, bulk-archive and
-  # verify. root:toolchain fails while a skill names another release.
+  # verify. root:toolchain fails while openspec is not this release; the
+  # release the skills name is their writers' to keep (ADR 0036).
   openspecVersion = "1.14.3";
   openspec = pkgs.openspec.overrideAttrs (
     finalAttrs: _: {
@@ -431,7 +432,7 @@ in
     # The Claude Code plugin's checks (plugins/claude.sh).
     claude
     # The changes and specs, and the skills and commands it writes under
-    # .claude/, which root:toolchain holds to its pin.
+    # .claude/; root:toolchain holds it to its pin.
     openspec
     # The flake's lint (nix/moon.yml).
     statix
