@@ -1,7 +1,11 @@
 # store-ledger Specification
 
 ## Purpose
-TBD - created by archiving change the-ledger-and-promotion. Update Purpose after archive.
+The ledger seam bound to the store (C.14): each channel's chain held as
+the promotion claims attached to the indexes they move to, walked from
+the channel's name, two claims naming one predecessor refused as a fork,
+an append that attaches the claim and moves the name, and a store that
+does not answer read as last read (105, 109, 120 to 122).
 
 ## Requirements
 

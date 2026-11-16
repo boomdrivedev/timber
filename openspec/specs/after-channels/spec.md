@@ -1,7 +1,12 @@
 # after-channels Specification
 
 ## Purpose
-TBD - created by archiving change the-clan-push-profile. Update Purpose after archive.
+A channel an environment's `after` makes, moved by the gate alone on the
+reports of the environments it comes after: to the index each last
+reported, held where they disagree, never ahead of what was last
+reported, judged under the channel's own policy and signed by one of its
+promoters; and the apply's host telling its own gate of each report as a
+publish does (37, 43, 83, 130, C.10, rule core.72).
 
 ## Requirements
 

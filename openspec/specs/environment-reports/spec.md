@@ -1,7 +1,12 @@
 # environment-reports Specification
 
 ## Purpose
-TBD - created by archiving change the-clan-push-profile. Update Purpose after archive.
+What an apply says of an environment: one report claim of timber's own
+kind, signed as the host that ran a converged apply and attached beside
+the index applied, counted only through a signer the policy lets claim
+one, and an environment's newest report read from its channel's chain,
+absent or unreadable and never guessed (11, 43, 91, 116, 141, rules
+core.8, core.27, core.71).
 
 ## Requirements
 

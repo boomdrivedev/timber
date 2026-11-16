@@ -1,7 +1,13 @@
 # cargo-projection Specification
 
 ## Purpose
-TBD - created by archiving change cargos-registry. Update Purpose after archive.
+The Cargo profile of the projection seam (C.11): a crate packed with
+Cargo's own packager, a lockfile's pins and a manifest's ranges read as
+Cargo spells them, a sparse registry rendered from the store, and
+Cargo's sparse protocol served from that layout, so a consumer's `cargo`
+reads the family's crates from what timber rendered under the policy,
+with every family crate they require, and no lockfile written by hand
+(49, 99, 114, 137, 140).
 
 ## Requirements
 

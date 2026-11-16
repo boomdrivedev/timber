@@ -1,7 +1,12 @@
 # channel-status Specification
 
 ## Purpose
-TBD - created by archiving change status-on-any-machine. Update Purpose after archive.
+What `timber status` answers of a branch's channels: every channel the
+policy at the landed head declares, each with its version, the chain
+that put it there and the notes of each version it moved to, each
+channel answered on its own, one answer as of when it was read for every
+reader and every surface, asking no signer or target and writing nothing
+but the host's copy (36, 56, 58 to 60, 134, core.31).
 
 ## Requirements
 

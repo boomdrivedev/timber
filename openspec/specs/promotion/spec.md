@@ -1,7 +1,12 @@
 # promotion Specification
 
 ## Purpose
-TBD - created by archiving change the-ledger-and-promotion. Update Purpose after archive.
+A promotion: one channel of a component moved to an accepted version
+under the policy at the governed branch's landed head, signed by the
+host's signer as one of the channel's promoters, held by the ledger
+before the store, moved only from where its chain says it is, a wrong
+move undone by a promotion back, and the channel read from its chain
+alone (31, 33 to 35, 39, 101, 105).
 
 ## Requirements
 

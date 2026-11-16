@@ -1,7 +1,12 @@
 # environment-apply Specification
 
 ## Purpose
-TBD - created by archiving change the-nix-cache-target. Update Purpose after archive.
+`timber apply` of one environment: found at the governed branch's landed
+head, its target reached by the binding it names, the head of its
+channel's chain judged under the channel's policy and handed to the
+target as the verified version, nothing applied that the environment
+already runs, an answer naming what was applied and what the target
+reports, and no name moved and no store made (40, 42, 88 to 90).
 
 ## Requirements
 

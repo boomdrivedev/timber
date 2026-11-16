@@ -1,7 +1,11 @@
 # nix-cache-target Specification
 
 ## Purpose
-TBD - created by archiving change the-nix-cache-target. Update Purpose after archive.
+The target profile bound as `nix_cache` (C.12): the closures an
+environment's version names pushed, each root with its closure, to a Nix
+binary cache through attic, only from the host that holds them and with
+the environment's own credential; a cache keeps no marker, so current
+and report answer unreadable (42, 45, 119, rule core.70).
 
 ## Requirements
 

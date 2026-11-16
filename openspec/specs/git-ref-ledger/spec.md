@@ -1,7 +1,11 @@
 # git-ref-ledger Specification
 
 ## Purpose
-TBD - created by archiving change the-ledger-and-promotion. Update Purpose after archive.
+The ledger seam bound to git (C.13): each channel's chain held as a ref
+of the repository, one claim per commit, appended by a push that only
+fast-forwards, a remote that no longer extends what was read refused as
+a fork, and a remote that does not answer read as last fetched (105, 120
+to 122, rule core.47).
 
 ## Requirements
 

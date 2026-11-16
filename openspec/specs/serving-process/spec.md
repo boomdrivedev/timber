@@ -1,7 +1,12 @@
 # serving-process Specification
 
 ## Purpose
-TBD - created by archiving change status-on-any-machine. Update Purpose after archive.
+The host's one serving process, `timber serve`: at the core's one fixed
+address, answering each repository a checkout named under its remote's
+owner and name with its status page and JSON, every repository the host
+knows together at the root, and each served layout under its
+repository's path; started by the first asker that finds none, under one
+lock (114, 115, 132, core.36).
 
 ## Requirements
 
