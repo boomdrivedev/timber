@@ -1,7 +1,11 @@
 # git-ref-ledger Specification
 
 ## Purpose
-TBD - created by archiving change the-ledger-and-promotion. Update Purpose after archive.
+The ledger seam bound to git (C.13): each channel's chain held as a ref
+of the repository, one claim per commit, appended by a push that only
+fast-forwards, a remote that no longer extends what was read refused as
+a fork, and a remote that does not answer read as last fetched (105, 120
+to 122, rule core.47).
 
 ## Requirements
 
@@ -37,10 +41,7 @@ Append SHALL hold the claim at the head only when the predecessor given
 is the claim at the head as the remote holds it, or none and the remote
 holds no ref; it SHALL write the claim's commit on the head's and push
 it so that the remote takes only a fast-forward, never a forced update
-(120, 122). A push the remote refuses SHALL be refused naming the claim
-at the remote's head, read again after the refusal; where the head is
-still the predecessor given, the refusal SHALL carry git's words
-verbatim (59). Where no remote is bound, the repository's own ref SHALL
+(120, 122). Where no remote is bound, the repository's own ref SHALL
 be the ledger, moved only from the commit it was read at.
 
 #### Scenario: Two hosts append after one head
@@ -73,13 +74,10 @@ holds.
 Where the remote cannot be reached, chain SHALL answer the claims of
 the repository's own copy of the ref as last fetched or appended, saying
 when it was last written and carrying git's words of why the remote did
-not answer (60, C.13); where the copy last read the channel holding no
-claim, chain SHALL answer it empty, saying when it was read and
-carrying git's words, as any other chain as last fetched (60, as
-amended at boomdrivedev/blueprints b64d367); with no copy of the channel
-at all, the chain SHALL be unreadable with git's words. Append SHALL be
-unreadable with git's words, and SHALL never append to the copy alone
-where a remote is bound.
+not answer (60, C.13); with no copy of the channel at all, the chain
+SHALL be unreadable with git's words. Append SHALL be unreadable with
+git's words, and SHALL never append to the copy alone where a remote is
+bound.
 
 #### Scenario: The remote gone after a read
 
@@ -95,3 +93,27 @@ where a remote is bound.
 
 - **WHEN** the keeper's conformance group runs over the git ref ledger with a bare remote in a temporary directory
 - **THEN** every scenario passes
+
+### Requirement: A push the remote refuses is refused naming the remote's head
+
+A push the remote refuses SHALL be refused naming the claim at the
+remote's head, read again after the refusal; where the head is still
+the predecessor given, the refusal SHALL carry git's words verbatim
+(59, 120).
+
+#### Scenario: The remote's head read again after a refusal
+
+- **WHEN** a clone appends a promotion naming the head it read, and the remote refuses the push because another clone's claim now follows that head
+- **THEN** the append is refused naming the other clone's claim, read from the remote after the refusal
+
+### Requirement: An empty channel is read as last fetched as any other chain
+
+Where the remote cannot be reached and the copy last read the channel
+holding no claim, chain SHALL answer it empty, saying when it was read
+and carrying git's words, as any other chain as last fetched (60, as
+amended at boomdrivedev/blueprints b64d367).
+
+#### Scenario: An empty copy and no remote
+
+- **WHEN** a clone's copy last read `beta` holding no claim, and its remote cannot be reached
+- **THEN** the chain of `beta` is empty, with the time of that read and git's words, and not unreadable

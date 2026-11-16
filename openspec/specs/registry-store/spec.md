@@ -12,14 +12,11 @@ the profile is proven against (B.1, C.1).
 
 The registry store SHALL hold every blob, manifest, attestation and
 name of the store in the one repository the host names, addressed by
-digest, on every registry, save three spaces under the named one: a
-declared component's versions and channels, tags of its own repository
-holding its indexes and what they name; each artifact's name, a tag of its own
-repository holding what its index names; and each cache entry, a tag of
-its build profile's cache repository holding its bytes (C.1, ADR 0003).
-It SHALL never create a repository of its own accord; a registry that
-creates repositories on push may create the named one, a component's,
-an artifact name's and a cache repository on the first put.
+digest, on every registry, save the three spaces "Three spaces under
+the named repository" names (C.1, ADR 0003). It SHALL never create a
+repository of its own accord; a registry that creates repositories on
+push may create the named one, a component's, an artifact name's and a
+cache repository on the first put.
 
 #### Scenario: Everything in one repository
 
@@ -420,3 +417,16 @@ words verbatim and naming the repository, and nothing SHALL be retried
 #### Scenario: A cache repository missing
 - **WHEN** a registry that makes no repository on push holds the declared repository and not `cache/moon`, and a store bound for a push puts a cache entry's bytes, with the moon build profile bound
 - **THEN** the put is refused carrying the registry's words and naming `cache/moon` under the declared repository, nothing is asked again, and the declared repository is not written
+
+### Requirement: Three spaces under the named repository
+
+Three spaces SHALL be held under the named repository: a declared
+component's versions and channels, tags of its own repository holding
+its indexes and what they name; each artifact's name, a tag of its own
+repository holding what its index names; and each cache entry, a tag of
+its build profile's cache repository holding its bytes (C.1, ADR 0003).
+
+#### Scenario: A component's version, an artifact's name and a cache entry
+
+- **WHEN** a declared component's version, an artifact's name and a cache entry are put into a registry store
+- **THEN** the version's tag is held in the component's own repository with its index and what it names, the artifact's name in a repository of its own with what its index names, and the cache entry's tag in its build profile's cache repository with its bytes, each under the named repository

@@ -27,22 +27,10 @@ the core (core.2).
 ### Requirement: The types that cross a seam
 
 Every value an operation takes or gives SHALL be a type defined with the
-seams, in the statement's words, and nowhere else: digest, revision,
-branch, component, output, build identity, version, ecosystem and
-ecosystem name, artifact metadata and index metadata (4, 6), cache
-entry (52), claim and signed envelope (7, 8), verdict (78), signer,
-audience and the policy's requirements (82), the channel a policy
-declares with how it moves (131), a given channel held off with the
-line that would switch it on (C.10), environment and channel, and a
-manifest's range and the requirement that pairs an ecosystem name with
-one (140). A channel SHALL be its component and its name together, its
-component none where the repository declares no component (125). The
-name of the one component of a repository that declares none (123)
-SHALL be defined with the seams, so every profile and the core name it
-alike. Every such type SHALL be readable by a program (57). A cache
-entry SHALL be named by its build identity and its digest alone, and
-SHALL carry no ecosystem, name or version (53). A range and a
-requirement SHALL carry the text as the manifest spells it, unchanged.
+seams, in the statement's words, and nowhere else: those "The seams
+define the types of bytes, builds and claims" and "The seams define the
+types of policies, channels and ranges" name. Every such type SHALL be
+readable by a program (57).
 
 #### Scenario: A value written and read back
 
@@ -124,10 +112,7 @@ has one (7, 13). A signed envelope SHALL have a digest of its own by
 which a promotion names its predecessor (105, 120). An envelope holding
 a claim of timber's form SHALL hold exactly one claim and the
 signature of exactly one signer, and one holding any other number of
-signatures SHALL be read as no claim of timber's form (7). An
-envelope carried from another party SHALL hold every signature it was
-made with, each with its signer and its key id as made, and the payload
-and its type byte for byte (12, C.5).
+signatures SHALL be read as no claim of timber's form (7).
 
 #### Scenario: A claim with no build identity
 
@@ -196,10 +181,8 @@ the bytes already (66, 5); put-artifact with the artifact's digest
 (67); attach with the attestation held beside its digest (68, 8);
 claims-of with every attestation as attached, or absent (69); name
 with the name moved, or refused naming where it is (70); resolve with
-a digest, or absent (71); read with what the digest holds, or
-absent (72); and the listing, given an ecosystem and a name, with every
-version the store names that name at, an empty list where it names
-none, or unreadable where the listing cannot be read (138, core.19).
+a digest, or absent (71); and read with what the digest holds, or
+absent (72).
 
 #### Scenario: A name moved only from where it is expected
 
@@ -225,12 +208,8 @@ none, or unreadable where the listing cannot be read (138, core.19).
 
 The build SHALL answer ensure, given a revision and every output
 declared in one asking, with those outputs present, or refused naming
-each output it could not make (74); report with the build identity
-an output came from, the build's outcome, and where its files are (75);
-and left, given a checkout, with the build identities whose outputs the
-checkout's own build state holds, each with its tasks, its outcome and
-where its files are, read from the build's own records and from nothing
-of timber's (139).
+each output it could not make (74); and report with the build identity
+an output came from, the build's outcome, and where its files are (75).
 
 #### Scenario: Outputs that could not be made
 
@@ -253,12 +232,7 @@ The landing SHALL answer landed with whether a branch has landed a
 revision (77), and verdicts-of with every verdict recorded for a
 revision, each naming its check, its build identity, its outcome and
 its signer, with its signed envelope as the landing recorded it, and
-where the landing found it, in the landing's own words (12, 78). Each
-answer SHALL say how it was read: from the landing's remote, or the
-repository itself where no remote is bound, or from the host's copy as
-last fetched, because the remote did not answer, with when that copy
-was fetched and the remote's own words of why it did not answer, the
-two ways a chain says it was read (59, 60, 61, 77, C.5, C.6).
+where the landing found it, in the landing's own words (12, 78).
 
 #### Scenario: A revision with no verdicts
 
@@ -300,28 +274,9 @@ The policy SHALL answer policy-for, given a repository at a landed
 revision and an audience of acceptance, a channel with its component,
 or a layout, with the claims required, each with the signers that may
 make it and what each may claim (82), or absent where no policy is
-declared. The policy for a channel SHALL name the signers that may sign
-its promotion (32) and the signers that may ask for it, none meaning any
-asker the gate verifies (129, C.10), and the policy for a channel bound to another SHALL
-name the channel it is bound to; the policy for acceptance SHALL name no
-channel (83). The policy SHALL answer channels, given a repository at a
-landed revision, with every channel its policy declares or gives, once
-each, ordered by name and then by component, each with the one
-component it belongs to (125) and how it moves: on each accepted
-publish, with releases alone or prereleases too, by a promotion alone,
-or bound to a channel of the same component (37, 83, 131, C.10); a
-repository that declares one component SHALL
-have every channel in it, and one that declares none SHALL have every
-channel in that one, its channels spelled by name alone (123). The
-same channels answer SHALL carry, apart from the channels in force,
-every channel the profile gives but holds until the repository switches
-it on, and the repository has not switched on, marked held, once each,
-ordered by name and then by component, each with its component, how it
-would move once switched on, and the line that would switch it on, in
-the profile's own words; an empty list where it holds none back; and
-never a channel in force (131 as amended at boomdrivedev/blueprints
-1ae1cc5, C.10). The policy seam SHALL have no operation for the held
-givens apart from channels (136).
+declared. The policy for acceptance SHALL name no channel (83). The
+policy seam SHALL have no operation for the held givens apart from
+channels (136).
 
 #### Scenario: Acceptance names no channel
 
@@ -354,44 +309,14 @@ givens apart from channels (136).
 - **THEN** it is the same value, the held given naming the channel, its component or that the repository declares none, how it would move and its line, apart from the channels in force
 
 ### Requirement: A projection's contract
+
 A projection SHALL answer pack, given an output at a build identity and,
 where the bytes are an artifact's, the version, the component the output
 belongs to, the component's declared outputs as the build left them, and
 a way to ask whether the component's paths hold a path of the
 repository, with the ecosystem's own bytes, their metadata only where a
 version was given, and whether the same outputs and version, or the same
-build identity, pack to the same bytes (84, 87, 100, 110, 123); render,
-given artifacts and their metadata or cache entries by build identity,
-with a consumer layout and the versions or build identities it holds
-(85); serve, given a layout, one request of the ecosystem's own client
-with the base address it reached, and a way to ask the core for a
-version the layout lacks, with the response to that request in the
-client's own protocol, or absent naming serving, for every request, from
-a projection whose ecosystem's clients read files (86, 115); pinned,
-given a checkout, with the ecosystem names and versions its lockfile
-pins as the lockfile spells them, and, for a name its manifest declares
-and no lockfile pins yet, the manifest's range as the manifest spells
-it, or absent where the checkout holds no lockfile of that ecosystem and
-its manifest declares no such range (137); requires, given an artifact
-of its ecosystem a layout holds, with every name its manifest requires
-that the layout serves and the range it requires of it, as the manifest
-spells them, a name the layout serves being one the consuming
-checkout's own configuration of the ecosystem routes to the served
-address (140); and satisfying, given a range and versions, with those
-versions that satisfy the range by the ecosystem's own rules, newest
-first by the ecosystem's own ordering, never by spelling or by the order
-given (23, 140). A projection whose ecosystem has no manifest SHALL
-answer requires and satisfying with none, an empty list, reading
-nothing, and never absent (140). pinned's range and requires' ranges
-SHALL be one type, so the core holds a checkout's range and a held
-version's alike and reads neither. The core SHALL learn what a manifest
-requires and how versions order only through requires and satisfying,
-and SHALL never read a manifest or order versions itself (140, core.1).
-A projection SHALL never reach the store but through the store it is
-handed, nor the policy or a version's claims at all, nor match a
-component's paths itself: a version a served layout lacks is asked of
-the core, which judges it, and whether the component's paths hold a path
-is asked of the core through pack's input (core.2).
+build identity, pack to the same bytes (84, 87, 100, 110, 123).
 
 #### Scenario: A projection that cannot promise the same bytes
 - **WHEN** pack answers bytes it cannot promise to make again
@@ -460,14 +385,8 @@ names, or absent when the channel is empty (88), given the head the core
 read from the channel's chain, which a target that is pushed to answers
 and a target that pulls answers by its own reading (44, rule core.50);
 current with the digest the environment runs, or unreadable with the
-reason (89); apply, given a version the reconciler has verified, with
-the environment converged or what stopped it (90); and report with what
-it runs and when it last converged (91). A target that can hold no
-marker of the digest it applied SHALL answer current and report
-unreadable with the reason, never a digest and never converged (119).
-The environment a target is handed SHALL carry the target's own settings
-as the policy answered them, and a target SHALL read no setting but its
-own, answering unreadable naming a key it does not read (45, C.10).
+reason (89); and apply, given a version the reconciler has verified,
+with the environment converged or what stopped it (90).
 
 #### Scenario: An environment that cannot be read
 
@@ -492,16 +411,7 @@ predecessor, with the claim held at the head of that channel's chain,
 or refused naming the claim at the head (120); and chain, given a
 channel with its component, with every promotion claim of it in order
 from the first, or absent when none is held (121). Two components'
-channels of one name SHALL be two chains (125). A chain that holds two
-claims naming one predecessor SHALL be refused as a fork, naming both,
-never answered by choosing one (105, 122). A chain answered from the
-copy the host last read, because the source holding the ledger did not
-answer, SHALL say when that copy was read and carry the source's words
-of why it did not answer, a channel the copy holds no claim of answered
-as a chain of no claims saying so, never as an absence; a chain read
-from the source itself SHALL say so. An append SHALL never be held by
-such a copy alone (60 as amended at boomdrivedev/blueprints b64d367, 61,
-C.13, C.14).
+channels of one name SHALL be two chains (125).
 
 #### Scenario: An append whose predecessor is not the head
 
@@ -583,8 +493,7 @@ component, the version and index it moves to, the version and index it
 moves from or none for the channel's first, the digest of the promotion
 it follows or none, who asked, the revision the channel's policy was
 read at and the digests of the claims that satisfied it, and when, in
-seconds since the Unix epoch (33, 39, 105). Reading a claim's body SHALL
-answer none for a claim that is not a promotion of timber's form.
+seconds since the Unix epoch (33, 39, 105).
 
 #### Scenario: A promotion's body read back
 
@@ -777,3 +686,323 @@ satisfy it (7, 134).
 
 - **WHEN** a version's index carries a report of `first` by `deployer`, and a channel's policy requires one
 - **THEN** the requirement is satisfied for every artifact the index names
+
+### Requirement: The seams define the types of bytes, builds and claims
+
+The seams SHALL define digest, revision, branch, component, output,
+build identity, version, ecosystem and ecosystem name, artifact metadata
+and index metadata (4, 6), cache entry (52), claim and signed envelope
+(7, 8), and verdict (78). A cache entry SHALL be named by its build
+identity and its digest alone, and SHALL carry no ecosystem, name or
+version (53).
+
+#### Scenario: A verdict read back
+
+- **WHEN** a verdict naming its check, a build identity and its outcome is written in its machine-readable form and read back
+- **THEN** it is the same verdict
+
+### Requirement: The seams define the types of policies, channels and ranges
+
+The seams SHALL define signer, audience and the policy's requirements
+(82), the channel a policy declares with how it moves (131), a given
+channel held off with the line that would switch it on (C.10),
+environment and channel, and a manifest's range and the requirement
+that pairs an ecosystem name with one (140). A range and a requirement
+SHALL carry the text as the manifest spells it, unchanged.
+
+#### Scenario: A held given read back
+
+- **WHEN** a given channel held off, with how it would move and the line that would switch it on, is written in its machine-readable form and read back
+- **THEN** it is the same value
+
+### Requirement: A channel is its component and its name
+
+A channel SHALL be its component and its name together, its component
+none where the repository declares no component (125). The name of the
+one component of a repository that declares none (123) SHALL be defined
+with the seams, so every profile and the core name it alike.
+
+#### Scenario: The one component's name
+
+- **WHEN** two profiles name the one component of a repository that declares none
+- **THEN** both name it by the name the seams define
+
+### Requirement: An envelope carried from another party is kept as made
+
+An envelope carried from another party SHALL hold every signature it
+was made with, each with its signer and its key id as made, and the
+payload and its type byte for byte (12, C.5).
+
+#### Scenario: Another party's payload type
+
+- **WHEN** a claim carries another party's envelope whose payload type is not timber's
+- **THEN** reading the claim back answers that payload type and that payload byte for byte
+
+### Requirement: The store lists a name's versions
+
+The store SHALL answer the listing, given an ecosystem and a name, with
+every version the store names that name at, an empty list where it names
+none, or unreadable where the listing cannot be read (138, core.19).
+
+#### Scenario: A listing that cannot be read
+
+- **WHEN** the listing is asked while the store cannot be read
+- **THEN** it answers unreadable with the store's words, never an empty list
+
+### Requirement: The build answers what a checkout left
+
+The build SHALL answer left, given a checkout, with the build identities
+whose outputs the checkout's own build state holds, each with its tasks,
+its outcome and where its files are, read from the build's own records
+and from nothing of timber's (139).
+
+#### Scenario: left reads nothing of timber's
+
+- **WHEN** left is asked of a checkout whose build state holds one build identity's outputs, and timber's own records name another
+- **THEN** the answer names the first alone
+
+### Requirement: Each landing answer says how it was read
+
+Each answer of the landing SHALL say how it was read: from the landing's
+remote, or the repository itself where no remote is bound, or from the
+host's copy as last fetched, because the remote did not answer, with
+when that copy was fetched and the remote's own words of why it did not
+answer, the two ways a chain says it was read (59, 60, 61, 77, C.5,
+C.6).
+
+#### Scenario: An answer with no remote bound
+
+- **WHEN** landed is answered by a landing bound to no remote
+- **THEN** the answer says it was read from the repository itself
+
+### Requirement: The policy for a channel names its promoters, its askers and its binding
+
+The policy for a channel SHALL name the signers that may sign its
+promotion (32) and the signers that may ask for it, none meaning any
+asker the gate verifies (129, C.10), and the policy for a channel bound
+to another SHALL name the channel it is bound to (83).
+
+#### Scenario: A bound channel's policy
+
+- **WHEN** policy-for is asked for `stable`, bound to `beta`
+- **THEN** it names `beta` as the channel it is bound to, the signers that may sign its promotion and those that may ask for it
+
+### Requirement: The policy answers the channels in force
+
+The policy SHALL answer channels, given a repository at a landed
+revision, with every channel its policy declares or gives, once each,
+ordered by name and then by component, each with the one component it
+belongs to (125) and how it moves: on each accepted publish, with
+releases alone or prereleases too, by a promotion alone, or bound to a
+channel of the same component (37, 83, 131, C.10).
+
+#### Scenario: Channels ordered by name, then component
+
+- **WHEN** the channels are asked at a revision declaring `lib` and `web`, each with `beta` and `stable`
+- **THEN** the answer is `beta` of `lib`, `beta` of `web`, `stable` of `lib` and `stable` of `web`, in that order, once each
+
+### Requirement: One component or none holds every channel
+
+A repository that declares one component SHALL have every channel in it,
+and one that declares none SHALL have every channel in that one, its
+channels spelled by name alone (123).
+
+#### Scenario: One component declared
+
+- **WHEN** the channels are asked at a revision declaring the one component `lib`
+- **THEN** every channel answered is of `lib`
+
+### Requirement: The channels answer carries the held givens apart
+
+The same channels answer SHALL carry, apart from the channels in force,
+every channel the profile gives but holds until the repository switches
+it on, and the repository has not switched on, marked held, once each,
+ordered by name and then by component, each with its component, how it
+would move once switched on, and the line that would switch it on, in
+the profile's own words (131 as amended at boomdrivedev/blueprints
+1ae1cc5, C.10).
+
+#### Scenario: Held givens of two components
+
+- **WHEN** the channels are asked of a profile holding `alpha` and `lts` back, at a revision declaring `lib` and `web` that switches on neither
+- **THEN** the held givens are `alpha` of `lib`, `alpha` of `web`, `lts` of `lib` and `lts` of `web`, in that order, each marked held with how it would move and its line
+
+### Requirement: The held givens are an empty list where none is held, and never a channel in force
+
+The held givens SHALL be an empty list where the profile holds none
+back, and SHALL never hold a channel in force (131 as amended at
+boomdrivedev/blueprints 1ae1cc5, C.10).
+
+#### Scenario: Nothing held back
+
+- **WHEN** the channels are asked of a profile that holds no given back
+- **THEN** the held givens are an empty list
+
+### Requirement: A projection renders a layout
+
+A projection SHALL answer render, given artifacts and their metadata or
+cache entries by build identity, with a consumer layout and the versions
+or build identities it holds (85).
+
+#### Scenario: A layout of two artifacts
+
+- **WHEN** a projection renders a layout from two artifacts
+- **THEN** the answer names the two versions the layout holds
+
+### Requirement: A projection serves its client's requests
+
+A projection SHALL answer serve, given a layout, one request of the
+ecosystem's own client with the base address it reached, and a way to
+ask the core for a version the layout lacks, with the response to that
+request in the client's own protocol, or absent naming serving, for
+every request, from a projection whose ecosystem's clients read files
+(86, 115).
+
+#### Scenario: A request under its base
+
+- **WHEN** a projection whose clients read no files is given a request with the base address it reached
+- **THEN** the response answers the request in the client's own protocol
+
+### Requirement: A projection answers what a checkout pins
+
+A projection SHALL answer pinned, given a checkout, with the ecosystem
+names and versions its lockfile pins as the lockfile spells them, and,
+for a name its manifest declares and no lockfile pins yet, the
+manifest's range as the manifest spells it, or absent where the checkout
+holds no lockfile of that ecosystem and its manifest declares no such
+range (137).
+
+#### Scenario: A pin and a range
+
+- **WHEN** pinned is asked of a checkout whose lockfile pins one name and whose manifest declares another that no lockfile pins
+- **THEN** it answers the pin as the lockfile spells it and the range as the manifest spells it
+
+### Requirement: A projection answers what a held version requires
+
+A projection SHALL answer requires, given an artifact of its ecosystem a
+layout holds, with every name its manifest requires that the layout
+serves and the range it requires of it, as the manifest spells them, a
+name the layout serves being one the consuming checkout's own
+configuration of the ecosystem routes to the served address (140).
+
+#### Scenario: A name the checkout does not route
+
+- **WHEN** requires is asked of an artifact whose manifest requires one name the consuming checkout routes to the served address and one it does not
+- **THEN** the answer is the first alone, with its range as the manifest spells it
+
+### Requirement: A projection answers which versions satisfy a range
+
+A projection SHALL answer satisfying, given a range and versions, with
+those versions that satisfy the range by the ecosystem's own rules,
+newest first by the ecosystem's own ordering, never by spelling or by
+the order given (23, 140).
+
+#### Scenario: No version within the range
+
+- **WHEN** satisfying is given a range and versions none of which satisfy it
+- **THEN** the answer is an empty list
+
+### Requirement: An ecosystem with no manifest requires nothing
+
+A projection whose ecosystem has no manifest SHALL answer requires and
+satisfying with none, an empty list, reading nothing, and never absent
+(140).
+
+#### Scenario: The file projection asked what an artifact requires
+
+- **WHEN** the file projection is asked requires of an artifact
+- **THEN** it answers none, an empty list, and reads nothing
+
+### Requirement: The core holds ranges and reads no manifest
+
+pinned's range and requires' ranges SHALL be one type, so the core
+holds a checkout's range and a held version's alike and reads neither.
+The core SHALL learn what a manifest requires and how versions order
+only through requires and satisfying, and SHALL never read a manifest or
+order versions itself (140, core.1).
+
+#### Scenario: A range from pinned and from requires
+
+- **WHEN** a range pinned answers and a range requires answers, each of one name and one text, are compared
+- **THEN** they are values of one type, and equal
+
+### Requirement: A projection reaches the store, the policy and the paths only through what it is handed
+
+A projection SHALL never reach the store but through the store it is
+handed, nor the policy or a version's claims at all, nor match a
+component's paths itself: a version a served layout lacks is asked of
+the core, which judges it, and whether the component's paths hold a path
+is asked of the core through pack's input (core.2).
+
+#### Scenario: A served miss judged by the core
+
+- **WHEN** a projection serving a layout is asked for a version the layout lacks
+- **THEN** it asks the core for it, reads no claim or policy of the version itself, and reads the store only through the store it was handed
+
+### Requirement: A target reports, and one that holds no marker reports nothing it applied
+
+A target SHALL answer report with what it runs and when it last
+converged (91). A target that can hold no marker of the digest it
+applied SHALL answer current and report unreadable with the reason,
+never a digest and never converged (119).
+
+#### Scenario: A report after a converged apply
+
+- **WHEN** a version is applied to an environment whose target holds a marker, and report is asked
+- **THEN** it answers the digest applied and when it converged
+
+### Requirement: A target reads its own settings alone
+
+The environment a target is handed SHALL carry the target's own settings
+as the policy answered them, and a target SHALL read no setting but its
+own, answering unreadable naming a key it does not read (45, C.10).
+
+#### Scenario: A key the target does not read
+
+- **WHEN** a target is handed an environment whose settings hold a key it does not read, and desired is asked
+- **THEN** it answers unreadable naming that key
+
+### Requirement: A chain with a fork is refused
+
+A chain that holds two claims naming one predecessor SHALL be refused
+as a fork, naming both, never answered by choosing one (105, 122).
+
+#### Scenario: Two claims after one
+
+- **WHEN** chain is asked of a channel whose claims include two naming one predecessor
+- **THEN** it is refused as a fork naming both
+
+### Requirement: A chain answered from the copy says when it was read
+
+A chain answered from the copy the host last read, because the source
+holding the ledger did not answer, SHALL say when that copy was read and
+carry the source's words of why it did not answer, a channel the copy
+holds no claim of answered as a chain of no claims saying so, never as
+an absence (60 as amended at boomdrivedev/blueprints b64d367, 61, C.13,
+C.14).
+
+#### Scenario: A copy of two claims
+
+- **WHEN** the host last read `stable`'s chain holding two claims, and the source holding it then cannot be reached
+- **THEN** chain answers the two claims, with when the copy was read and the source's words
+
+### Requirement: A chain read from its source says so, and no copy holds an append
+
+A chain read from the source itself SHALL say so. An append SHALL never
+be held by the copy the host last read alone (60 as amended at
+boomdrivedev/blueprints b64d367, 61, C.13, C.14).
+
+#### Scenario: A chain read from its source
+
+- **WHEN** chain is asked while the source holding the ledger answers
+- **THEN** the answer says it was read from the source
+
+### Requirement: A claim of another form reads as no promotion
+
+Reading a claim's body SHALL answer none for a claim that is not a
+promotion of timber's form.
+
+#### Scenario: A report's body read
+
+- **WHEN** the body of a report claim is read as a promotion's
+- **THEN** it answers none

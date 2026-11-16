@@ -1,7 +1,13 @@
 # cargo-projection Specification
 
 ## Purpose
-TBD - created by archiving change cargos-registry. Update Purpose after archive.
+The Cargo profile of the projection seam (C.11): a crate packed with
+Cargo's own packager, a lockfile's pins and a manifest's ranges read as
+Cargo spells them, a sparse registry rendered from the store, and
+Cargo's sparse protocol served from that layout, so a consumer's `cargo`
+reads the family's crates from what timber rendered under the policy,
+with every family crate they require, and no lockfile written by hand
+(49, 99, 114, 137, 140).
 
 ## Requirements
 
@@ -10,17 +16,10 @@ TBD - created by archiving change cargos-registry. Update Purpose after archive.
 The Cargo projection SHALL pack an output given a version from the one
 crate file the output's packaging task left: the package that crate
 names, at the place it was packed from, SHALL be packed by `cargo
-package --no-verify` without the crate's own lockfile, after the version
-is set on it and on every crate of its own component it reaches by path
-dependency, each such dependency rewritten to that version's requirement
-in the registry `timber`, so a path dependency on a sibling crate
-becomes a dependency of the registry as Cargo does for any publish (84,
-110, C.11). A crate SHALL be of the component whose paths hold its
-manifest, as the core matches them (123). A sibling that none of the
-component's declared outputs packs SHALL be refused naming it and the
-component, since a consumer could resolve nothing for it (C.11, 84). It SHALL answer the package's crate with metadata naming
-the ecosystem `cargo`, the package's name and the version, and
-`same_again` true, and SHALL never open the archive to edit it (87).
+package --no-verify` without the crate's own lockfile (84, C.11). It
+SHALL answer the package's crate with metadata naming the ecosystem
+`cargo`, the package's name and the version, and `same_again` true, and
+SHALL never open the archive to edit it (87).
 
 #### Scenario: Packed the same again
 
@@ -43,12 +42,9 @@ A path dependency on a crate of another component SHALL be packed as a
 dependency on the version requirement the manifest writes for it, in the
 registry `timber`, with no version of it picked: the packed crate SHALL
 name the requirement alone, and that crate's manifest SHALL never be
-given this component's version (C.11, 123, 124, 137). Where the store's
-listing of that crate's versions holds none within the requirement, the
-empty listing of a name the store never held among them, the pack SHALL
-be refused naming the crate, the requirement and the versions the store
-holds, or that it holds none; a path dependency on a crate of another component that writes no
-version requirement SHALL be refused naming the crate (C.11, 138).
+given this component's version (C.11, 123, 124, 137). A path dependency
+on a crate of another component that writes no version requirement
+SHALL be refused naming the crate (C.11).
 
 #### Scenario: Another component's crate the store holds within the requirement
 
@@ -78,10 +74,6 @@ manifest names another name or version than the one given SHALL be
 refused naming both. An output with no crate file among its files, or
 several, SHALL be refused naming the output and its files, and a crate
 file that names no place in the repository SHALL be refused naming it.
-Cargo that cannot be run SHALL answer unreadable with the operating
-system's own words, and cargo that fails, on a checkout whose cargo
-configuration names no registry `timber` among others, unreadable with
-cargo's own words (58, 59).
 
 #### Scenario: The checkout is left as it was
 
@@ -108,20 +100,9 @@ nothing (84, 85).
 
 The Cargo projection SHALL answer pinned for a checkout with the name
 and version of each package its root `Cargo.lock` pins from a registry,
-as the lockfile spells them, and, for each crate a workspace member's
-manifest declares in the registry `timber`, by its own table or
-inherited from the workspace's, that no lockfile pins at a version from
-a registry, the requirement the manifest writes as its range, as
-written, `*` where it writes none (137). A checkout with a root
-`Cargo.toml` and no `Cargo.lock` SHALL answer its manifests' ranges, so
-a first install needs no lockfile written by hand. A package with no
-source, or from git, and a dependency with a path or a git source, SHALL
-be left out. It SHALL read the files alone, run no cargo and write
-nothing. A checkout with no `Cargo.lock` whose manifests declare nothing
-in `timber`, or that has no root `Cargo.toml`, SHALL answer absent
-naming `Cargo.lock`, and a lockfile or manifest that cannot be read as
-one SHALL be refused naming the file with the parser's own words (58,
-59).
+as the lockfile spells them (137). A package with no source, or from
+git, and a dependency with a path or a git source, SHALL be left out.
+It SHALL read the files alone, run no cargo and write nothing.
 
 #### Scenario: A lockfile's registry pins
 
@@ -156,9 +137,7 @@ repository's served Cargo address, in its normal or build dependencies
 or a target's of them, optional or not, by the crate's name and the
 requirement the manifest writes, as written, each name and range once;
 a dev dependency, a dependency of crates.io and one of another registry
-SHALL never be answered (140, 49). It SHALL read the crate through the
-store seam it is handed, checked against its digest, and a crate that
-cannot be read SHALL be unreadable naming its digest.
+SHALL never be answered (140, 49).
 
 #### Scenario: A crate's family dependencies
 
@@ -200,12 +179,10 @@ The Cargo projection SHALL render the artifacts given as the files of a
 Cargo sparse registry at the place given: each crate's bytes read
 through the store seam it is handed, and an index file per name holding
 a line per version written from the crate's own normalized manifest,
-ordered by Cargo's version rules (23, 85). A dependency on a crate of
-any family repository's served Cargo registry SHALL be written as one of
-the registry serving the line, so a consumer resolves it from its own
-served address (49, 138). The layout SHALL hold exactly the versions
-given, SHALL name no address, and rendering the same artifacts again
-SHALL give the same layout (48). It SHALL answer the versions it holds.
+ordered by Cargo's version rules (23, 85). The layout SHALL hold exactly
+the versions given, and rendering the same artifacts again SHALL give
+the same layout (48). It SHALL answer the
+versions it holds.
 
 #### Scenario: A layout of the versions given
 
@@ -238,12 +215,7 @@ registry's configuration naming where its crates download from under
 that base, each name's index file from the layout, and each crate's
 bytes. A crate the layout lacks SHALL be asked of the core once and
 answered once the core renders it (115, 50); an index file SHALL be
-answered from the layout alone. A crate the core answers absent, refused
-or unreadable SHALL be answered with a not-found, a forbidden or a
-bad-gateway status, the response carrying the answer's own words
-verbatim (58, 59, 99). Every request SHALL be answered with a response,
-so the projection is read as serving, in the one shape of request,
-response and miss the host's process serves every ecosystem in.
+answered from the layout alone.
 
 #### Scenario: A crate held, served
 
@@ -275,13 +247,7 @@ its served address, `sparse+http://127.0.0.1:7420/<owner>/<name>/cargo/`,
 the same on every host (49, 114), and whose manifest declares a family
 crate by a requirement, SHALL build against it with `cargo build` once
 `timber sync` has rendered its layout, the host's one process serving
-it, with no `Cargo.lock` before the first sync: the layout SHALL hold the
-newest admitted version within the requirement and the family crates
-that version requires, through every level, so Cargo's resolution
-closes within the layout and Cargo writes the lockfile (137, 140). That
-lockfile SHALL name the served address and the checksum of each crate
-packed, and no layout path or store (46, 49), and a second sync and
-`cargo build --locked` SHALL read it unchanged.
+it, with no `Cargo.lock` before the first sync (137).
 
 #### Scenario: A first install with no lockfile
 
@@ -292,3 +258,142 @@ packed, and no layout path or store (46, 49), and a second sync and
 
 - **WHEN** that consumer syncs again and runs `cargo build --locked`
 - **THEN** sync answers both as pins held, the build succeeds, and the `Cargo.lock` is as Cargo wrote it
+
+### Requirement: A crate's siblings of its own component take its version as registry dependencies
+
+Before it is packed, the version SHALL be set on the crate and on every
+crate of its own component it reaches by path dependency, each such
+dependency rewritten to that version's requirement in the registry
+`timber`, so a path dependency on a sibling crate becomes a dependency
+of the registry as Cargo does for any publish (84, 110, C.11). A crate
+SHALL be of the component whose paths hold its manifest, as the core
+matches them (123).
+
+#### Scenario: A sibling of a sibling
+
+- **WHEN** a crate depending by path on a sibling of its own component, which depends by path on a third, is packed at 0.2.0
+- **THEN** 0.2.0 is set on all three, and each path dependency is rewritten to 0.2.0's requirement in the registry `timber`
+
+### Requirement: A sibling no output packs is refused
+
+A sibling that none of the component's declared outputs packs SHALL be
+refused naming it and the component, since a consumer could resolve
+nothing for it (C.11, 84).
+
+#### Scenario: A sibling another output packs
+
+- **WHEN** a crate depending by path on a sibling of its own component is packed, and another of the component's declared outputs packs that sibling
+- **THEN** the pack is not refused for the sibling
+
+### Requirement: Another component's crate the store holds nothing of within the requirement
+
+Where the store's listing of another component's crate holds no version
+within the requirement a path dependency on it writes, the empty listing
+of a name the store never held among them, the pack SHALL be refused
+naming the crate, the requirement and the versions the store holds, or
+that it holds none (C.11, 138).
+
+#### Scenario: Versions on either side of the requirement
+
+- **WHEN** a crate depending by path on another component's crate with the requirement `0.3` is packed, and the store holds that crate at 0.2.0 and 0.4.0
+- **THEN** the pack is refused naming the crate, the requirement `0.3`, 0.2.0 and 0.4.0, and no cargo package ran
+
+### Requirement: Cargo that cannot run or fails is answered in its own words
+
+Cargo that cannot be run SHALL make pack answer unreadable with the
+operating system's own words, and cargo that fails, on a checkout whose
+cargo configuration names no registry `timber` among others, unreadable
+with cargo's own words (58, 59).
+
+#### Scenario: No registry named timber
+
+- **WHEN** a crate is packed in a checkout whose cargo configuration names no registry `timber`, and cargo fails
+- **THEN** pack answers unreadable carrying cargo's own words
+
+### Requirement: Cargo answers the ranges of family crates no lockfile pins
+
+For each crate a workspace member's manifest declares in the registry
+`timber`, by its own table or inherited from the workspace's, that no
+lockfile pins at a version from a registry, pinned SHALL answer the
+requirement the manifest writes as its range, as written, `*` where it
+writes none (137). A checkout with a root `Cargo.toml` and no
+`Cargo.lock` SHALL answer its manifests' ranges, so a first install
+needs no lockfile written by hand.
+
+#### Scenario: A declared crate with no requirement
+
+- **WHEN** a member declares `fam-e = { registry = "timber" }` with no version, and no lockfile pins it
+- **THEN** pinned answers `fam-e` by the range `*`
+
+### Requirement: A checkout Cargo's pinned cannot read
+
+A checkout with no `Cargo.lock` whose manifests declare nothing in
+`timber`, or that has no root `Cargo.toml`, SHALL answer absent naming
+`Cargo.lock`, and a lockfile or manifest that cannot be read as one
+SHALL be refused naming the file with the parser's own words (58, 59).
+
+#### Scenario: A lockfile that cannot be parsed
+
+- **WHEN** pinned is asked of a checkout whose `Cargo.lock` is not TOML
+- **THEN** it is refused naming `Cargo.lock` with the parser's own words
+
+### Requirement: requires reads the crate through the store seam
+
+requires SHALL read the crate through the store seam it is handed,
+checked against its digest, and a crate that cannot be read SHALL be
+unreadable naming its digest.
+
+#### Scenario: A crate the store does not hold
+
+- **WHEN** requires is asked of a crate whose bytes the store answers absent
+- **THEN** the answer is unreadable naming the crate's digest
+
+### Requirement: A family dependency is written as one of the registry serving the line
+
+A dependency on a crate of any family repository's served Cargo
+registry SHALL be written in the index as one of the registry serving
+the line, so a consumer resolves it from its own served address (49,
+138). The layout SHALL name no address.
+
+#### Scenario: Another family repository's crate
+
+- **WHEN** a crate depending on a crate at another family repository's served Cargo address is rendered
+- **THEN** its index line names that dependency as of the registry serving the line, and names no address
+
+### Requirement: A crate Cargo cannot be given is answered in the answer's own words
+
+A crate the core answers absent, refused or unreadable SHALL be
+answered with a not-found, a forbidden or a bad-gateway status, the
+response carrying the answer's own words verbatim (58, 59, 99). Every
+request SHALL be answered with a response, so the projection is read as
+serving, in the one shape of request, response and miss the host's
+process serves every ecosystem in.
+
+#### Scenario: A crate lacked and absent
+
+- **WHEN** a layout is asked for a crate it lacks, and the core answers it absent
+- **THEN** the response is a not-found status carrying the core's words verbatim
+
+### Requirement: A first sync holds what Cargo's resolution needs
+
+On a consumer's first sync with no `Cargo.lock`, the layout SHALL hold,
+for each family crate its manifest declares by a requirement, the newest
+admitted version within the requirement and the family crates that
+version requires, through every level, so Cargo's resolution closes
+within the layout and Cargo writes the lockfile (137, 140).
+
+#### Scenario: A required crate two levels down
+
+- **WHEN** a consumer with no `Cargo.lock` declares `fam-a` by `1`, the newest admitted `fam-a` within it requires `fam-b`, which requires `fam-c`, and the consumer syncs
+- **THEN** the layout holds `fam-a`, `fam-b` and `fam-c`, each at the newest admitted version within its requirement, and `cargo build` resolves within it
+
+### Requirement: The lockfile Cargo writes names the served address
+
+The lockfile Cargo writes SHALL name the served address and the
+checksum of each crate packed, and no layout path or store (46, 49), and
+a second sync and `cargo build --locked` SHALL read it unchanged.
+
+#### Scenario: The lockfile names no layout path
+
+- **WHEN** Cargo writes the `Cargo.lock` after a first sync
+- **THEN** each family crate's source in it is the served address with its checksum, and no line names the layout's path or the store

@@ -14,11 +14,7 @@ profiles that need moon, sluice, OpenSSH, npm or a registry the test
 starts itself, each run by a moon task of its project tagged
 `check-tools`, one task per check (core.25). The gate SHALL require the
 layer on `main` and on every bolt, beside `check-fast`. A test that
-needs only git SHALL stay in `check-fast`. A check that needs a
-credential a person signs in for, as the runs against ECR and against a
-KMS key do, SHALL run outside the gate, under a tag of its own, by hand
-with a live session or by a job that holds an identity of its own
-(core.38).
+needs only git SHALL stay in `check-fast`.
 
 #### Scenario: A landing to a bolt
 
@@ -84,3 +80,15 @@ with, SHALL be the host's, named in its `devenv.local.nix`.
 
 - **WHEN** the KMS check runs
 - **THEN** it signs with the key `env.TIMBER_TOOLS_KMS_KEY` names and uses the key `env.TIMBER_TOOLS_KMS_STRANGER` names as the stranger, both from the host's `devenv.local.nix`, and with no other key
+
+### Requirement: A check that needs a person's sign-in runs outside the gate
+
+A check that needs a credential a person signs in for, as the runs
+against ECR and against a KMS key do, SHALL run outside the gate, under
+a tag of its own, by hand with a live session or by a job that holds an
+identity of its own (core.38).
+
+#### Scenario: The gate runs no check that needs a sign-in
+
+- **WHEN** the gate runs for a landing to `main`
+- **THEN** no task that needs a credential a person signs in for runs, and each such task runs only when its own tag, `check-ecr` or `check-kms`, is asked

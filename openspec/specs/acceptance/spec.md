@@ -70,8 +70,7 @@ order, those of the acceptance policy's required claims that the policy
 asks of artifacts made the artifact's way (134), each satisfied only by a
 claim on the artifact or the index naming the version's revision, whose
 maker the signer seam tells is a signer the required claim names, within
-that signer's reach (9, 13, 80, 116, core.7). A verdict SHALL count only
-carried in the artifact's provenance, for the check and build required.
+that signer's reach (9, 13, 80, 116, core.7).
 
 #### Scenario: Every required claim found
 
@@ -363,8 +362,7 @@ the version's name as it does for any version (core.4) and, where the
 name resolves to another digest than the one it was told, SHALL answer
 unreadable naming the version's name, the digest it resolves to and the
 digest the publish named, before any claim is read or anything is
-written. A version the gate is asked about by anyone else carries no
-told digest and is judged by what its name resolves to.
+written.
 
 #### Scenario: Told the digest the name resolves to
 
@@ -440,3 +438,24 @@ never holds a version for its notes (95, 134).
 
 - **WHEN** the same version's first output carries no rebuild
 - **THEN** the version is accepted, `beta` does not move, and the answer for `beta` is refused naming the first output and the required rebuild
+
+### Requirement: A verdict counts only carried in the artifact's provenance
+
+A verdict SHALL count toward a required claim only carried in the
+artifact's provenance, for the check and build required (9, 13).
+
+#### Scenario: A verdict for another build
+
+- **WHEN** acceptance requires a verdict of `test` from `landing`, and an artifact's provenance from `host` holds a passing `test` verdict from `landing` for a build other than the artifact's
+- **THEN** that verdict does not count, and the version is refused naming the required verdict and the artifact
+
+### Requirement: A version no publish told of is judged by what its name resolves to
+
+A version the gate is asked about by anyone but a publish telling it
+SHALL carry no told digest, and SHALL be judged by what its name
+resolves to (95, core.4).
+
+#### Scenario: Asked by a person
+
+- **WHEN** a person asks the gate to judge 0.2.0, whose name resolves to `E`
+- **THEN** the gate judges `E`, and its answer names `E`
