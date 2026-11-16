@@ -50,10 +50,7 @@ process, at `$XDG_STATE_HOME/timber/repositories`, or
 `~/.local/state/timber/repositories` where that variable is unset or
 empty, readable with any file reader, one entry per repository naming
 its owner and name and the path of the checkout that last named it
-(62, 132). The process SHALL read the file on each request, SHALL
-answer a repository no entry names absent, saying no command run in a
-checkout of it on this host has named it, and an entry whose checkout
-is gone unreadable naming the path (58).
+(62, 132).
 
 #### Scenario: A repository none named
 
@@ -69,21 +66,11 @@ is gone unreadable naming the path (58).
 
 The process SHALL answer `GET /<owner>/<name>/status.json` with the
 status answer the core gives in the named checkout, as `timber
-status --json` prints it there, and `GET /<owner>/<name>/status` with a page
-rendering that answer whole: each channel with its component, how it
-moves, its version or that it is empty, its chain with each promotion's
-asker and the notes of the version it moved to beneath it; the
-environments' four counts and every environment with its state, what it
-should run, what it runs and when it converged, what it waits on, and
-beside one that is behind the notes of every version between beneath
-it; and the record of what this host published with each version's
-notes beneath it, every refusal and unreadable answer shown with the
-source's own words (57, 58, 59, 98, 132, 134). Each request SHALL
-compute the answer anew, and SHALL write nothing but the host's copy of
-a chain a store ledger holds and of each environment's reports, reach
-the store only to fetch them, and ask no signer or target (60). A path
-the process does not answer SHALL be 404, and a method other than `GET`
-405.
+status --json` prints it there, and `GET /<owner>/<name>/status` with a
+page rendering that answer whole, as "A repository's page shows its
+channels and its record" and "A repository's page shows its
+environments" say (57, 132). A path the process does not answer SHALL
+be 404, and a method other than `GET` 405.
 
 #### Scenario: The page and the JSON agree
 
@@ -117,13 +104,8 @@ host's file names, ordered by owner and name, each as the core's row of
 its status answer in its checkout, computed anew on the request, and
 `GET /` with a page rendering those rows: each repository linked to its
 own page, every channel's head, and the environments' four counts or
-the answer given in their place (132). An entry whose checkout is gone
-or whose status cannot be asked SHALL be its own row's unreadable
-answer, naming the path, and every other row SHALL be shown (58). A
-host whose file names no repository SHALL answer an empty list, and a
-file that cannot be read SHALL be the root's unreadable answer naming
-the file with the parser's words. The root SHALL write nothing but the
-host's copy each status writes, and ask no signer or target (60).
+the answer given in their place (132). The root SHALL write nothing but
+the host's copy each status writes, and ask no signer or target (60).
 
 #### Scenario: Two repositories together
 
@@ -147,17 +129,9 @@ host's file, find the serving process at the core's address by its
 `/serving.json`, start `timber serve` detached from its terminal and
 from the checkout where none answers, wait for it to answer, and print
 the address of the repository's own page; a port that answers as
-something else SHALL be unreadable naming the address (114). The
-process SHALL hold the host's one lock, `timber/serve.lock` beside
-the file of repositories, for as long as it runs: a `timber serve`
-that finds the lock held SHALL exit 0 saying the host's process answers
-at the address, and no asker SHALL start a second (114, as sluice 129).
-The process SHALL end when nothing has asked it for ten minutes and no
-checkout the host's file names holds a rendered layout whose projection
-serves it; while one does, the process SHALL stay, since the
-ecosystem's client cannot start it, and SHALL end at its next idle time
-once the layout or its checkout is gone (114, 115). A host may run it
-as a service of its own, and nothing SHALL tell a person to start one.
+something else SHALL be unreadable naming the address (114). One lock
+SHALL keep the process one, as "One lock keeps the host's process one"
+says.
 
 #### Scenario: Two askers on one host
 
@@ -195,18 +169,14 @@ as a service of its own, and nothing SHALL tell a person to start one.
 - **THEN** `timber status --page` is unreadable naming the address, and starts nothing
 
 ### Requirement: The process serves each served layout under its repository's path
+
 The host's one serving process SHALL answer a request under
 `/<owner>/<name>/<ecosystem>/` by handing it, with the base address it
 was asked at, to the projection the checkout that last named the
 repository binds for that ecosystem, over that checkout's layout of it,
 and SHALL answer the projection's response as it is, bytes included
-(86, 114, 132). A version the layout lacks SHALL be rendered by the core
-on the request, in that checkout (115). The process SHALL hold no layout
-of its own and start no second process (core.36). A repository none
-named SHALL be answered absent as its status is; an ecosystem the
-checkout binds no projection for, or one whose projection serves none,
-SHALL be `404` naming the ecosystem; a checkout that cannot be bound
-SHALL be its binding's answer (58).
+(86, 114, 132). The process SHALL hold no layout of its own and start
+no second process (core.36).
 
 #### Scenario: A served layout asked through the process
 - **WHEN** a checkout of `agentplot/consumer` has synced its npm layout and named its repository, and `GET /agentplot/consumer/npm/@family%2fwidget` is asked of the process
@@ -223,3 +193,124 @@ SHALL be its binding's answer (58).
 #### Scenario: An ecosystem nothing serves
 - **WHEN** `GET /agentplot/consumer/file/notes.txt` is asked, the checkout's file projection serving none
 - **THEN** the answer is `404` naming the ecosystem, and nothing is rendered
+
+### Requirement: The process reads the host's file on each request
+
+The process SHALL read the host's file of repositories on each request,
+SHALL answer a repository no entry names absent, saying no command run
+in a checkout of it on this host has named it, and an entry whose
+checkout is gone unreadable naming the path (58).
+
+#### Scenario: A named checkout gone
+
+- **WHEN** the file names `agentplot/timber` at a checkout that has since been removed, and `GET /agentplot/timber/status.json` is asked
+- **THEN** the answer is unreadable naming the checkout's path
+
+#### Scenario: A repository named while the process runs
+
+- **WHEN** a checkout names its repository after the process started, and its status is then asked of the process
+- **THEN** the process answers it, with no restart
+
+### Requirement: A repository's page shows its channels and its record
+
+A repository's page SHALL show each channel with its component, how it
+moves, its version or that it is empty, and its chain with each
+promotion's asker and the notes of the version it moved to beneath it;
+and the record of what this host published, with each version's notes
+beneath it; every refusal and unreadable answer shown with the source's
+own words (57, 58, 59, 134).
+
+#### Scenario: An unreadable chain on the page
+
+- **WHEN** a repository's status answers one channel's chain unreadable with the ledger's words, and its page is asked
+- **THEN** the page shows that channel unreadable with those words, and every other channel with its version and chain
+
+### Requirement: A repository's page shows its environments
+
+A repository's page SHALL show the environments' four counts and every
+environment with its state, what it should run, what it runs and when
+it converged, what it waits on, and beside one that is behind the notes
+of every version between beneath it (98, 132, 134).
+
+#### Scenario: Every environment on the page
+
+- **WHEN** a repository's status answers one environment running what it should and one waiting on a person, and its page is asked
+- **THEN** the page shows the four counts, and each environment with its state, what it should run, what it runs and when it converged, and what the waiting one waits on
+
+### Requirement: Each request computes its answer anew and writes nothing but the host's copy
+
+Each request for a repository's page or JSON SHALL compute the answer
+anew, and SHALL write nothing but the host's copy of a chain a store
+ledger holds and of each environment's reports, reach the store only to
+fetch them, and ask no signer or target (60).
+
+#### Scenario: A page asked reaches no signer or target
+
+- **WHEN** a repository's page is asked
+- **THEN** the process asks no signer or target anything, and writes nothing but the host's copy of the chains and reports it fetched
+
+### Requirement: The root answers each repository on its own
+
+An entry whose checkout is gone or whose status cannot be asked SHALL
+be its own row's unreadable answer, naming the path, and every other row
+SHALL be shown (58). A host whose file names no repository SHALL answer
+an empty list, and a file that cannot be read SHALL be the root's
+unreadable answer naming the file with the parser's words.
+
+#### Scenario: A file of repositories that cannot be read
+
+- **WHEN** the host's file of repositories holds what its parser cannot read, and `/status.json` is asked
+- **THEN** the root's answer is unreadable naming the file, with the parser's words
+
+### Requirement: One lock keeps the host's process one
+
+The process SHALL hold the host's one lock, `timber/serve.lock` beside
+the file of repositories, for as long as it runs: a `timber serve` that
+finds the lock held SHALL exit 0 saying the host's process answers at
+the address, and no asker SHALL start a second (114, as sluice 129).
+
+#### Scenario: The lock held while the process runs
+
+- **WHEN** the host's serving process answers
+- **THEN** it holds `timber/serve.lock` beside the file of repositories, and lets it go only as it exits
+
+### Requirement: The process ends when idle and no layout is served
+
+The process SHALL end when nothing has asked it for ten minutes and no
+checkout the host's file names holds a rendered layout whose projection
+serves it; while one does, the process SHALL stay, since the
+ecosystem's client cannot start it, and SHALL end at its next idle time
+once the layout or its checkout is gone (114, 115). A host may run it
+as a service of its own, and nothing SHALL tell a person to start one.
+
+#### Scenario: Asked within the idle time
+
+- **WHEN** the process is asked nine minutes after its last request, then nothing asks it for ten minutes, and no named checkout holds a served layout
+- **THEN** it answers the request, and exits ten minutes after it
+
+#### Scenario: No process found
+
+- **WHEN** `timber status --page` finds no process answering
+- **THEN** it starts one itself, and tells no person to start one
+
+### Requirement: A version a served layout lacks is rendered in its checkout on the request
+
+A version the layout lacks SHALL be rendered by the core on the
+request, in the checkout that last named the repository (115).
+
+#### Scenario: A miss through the process
+
+- **WHEN** a checkout's npm layout lacks `@family/widget` 1.3.0, which the policy admits, and the process is asked for it
+- **THEN** the core renders 1.3.0 into that checkout's layout on the request, and the process answers the npm projection's response for it
+
+### Requirement: A request no projection can answer
+
+A repository none named SHALL be answered absent as its status is; an
+ecosystem the checkout binds no projection for, or one whose projection
+serves none, SHALL be `404` naming the ecosystem; a checkout that cannot
+be bound SHALL be its binding's answer (58).
+
+#### Scenario: A layout of a repository none named
+
+- **WHEN** `GET /agentplot/none/npm/x` is asked, and the host's file names no `agentplot/none`
+- **THEN** the answer is absent as its status would be, and nothing is rendered

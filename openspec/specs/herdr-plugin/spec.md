@@ -27,14 +27,12 @@ them.
 ### Requirement: Opening a row shows that repository whole
 
 Opening a row SHALL show the repository's own answer as the process
-gives it at its path. That means the branch and the landed revision the
-policy was read at, and how the landing was read. It means each channel
-with its version or that it is empty, and the chain of promotions that
-put it there, newest first. It means the environments' four counts and
-every environment with its state, what it should run, what it runs and
-since when or why that cannot be read, what it waits on, and beside one
-that is behind the notes of every version between. It also means what
-this host published. A key SHALL return to every repository.
+gives it at its path: the branch and the landed revision the policy was
+read at, and how the landing was read; each channel with its version or
+that it is empty, and the chain of promotions that put it there, newest
+first; its environments, as "An opened row shows every environment"
+says; and what this host published. A key SHALL return to every
+repository.
 
 #### Scenario: A row opened and closed
 
@@ -192,3 +190,16 @@ and cannot be read (132).
 
 - **WHEN** a row's environments answer counts of 0, 0, 0 and 0
 - **THEN** the row shows the four counts as answered
+
+### Requirement: An opened row shows every environment
+
+An opened row SHALL show the environments' four counts and every
+environment with its state, what it should run, what it runs and since
+when or why that cannot be read, what it waits on, and beside one that
+is behind the notes of every version between, as the repository's
+answer gives them.
+
+#### Scenario: The environments of an opened row
+
+- **WHEN** the person opens the row of `o/r`, whose answer holds `srv` running what it should and `prod` waiting on a person
+- **THEN** the pane shows the four counts, `srv` with its state, what it should run and what it runs and since when, and `prod` with its state and what it waits on

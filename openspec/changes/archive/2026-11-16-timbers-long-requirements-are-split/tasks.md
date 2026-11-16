@@ -16,4 +16,4 @@ the place once its last stage delivers.
 
 ## 3. The archive
 
-- [ ] 3.1 Archive the change once groups 1 and 2 are done. Verify with `devenv shell -- moon run root:specs root:changes`, `root:specs` passing all 49 specs and `root:changes` finding no open change.
+- [x] 3.1 Archive the change once groups 1 and 2 are done. Verify with `devenv shell -- moon run root:specs root:changes`, `root:specs` passing all 49 specs and `root:changes` finding no open change.

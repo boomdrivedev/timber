@@ -57,18 +57,9 @@ The given channels SHALL be a policy fragment in the policy file's own
 form, shipped with timber as data in the policy profile's directory
 and laid beneath the repository's file, the two read as one table in
 force by every answer the profile gives (C.10). The fragment SHALL hold
-`beta`, moving on each accepted publish with releases alone, and
-`stable`, bound to `beta`; and, held until the repository switches them
-on, `alpha`, moving on each accepted publish with prereleases too, and
-`lts`, bound to `stable` and moved by no rule, so only an asking moves
-it. The givens that are not held SHALL be declared, by the fragment:
-every component SHALL have `beta` and `stable` with no line written,
-listed like a channel declared by hand, with the policy for each
-answering like any channel's, and never answered as not declared. A
-repository that declares no channel, as 102 lets it, is one that writes
-no channel line: its versions are offered and accepted as 102 says, and
-it still has the givens, which the fragment declares (as ruled at
-boomdrivedev/blueprints b64d367).
+the channels "The given channels the fragment holds" names, and declare
+those "Every component has the givens not held, with no line written"
+names.
 
 #### Scenario: A repository that writes no channel
 
@@ -129,10 +120,7 @@ for every component, marked held, with how it would move once switched
 on and the line that would switch it on, read from the fragment:
 `[channels.<name>]` where the repository declares no component and
 `[channels.<component>.<name>]` where it declares components (C.10 as
-amended at boomdrivedev/blueprints b1267d7, 131 as amended at 1ae1cc5). A
-given the repository switches on SHALL leave the held givens and join
-the channels in force, and one it does not SHALL never be among the
-channels in force.
+amended at boomdrivedev/blueprints b1267d7, 131 as amended at 1ae1cc5).
 
 #### Scenario: Nothing switched on
 
@@ -232,11 +220,7 @@ never widen who signs.
 An environment whose `policy` is `manual` SHALL give it a channel of
 its own, named for the environment, in the component of the channel it
 names and bound to that channel, moved only at an asking (41, 97,
-C.10). Who may ask for it SHALL be named by `approvers` on the
-environment, `[environments.<environment>]`, which the made channel
-takes as its own; never under the made channel, which the repository
-does not write approvers on (C.10, as ruled at boomdrivedev/blueprints
-088430c). An environment whose `policy` is `auto`, or unwritten, SHALL
+C.10). An environment whose `policy` is `auto`, or unwritten, SHALL
 make no channel.
 
 #### Scenario: prod waits on stable
@@ -280,9 +264,7 @@ promoted like a given channel: its policy requires the gate's
 acceptance and its promotion is signed by the gate's signer (131,
 C.10). A line under it SHALL add claims after the gate's acceptance;
 one naming another way it moves SHALL be unreadable naming its table,
-since the environment's words say how it moves, and one naming
-`approvers` SHALL be unreadable naming its table, since who may ask for
-it is written on the environment (C.10).
+since the environment's words say how it moves (C.10).
 
 #### Scenario: Promoting prod
 
@@ -322,3 +304,75 @@ reading no key of the policy file themselves (131, core.1, core.2).
 
 - **WHEN** the gate accepts a version it was told of by a publish, over a fake policy that lists `edge` moving on each publish and a repository whose history holds no policy file
 - **THEN** `edge` moves, and nothing of the repository's history but its landed head and its tags is read
+
+### Requirement: The given channels the fragment holds
+
+The fragment SHALL hold `beta`, moving on each accepted publish with
+releases alone, and `stable`, bound to `beta`; and, held until the
+repository switches them on, `alpha`, moving on each accepted publish
+with prereleases too, and `lts`, bound to `stable` and moved by no
+rule, so only an asking moves it (C.10).
+
+#### Scenario: The shipped fragment's channels
+
+- **WHEN** the revision's policy file declares no component and writes no channel
+- **THEN** `beta` moves on each accepted publish with releases alone and `stable` is bound to `beta`, and `alpha`, moving with prereleases too, and `lts`, bound to `stable` and moved by no rule, are held
+
+### Requirement: Every component has the givens not held, with no line written
+
+The givens that are not held SHALL be declared, by the fragment: every
+component SHALL have `beta` and `stable` with no line written, listed
+like a channel declared by hand, with the policy for each answering
+like any channel's, and never answered as not declared (C.10).
+
+#### Scenario: A given's policy with no line, of one of two components
+
+- **WHEN** the file declares `lib` and `web` and writes no channel, and the policy for `stable` of `lib` is asked
+- **THEN** it answers as the policy of a channel declared by hand would, and not as a channel not declared
+
+### Requirement: A repository that declares no channel still has the givens
+
+A repository that declares no channel, as 102 lets it, SHALL be one
+that writes no channel line: its versions are offered and accepted as
+102 says, and it still has the givens, which the fragment declares (as
+ruled at boomdrivedev/blueprints b64d367).
+
+#### Scenario: A repository that declares no channel publishes
+
+- **WHEN** a repository whose policy file writes no channel line publishes a version the gate accepts
+- **THEN** the version is offered and accepted as 102 says, and `beta` and `stable` of its component are listed
+
+### Requirement: A given switched on joins the channels in force
+
+A given the repository switches on SHALL leave the held givens and join
+the channels in force, and one it does not SHALL never be among the
+channels in force (C.10).
+
+#### Scenario: alpha switched on
+
+- **WHEN** the file declares no component and holds `[channels.alpha]`
+- **THEN** `alpha` is among the channels in force and not held, and `lts` alone is held
+
+### Requirement: Who may ask for a manual environment's channel is named on the environment
+
+Who may ask for a manual environment's channel SHALL be named by
+`approvers` on the environment, `[environments.<environment>]`, which
+the made channel takes as its own; never under the made channel, which
+the repository does not write approvers on (C.10, as ruled at
+boomdrivedev/blueprints 088430c).
+
+#### Scenario: Two approvers on prod
+
+- **WHEN** the manual environment `prod` names `stable` and `approvers = ["ci", "ops"]`
+- **THEN** the channel `prod` takes `ci` and `ops` as the signers that may ask for it
+
+### Requirement: A line under an environment's channel names no approvers
+
+A line under a channel an environment's words make that names
+`approvers` SHALL be unreadable naming its table, since who may ask for
+it is written on the environment (C.10).
+
+#### Scenario: A line under prod naming approvers
+
+- **WHEN** `[channels.prod]` names `approvers = ["ci"]` while the manual environment `prod` names `stable`
+- **THEN** the channels are unreadable naming `[channels.prod]`

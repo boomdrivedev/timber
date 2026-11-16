@@ -66,11 +66,7 @@ the landing, the policy and the ledger alone, by the host's bindings
 file or, where the host has none, as 118 binds a host with no file, and
 SHALL ask no store, signer or target (60). It SHALL take `--branch` (by
 default `main`) for the channels, `--component` to narrow both parts,
-`--revision` to narrow the record's part, and `--json`. A binding that
-cannot be made SHALL be the channels' answer, in its own form, and the
-record's part SHALL still answer. Status SHALL exit 0 whenever it
-answers, each part carrying its own answer, and exit with the code of
-its answer only where it cannot read the repository at all.
+`--revision` to narrow the record's part, and `--json`.
 
 #### Scenario: Status from the installed binary
 
@@ -92,12 +88,7 @@ its answer only where it cannot read the repository at all.
 A host with no bindings file SHALL be bound as 118 binds it, to the
 given store, landing and its remote, ledger, signer and teller
 (host-bindings), for `publish`, `verify`, `sync`, `push`, `rebuild`,
-`promote` and `status` alike. The installed binary SHALL answer absent
-or unreadable for the binding only where a default cannot be made:
-absent naming `XDG_CONFIG_HOME` and `HOME` where neither is set, and
-unreadable naming the repository's remotes and `[landing]` in the
-bindings file where the checkout has several and none is `origin`; it
-SHALL then offer, read or write nothing. Where the file is there, each
+`promote` and `status` alike. Where the file is there, each
 command SHALL be bound to the seams it names and the given ones for the
 tables it leaves out, and render a broken file's unreadable answer in
 its own form, as text or with `--json` (58, 59).
@@ -128,19 +119,14 @@ its own form, as text or with `--json` (58, 59).
 - **THEN** it prints that entry and the promoted channel, and exits 0
 
 ### Requirement: Sync fills the checkout's cache from a landed revision
+
 `timber sync [revision]` SHALL take the revision whose verdicts name
 the entries and whose policy judges the layouts, by default the newest
 revision of the branch the checkout descends from, `--branch` (by
 default `main`) and `--json`; it SHALL be bound as verify is, by the
 host's bindings file or the defaults where it has none, trusting the
 host's own signer and the signers the file trusts, never making the
-store it is bound to, and SHALL answer, as one answer of the core, each
-build identity as rendered, absent, or the refusal or unreadable answer
-its render gave, and each layout as refreshed, naming every pin held,
-refused with its claim found wanting, or absent, or as what it still
-holds and when it was rendered beside what could not be read. It SHALL
-exit 0 when the only entries and pins not rendered or held are absent,
-and otherwise with the worst code among them (51, 54, 57, 99, 118).
+store it is bound to (118).
 
 #### Scenario: A sync with one entry gone
 - **WHEN** `timber sync --json` runs over the fakes for a landed revision whose verdicts name two build identities, one of which the store holds no entry for
@@ -201,15 +187,7 @@ bare of its component's prefix, the channel, `--from <version>` where
 the asker expects the channel at a version, `--component` (needed only
 where more than one is declared), `--branch` (by default `main`) and
 `--json`; `timber promote --back --to <channel>` SHALL take no version
-and promote the version the channel's head moved from. It SHALL be
-bound by the host's bindings file, its `[signing]` and `[ledger]` or,
-for each it leaves out or where there is no file, the given host key
-and the git ref on the landing's remote, or in the repository where the
-landing has none (118), never making the store it is
-bound to. It SHALL print the channel, the version and index moved to
-and from, the promotion claim's digest and its predecessor's, and how
-the store followed, with the store's own answer beside where it was not
-written (33, 57).
+and promote the version the channel's head moved from.
 
 #### Scenario: A promotion as JSON
 
@@ -265,18 +243,7 @@ acceptance and for a layout and every channel the channels answer
 lists, the givens beside the repository's own, each with its component,
 how it moves, whether a following channel takes prereleases, the claims
 its policy requires, its promoters and who may ask for it (C.10, 131,
-82); and beneath that table, each given held off, with how it would
-move and the line that would switch it on, as the same channels answer
-carries them apart from the channels in force, so a reader sees what
-one line would give them (C.10 as amended at boomdrivedev/blueprints
-b1267d7, 131 as amended at 1ae1cc5). Each part SHALL carry its own
-answer, so an absent layout, a channel whose policy cannot be read, or
-an unreadable channels answer leaves the rest shown, the last shown
-once in place of the channels and the givens held off (58). It
-SHALL be bound as status is, asking the landing and the policy alone,
-and SHALL write nothing (60, core.32). It SHALL exit 0 whenever an
-answer is made, and with the answer's own code where the branch's head
-cannot be resolved or has not landed.
+82).
 
 #### Scenario: The givens beside a line
 
@@ -315,15 +282,7 @@ Where the bindings file binds `[gate] publish = {}`, or holds no
 SHALL, after the core's publish has answered, tell the gate of each
 version the answer offered, in the same run: the component, the version
 and the index digest the answer names, told by a publish, the gate
-signing as the host's `[signing]` signer (95, 108, 130). A component the
-publish left unchanged, or answered with absent, refused or unreadable,
-SHALL tell the gate nothing. The core's publish SHALL reach nothing of
-the gate: the command calls the gate after the publish has answered
-(130, core.10). The gate's answer for each version SHALL be printed
-beside that version's, and in the JSON answer SHALL be the version's
-`gate`, in the core's one form (57). The exit code SHALL be the worst of
-each component's publish answer and of the gate's, a version the gate
-refused or a following channel it held counting as refused.
+signing as the host's `[signing]` signer (95, 108, 130).
 
 #### Scenario: One host, beta moves in the same run
 
@@ -397,16 +356,14 @@ answer value for value.
 - **THEN** it shows `provenance by laptop` as written and `verdict of cli:test by box` marked asked of built artifacts alone, and the exit is 0
 
 ### Requirement: Sync makes a served layout reachable
+
 After the layouts are rendered, `timber sync` SHALL answer, for each
 layout whose projection serves it, the address its clients read it at,
 and, where there is one, SHALL name the checkout's repository to the
 host and find the host's serving process at the core's address or start
 it where none answers, as `timber status --page` does, and answer that
 it serves or why it cannot (114, 132). A layout whose projection serves
-none SHALL name no address and start nothing. A repository whose landing
-remote names no owner and name SHALL be answered unreadable naming the
-remote and its address beside the layouts, and nothing named or started.
-The exit SHALL count that answer as it counts a layout's (57).
+none SHALL name no address and start nothing.
 
 #### Scenario: A sync of an npm layout
 - **WHEN** `timber sync --json` runs in a checkout of `agentplot/consumer` whose npm projection rendered a layout, with no process answering at the address
@@ -524,3 +481,151 @@ target that made it. Nothing but the tree SHALL give the version
 
 - **WHEN** the built binary runs `timber --version`
 - **THEN** it prints `timber <the workspace's version>, revision <the revision it was built from>, built by <compiler> for <target>` on one line and exits 0
+
+### Requirement: Status answers each part on its own, and exits 0 whenever it answers
+
+A binding status cannot make SHALL be the channels' answer, in its own
+form, and the record's part SHALL still answer. Status SHALL exit 0
+whenever it answers, each part carrying its own answer, and exit with
+the code of its answer only where it cannot read the repository at all.
+
+#### Scenario: A ledger that cannot be bound
+
+- **WHEN** `timber status --json` runs on a host whose bindings file names a `[ledger]` that cannot be bound, in a repository whose host record holds one entry
+- **THEN** the channels' part is that binding's answer, the record's part names the entry, and the exit is 0
+
+### Requirement: A default that cannot be made binds nothing
+
+The installed binary SHALL answer absent or unreadable for the binding
+only where a default cannot be made: absent naming `XDG_CONFIG_HOME`
+and `HOME` where neither is set, and unreadable naming the repository's
+remotes and `[landing]` in the bindings file where the checkout has
+several and none is `origin`; it SHALL then offer, read or write
+nothing (118).
+
+#### Scenario: Neither home set
+
+- **WHEN** the built binary runs `timber publish HEAD` with neither `XDG_CONFIG_HOME` nor `HOME` set
+- **THEN** it answers absent naming both, and offers, reads and writes nothing
+
+### Requirement: Sync's answer and its exit
+
+Sync SHALL answer, as one answer of the core, each build identity as
+rendered, absent, or the refusal or unreadable answer its render gave,
+and each layout as refreshed, naming every pin held, refused with its
+claim found wanting, or absent, or as what it still holds and when it
+was rendered beside what could not be read. It SHALL exit 0 when the
+only entries and pins not rendered or held are absent, and otherwise
+with the worst code among them (51, 54, 57, 99).
+
+#### Scenario: A sync whose misses are all absent
+
+- **WHEN** `timber sync` runs over the fakes for a revision whose verdicts name one build identity the store holds no entry for, in a checkout whose lockfile pins one version the store names nothing of
+- **THEN** it answers the entry and the pin absent, and exits 0
+
+### Requirement: Promote is bound by the host's signing and ledger, or the givens
+
+`timber promote` SHALL be bound by the host's bindings file, its
+`[signing]` and `[ledger]` or, for each it leaves out or where there is
+no file, the given host key and the git ref on the landing's remote, or
+in the repository where the landing has none (118), never making the
+store it is bound to.
+
+#### Scenario: A promote with a ledger and a signer written
+
+- **WHEN** `timber promote` runs on a host whose file names a `[signing]` signer and a `[ledger]`
+- **THEN** the promotion is signed by that signer and appended to that ledger, and the store it is bound to is not made
+
+### Requirement: Promote prints the move
+
+`timber promote` SHALL print the channel, the version and index moved to
+and from, the promotion claim's digest and its predecessor's, and how
+the store followed, with the store's own answer beside where it was not
+written (33, 57).
+
+#### Scenario: A move the store did not follow
+
+- **WHEN** `timber promote 0.2.0 --to stable` moves `stable` from 0.1.0 over the fakes, and the store's attach is unreadable
+- **THEN** it prints `stable`, 0.2.0 and 0.1.0 with their indexes, the claim's digest and its predecessor's, and the store's unreadable answer beside
+
+### Requirement: Policy shows the givens held off beneath the table
+
+Beneath the table of channels, `timber policy` SHALL print each given
+held off, with how it would move and the line that would switch it on,
+as the same channels answer carries them apart from the channels in
+force, so a reader sees what one line would give them (C.10 as amended
+at boomdrivedev/blueprints b1267d7, 131 as amended at 1ae1cc5).
+
+#### Scenario: One component's givens held off
+
+- **WHEN** `timber policy` runs at a head whose file declares `lib` and `web` and holds `[channels.lib.alpha]`
+- **THEN** beneath the table it shows `alpha` of `web`, switched on by `[channels.web.alpha]`, and `lts` of each with its component's line
+
+### Requirement: Each part of policy's answer is its own
+
+Each part of `timber policy`'s answer SHALL carry its own answer, so an
+absent layout, a channel whose policy cannot be read, or an unreadable
+channels answer leaves the rest shown, the last shown once in place of
+the channels and the givens held off (58).
+
+#### Scenario: An unreadable channels answer
+
+- **WHEN** `timber policy` runs at a head whose channels answer is unreadable
+- **THEN** that answer is shown once in place of the channels and the givens held off, and the policy for acceptance and for a layout is shown
+
+### Requirement: Policy is bound as status is, writes nothing, and exits 0 when it answers
+
+`timber policy` SHALL be bound as status is, asking the landing and the
+policy alone, and SHALL write nothing (60, core.32). It SHALL exit 0
+whenever an answer is made, and with the answer's own code where the
+branch's head cannot be resolved or has not landed.
+
+#### Scenario: Policy asks nothing else
+
+- **WHEN** `timber policy` runs on a host whose bindings file names a store and a signer
+- **THEN** it asks neither, writes nothing, and exits 0
+
+### Requirement: The core's publish reaches nothing of the gate
+
+The core's publish SHALL reach nothing of the gate: the command calls
+the gate after the publish has answered (130, core.10).
+
+#### Scenario: The gate asked after the publish answers
+
+- **WHEN** `timber publish` runs over the fakes on a host whose file binds `[gate] publish = {}`
+- **THEN** the core's publish answers before the gate is asked anything, and asks nothing of the gate itself
+
+### Requirement: The gate's answer is printed beside the publish's, and counts in the exit
+
+The gate's answer for each version SHALL be printed beside that
+version's, and in the JSON answer SHALL be the version's `gate`, in the
+core's one form (57). The exit code SHALL be the worst of each
+component's publish answer and of the gate's, a version the gate
+refused or a following channel it held counting as refused.
+
+#### Scenario: The gate refuses one of two components
+
+- **WHEN** `timber publish` offers `lib` and `web`, and the gate accepts `lib` and refuses `web`
+- **THEN** each gate answer is printed beside its version, and the exit code is that of a refusal
+
+### Requirement: A remote that names no owner and name is answered beside the layouts
+
+Where the checkout's landing remote names no owner and name, `timber
+sync` SHALL answer unreadable naming the remote and its address beside
+the layouts, and name and start nothing. The exit SHALL count that
+answer as it counts a layout's (57).
+
+#### Scenario: Nothing named or started
+
+- **WHEN** `timber sync` renders an npm layout in a checkout whose landing remote is `/srv/consumer.git`, and no process answers at the core's address
+- **THEN** the host's file is unchanged, and no process is started
+
+### Requirement: A component the publish did not offer tells the gate nothing
+
+A component the publish left unchanged, or answered with absent,
+refused or unreadable, SHALL tell the gate nothing (95, 130).
+
+#### Scenario: A refused component is not told
+
+- **WHEN** `timber publish` offers `lib` and answers `web` refused, on a host whose file binds `[gate] publish = {}`
+- **THEN** the gate is told of `lib` alone, and `web`'s answer carries no gate answer

@@ -18,9 +18,7 @@ every channel the policy at that revision declares, as the policy seam
 lists them (131): each with the component it belongs to (125), how it
 moves, and the channel it is bound to where it is one (37, 83), and
 either the one version its chain's head moved it to, by version and
-index, or that it is empty (31, 101). A channel's version SHALL be read
-from the ledger alone, never from a name in the store (101, 106). Asked
-for one component, status SHALL show that component's channels alone.
+index, or that it is empty (31, 101).
 
 #### Scenario: Two channels, one promoted
 
@@ -62,11 +60,7 @@ a person reads a time in UTC, and every reader of one ledger SHALL see
 one version per channel (36). Where the ledger answers a chain as this
 host last read it, status SHALL show that chain, saying when it was
 read and carrying the remote's or store's own words verbatim, and SHALL
-never show it as refused or as empty (36, 60, 61, C.13, C.14). Status
-SHALL take the landing's answer as the landing seam gives it: where the
-landing cannot be read, the channels' part SHALL be unreadable carrying
-the landing's words, never refused, and the record's part SHALL still
-answer (58, 59, 77).
+never show it as refused or as empty (36, 60, 61, C.13, C.14).
 
 #### Scenario: Two machines, one answer
 
@@ -139,9 +133,7 @@ channel's own answer as status gives it; for the environments, the
 environments' part's four counts, how many run what they should, how
 many are behind, how many wait on a person and how many cannot be read,
 or the environments' part's own answer where it gives no counts (132,
-58). Where the channels' part is not answered, the row SHALL carry that
-answer in place of the heads. A surface SHALL compute no row of its own
-(56, core.31).
+58).
 
 #### Scenario: A row of heads
 
@@ -265,3 +257,47 @@ chains and record (S10).
 
 - **WHEN** status is asked
 - **THEN** every file of the host's record holds what it held before, the ledger records no append, the store records no write, and only files of the host's copy changed
+
+### Requirement: Status reads each channel from the ledger, and one component's when asked
+
+A channel's version SHALL be read from the ledger alone, never from a
+name in the store (101, 106). Asked for one component, status SHALL
+show that component's channels alone.
+
+#### Scenario: A name in the store behind the chain
+
+- **WHEN** `stable`'s name in the store names 0.1.0's index while its chain's head moved it to 0.2.0
+- **THEN** status shows `stable` at 0.2.0 and its index
+
+#### Scenario: One component asked
+
+- **WHEN** the repository declares `lib` and `web`, each with a channel `beta`, and status is asked for `lib`
+- **THEN** status shows `lib`'s `beta` alone
+
+### Requirement: Status takes the landing's answer as the landing seam gives it
+
+Status SHALL take the landing's answer as the landing seam gives it:
+where the landing cannot be read, the channels' part SHALL be unreadable
+carrying the landing's words, never refused, and the record's part
+SHALL still answer (58, 59, 77).
+
+#### Scenario: An unreadable landing beside a record
+
+- **WHEN** the landing answers unreadable with its source's words, and the host's record holds two versions
+- **THEN** the channels' part is unreadable carrying those words, and the record's part answers both versions
+
+### Requirement: A row carries the channels' own answer, and no surface makes one
+
+Where the channels' part is not answered, the row SHALL carry that
+answer in place of the heads. A surface SHALL compute no row of its own
+(56, core.31).
+
+#### Scenario: A row whose channels were refused
+
+- **WHEN** a repository's status answers its channels' part refused, naming the branch and a revision the landing has not landed
+- **THEN** its row carries that refusal in place of the heads
+
+#### Scenario: The served root's row
+
+- **WHEN** the serving process answers a repository's row at its root
+- **THEN** the row is the core's row of that repository's status answer, value for value
