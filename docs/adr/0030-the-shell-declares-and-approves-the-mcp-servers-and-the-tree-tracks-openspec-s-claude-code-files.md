@@ -3,11 +3,17 @@ number: 30
 title: The shell declares and approves the MCP servers, and the tree tracks OpenSpec's Claude Code files
 status: accepted
 date: 2026-11-07
+links:
+- target: 36
+  kind: amendedby
 ---
 
 # The shell declares and approves the MCP servers, and the tree tracks OpenSpec's Claude Code files
 
 Status: accepted on the brief of the chore timber-devenv-declares-its-mcp-servers, 2026-11-07, which decides it in its words: "timber's devenv declares its MCP servers in claude.code.mcpServers, devenv's hosted mcp.devenv.sh named among them, and approves each by name in the project settings devenv writes (enabledMcpjsonServers), so agent sessions start them unasked; the generated .mcp.json and .claude/settings.json are ignored in git, what its Claude Code settings hold today moves into devenv's options, and it tracks OpenSpec's Claude Code skills and commands as its pinned OpenSpec writes them (agentplot/boomdrive docs/adr/0022, accepted)". The family's decision is boomdrive's record 0022, accepted by the user on 2026-11-07; how timber carries it out below is the chore's own, cheap to change.
+
+Amended by ADR 0036: `root:toolchain` holds openspec to the pin and reads no skill; the release a skill names is kept by whoever writes the skills again (`boomdrivedev/blueprints` principle 16).
+
 Sources: agentplot/boomdrive record 0022 and its amendment of 2026-11-07; ADR 0008; rules core.25, core.26; devenv's `src/modules/integrations/claude.nix` and `src/modules/files.nix` at devenv.lock's pin; `.config/sluice.toml`; flume's, boomdrive's, boomdrive-cloud's and boomdrive-web's chores of the same brief, 2026-11-07.
 
 ## Context and problem statement
