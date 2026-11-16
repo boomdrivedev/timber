@@ -17,9 +17,9 @@ tasks:
     tags: [check-fast]
     options: {runFromWorkspaceRoot: true}
   # rustc, cargo, clippy and rustfmt are the build .prototools pins, and
-  # openspec and the Claude Code skills it writes the release devenv.nix
-  # pins, on whichever host runs the gate (core.26; ADR 0030). It reads the
-  # tools it checks from outside the tree, so it never replays.
+  # openspec the release devenv.nix pins, on whichever host runs the gate
+  # (core.26; ADR 0030). It reads the tools it checks from outside the
+  # tree, so it never replays, and reads no Markdown file (ADR 0036).
   toolchain:
     command: 'sh check-toolchain.sh'
     tags: [check-fast]
@@ -45,12 +45,6 @@ tasks:
   marketplace:
     command: 'plugins/check-marketplace.sh'
     inputs: ['/.claude-plugin/**/*', '/plugins/*/.claude-plugin/**/*', '/plugins/check-marketplace.sh', '/plugins/claude.sh', '/devenv.nix', '/devenv.lock']
-    tags: [check-fast]
-    options: {runFromWorkspaceRoot: true}
-  # No two decision records share a number (check-adrs.sh).
-  adrs:
-    command: 'sh check-adrs.sh'
-    inputs: ['/docs/adr/*.md', '/check-adrs.sh']
     tags: [check-fast]
     options: {runFromWorkspaceRoot: true}
   # Every file that carries timber's version gives the workspace's, 0.0.0
