@@ -1,5 +1,5 @@
 ---
-number: 37
+number: 38
 title: The checks build the release commit, so a published binary says its version and is the build they verified
 status: accepted
 date: 2026-11-16
