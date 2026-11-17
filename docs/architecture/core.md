@@ -113,7 +113,7 @@ part exists.
 
 ### The release
 
-- **[core.74]** On main every file that carries timber's version gives `0.0.0`; a release's tag names a release commit, cut from the commit it releases, that writes the release's version into each, and a build takes its version from its tree alone.
+- **[core.74]** On main every file that carries timber's version gives `0.0.0`; a release's tag names a release commit, cut from the commit it releases, that writes the release's version into each, and a build takes its version from its tree alone; once timber publishes timber, the release commit goes and the binary names its revision and its build, never its version (record 0011 as restored 2026-11-17; statement 24, C.11).
 
 ### The flake
 
