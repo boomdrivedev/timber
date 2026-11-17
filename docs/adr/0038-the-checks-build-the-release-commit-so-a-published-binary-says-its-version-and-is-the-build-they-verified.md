@@ -1,14 +1,14 @@
 ---
 number: 38
 title: The checks build the release commit, so a published binary says its version and is the build they verified
-status: accepted
+status: rejected
 date: 2026-11-16
 decision-makers: boomdrive-design (the record and every choice in it)
 ---
 
 # The checks build the release commit, so a published binary says its version and is the build they verified
 
-Status: accepted, boomdrive-design's.
+Status: rejected by the user on 2026-11-17, in boomdrive-design's pane: "This seems completely contradictory to how I have been told that Timber is supposed to work." It breaks timber's core, clause 24: the build never knows its version, so the checks build once and a publish names those same bytes with a version, never building them again. Where timber publishes a component, a compiled binary carries its revision and its build identity, and its version is the name timber's index gives those bytes (24, C.11). Nothing below binds.
 
 Deciders: boomdrive-design, on blueprints-a4's question of 2026-11-16. The user said that day, in blueprints-a4's session, that timber is used in every repository of the family, flume and Boomdrive among them. That makes timber the publisher of the family's own binaries, which record 0031 left to "that unit's design".
 
