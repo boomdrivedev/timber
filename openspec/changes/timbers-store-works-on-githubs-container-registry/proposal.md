@@ -83,9 +83,10 @@ None.
 ### Modified Capabilities
 
 - `registry-store`: a write's token is asked to pull and push its
-  repository; the store's scenarios pass against GitHub's registry in a
-  check by hand outside the gate; a record says what that registry
-  answered.
+  repository; bytes a registry answers held and will not serve are
+  unreadable in its words, never absent; the store's scenarios pass
+  against GitHub's registry in a check by hand outside the gate; a record
+  says what that registry answered.
 - `tools-layer`: the GHCR check is one of the checks that need a
   person's sign-in and run outside the gate, against a repository and
   a credential the host names.

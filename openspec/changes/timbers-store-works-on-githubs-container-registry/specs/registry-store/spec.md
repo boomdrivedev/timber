@@ -55,3 +55,28 @@ put (C.1, ADR 0015).
 
 - **WHEN** a reader opens the record
 - **THEN** each issue names what GitHub's registry answered, the date, and what the profile does because of it
+
+## MODIFIED Requirements
+
+### Requirement: Absent, refused and unreadable kept apart
+
+A digest or name the repository does not hold SHALL be absent; a
+registry that refuses SHALL be refused with its own words verbatim; a
+registry that cannot be reached or answers what cannot be read SHALL be
+unreadable with the client's or the registry's words (58, 59,
+core.19).
+
+#### Scenario: A registry that cannot be reached
+
+- **WHEN** the registry's address answers no connection and bytes are read
+- **THEN** the read is unreadable carrying the client's words, and never absent
+
+#### Scenario: A tag the registry will not move
+
+- **WHEN** the registry refuses a tag put, as an ECR repository with immutable tags does
+- **THEN** name is refused carrying the registry's error body verbatim, and nothing is retried
+
+#### Scenario: Bytes the registry holds and will not serve
+
+- **WHEN** a registry answers a blob's `GET` `404` and its `HEAD` `200`, as GitHub's registry does in a package that holds no manifest yet, and the bytes are read
+- **THEN** the read is unreadable carrying the registry's words, and never absent
