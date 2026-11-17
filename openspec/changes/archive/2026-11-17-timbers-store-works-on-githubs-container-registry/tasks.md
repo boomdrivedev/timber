@@ -37,4 +37,4 @@ without one stops short with `flume needs`.
 
 ## 6. The archive
 
-- [ ] 6.1 Archive the change once groups 1 to 5 are done: `devenv shell -- openspec archive timbers-store-works-on-githubs-container-registry --yes`, then commit the archived change and the two specs it writes. Verify with `devenv shell -- moon run root:specs root:changes`, `root:specs` passing every spec and `root:changes` finding no open change.
+- [x] 6.1 Archive the change once groups 1 to 5 are done: `devenv shell -- openspec archive timbers-store-works-on-githubs-container-registry --yes`, then commit the archived change and the two specs it writes. Verify with `devenv shell -- moon run root:specs root:changes`, `root:specs` passing every spec and `root:changes` finding no open change.
