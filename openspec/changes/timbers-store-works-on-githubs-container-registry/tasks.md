@@ -33,7 +33,7 @@ without one stops short with `flume needs`.
 
 ## 5. The site
 
-- [ ] 5.1 In `site/src/content/docs/guides/integrations/stores.mdx`, mark GitHub Container Registry `built`: the same, under the owner's packages, made on push, attestations listed by the referrers tag, proven by hand outside the gate on the date of 3.1's third run. In the section on how the registry holds what it holds, name the GHCR check beside ECR's and record 0039 beside ADR 0015, and say a write asks to pull and push its repository. In `site/src/content/docs/guides/self-hosting.mdx`, add a subsection "On GitHub's registry" under "A registry's repositories", saying what design D7 lists, and add `ghcr.io/<owner>/timber` to the examples `[store] registry` names. Verify with `devenv shell -- moon run site:build`.
+- [x] 5.1 In `site/src/content/docs/guides/integrations/stores.mdx`, mark GitHub Container Registry `built`: the same, under the owner's packages, made on push, attestations listed by the referrers tag, proven by hand outside the gate on the date of 3.1's third run. In the section on how the registry holds what it holds, name the GHCR check beside ECR's and record 0039 beside ADR 0015, and say a write asks to pull and push its repository. In `site/src/content/docs/guides/self-hosting.mdx`, add a subsection "On GitHub's registry" under "A registry's repositories", saying what design D7 lists, and add `ghcr.io/<owner>/timber` to the examples `[store] registry` names. Verify with `devenv shell -- moon run site:build`.
 
 ## 6. The archive
 

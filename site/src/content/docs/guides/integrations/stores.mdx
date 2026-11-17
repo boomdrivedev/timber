@@ -60,7 +60,7 @@ its bytes and its digest (13).
 | member | profile | how | status |
 |---|---|---|---|
 | Amazon ECR | C.1, an OCI registry | over the distribution protocol, under one declared repository; the credential from ECR's helper; proven by hand, outside the gate, by a push on 2026-10-25 | built |
-| GitHub Container Registry | C.1 | the same, under the owner's packages | designed |
+| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; proven by hand, outside the gate, on 2026-11-17 | built |
 | Harbor | C.1 | the same, in a project of the operator's | designed |
 | zot | C.1 | the same, on a host or on object storage, attestations listed by its referrers API; proven in the gate | built |
 | the reference distribution | C.1 | the same, the smallest registry, with no referrers API, so attestations are listed by the referrers tag; proven in the gate | built |
@@ -119,14 +119,23 @@ is the bytes, held in the cache repository, and resolve answers the
 bytes' digest (100); a cache
 manifest is no artifact, and claims-of never lists it. The credential is
 the host's, from its Docker configuration and the credential helpers it
-names, reached when the registry asks for one and kept nowhere (64).
+names, reached when the registry asks for one and kept nowhere (64). A
+read asks the registry's token service for the scope its challenge
+names, and a write for pulling and pushing its repository, whatever the
+challenge names. Bytes a registry answers held and will not serve, as
+GitHub's registry does in a package that holds no manifest yet, are
+unreadable in the registry's words, never absent (59).
 
 zot and the reference distribution are proven in the gate, each started
 for the test. ECR needs a person's live AWS session, which the gate does
 not hold, so its run is a check of its own outside the gate, run by hand
 with `moon run ':#check-ecr'` against a repository the host names. ECR
 was proven by that run's push on 2026-10-25, in us-west-2; ADR 0015
-records what ECR answered.
+records what ECR answered. GitHub's registry needs a person's token as
+well, so its run is the GHCR check, outside the gate beside ECR's, run
+by hand with `moon run ':#check-ghcr'` against a repository the host
+names. GitHub's registry was proven by three runs of it in a row on
+2026-11-17; record 0039 records what GitHub's registry answered.
 
 The layout is bound for a host by its bindings file, `[store] layout =
 "<path>"`, and a registry by `[store] registry = "<host>/<repository>"`

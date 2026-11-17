@@ -151,8 +151,9 @@ empty file is no file.
   each tag the branch landed whose name the store resolves to that
   component's index.
 - `[store] registry` names one repository of a registry, such as
-  `123456789012.dkr.ecr.us-east-1.amazonaws.com/timber` or
-  `localhost:5000/timber`, the declared repository the store's spaces
+  `123456789012.dkr.ecr.us-east-1.amazonaws.com/timber`,
+  `ghcr.io/<owner>/timber` or `localhost:5000/timber`, the declared
+  repository the store's spaces
   hang under (see [a registry's repositories](#a-registrys-repositories)).
   No binding makes a repository. The credential is never the file's: it
   is the host's Docker configuration and the credential helper it names
@@ -266,6 +267,40 @@ declared component's versions from before:
 
 Cache entries a push wrote into the declared repository before are read
 by nothing and may be removed; an entry gone is a build again (54).
+
+#### On GitHub's registry
+
+GitHub's registry is bound as any registry, `[store] registry =
+"ghcr.io/<owner>/<path>"`, and proven by hand outside the gate (record
+0039). What it holds, it holds as the owner's packages:
+
+- **Every repository is a package.** The declared repository and every
+  repository under it, each artifact's name, each declared component's
+  and each build profile's cache, is a package of the owner's. GitHub's
+  registry makes each on its first push, private.
+- **A package is made public one at a time.** An administrator of the
+  organization makes a package public in its settings. GitHub documents
+  that a public package is never made private again, so decide before
+  you do it. Each new artifact's name and each new component is a new
+  package, private until that is done.
+- **The declared repository holds everything.** Every blob, artifact,
+  index and claim a host publishes is held in the declared repository,
+  so make it public only where everything the host publishes may be.
+- **The host's token.** A publishing host needs a token with
+  `write:packages`, a host that only reads a private store one with
+  `read:packages`, kept by `docker login ghcr.io` in its Docker
+  configuration. A token reaches what its account's role on each package
+  lets it, whatever scope timber asks.
+- **Leave untagged versions alone.** An artifact's manifest, a referrer
+  and a cache entry's bytes are held by digest, untagged, and named by an
+  index, a referrers tag or a cache manifest. Deleting a package's
+  untagged versions deletes them.
+- **Until its first manifest.** A new package serves no bytes until it
+  holds a manifest, which the first publish puts: until then, a read of
+  bytes it holds is unreadable in GitHub's words.
+- **The check's leavings.** Each run of the GHCR check, `moon run
+  ':#check-ghcr'`, leaves private packages under the repository it
+  names; remove them in the organization's package settings.
 
 ### On nix-darwin and NixOS
 
