@@ -4,7 +4,11 @@
 //! registry challenges answered once with the host's Docker credential,
 //! reached at that moment through the host's Docker configuration and
 //! the helper it names, as `Basic` or as a `Bearer` token asked of the
-//! challenge's realm for the scope it names. What authorizes the next
+//! challenge's realm: a read for the scope the challenge names, a write,
+//! any method but `GET` and `HEAD`, for `repository:<repository>:pull,push`
+//! whatever the challenge names, as a registry that names `pull` alone
+//! for a write would answer a token that cannot push (64, C.1; record
+//! 0039). `service` is the challenge's either way. What authorizes the next
 //! request to each repository is held in memory by the one handle and
 //! written nowhere, so a token scoped to one repository is kept beside
 //! another's (64, rule core.21; design D8).
@@ -203,7 +207,7 @@ impl Client {
         let Some(challenge) = first.header("www-authenticate").and_then(challenge) else {
             return Ok(first);
         };
-        let Some(authorization) = self.authorize(&challenge)? else {
+        let Some(authorization) = self.authorize(&challenge, &method, repository)? else {
             return Ok(first);
         };
         self.authorization
@@ -283,11 +287,18 @@ impl Client {
         }
     }
 
-    /// What authorizes a request `challenge` was answered to: the host's
-    /// credential as `Basic`, or a token the realm answers for it; none
-    /// where the host holds no credential for the registry, so the
+    /// What authorizes a `method` request for `repository` that
+    /// `challenge` was answered to: the host's credential as `Basic`, or a
+    /// token the realm answers for it, a read's for the scope the
+    /// challenge names and a write's for pulling and pushing `repository`;
+    /// none where the host holds no credential for the registry, so the
     /// challenge is the answer.
-    fn authorize(&self, challenge: &Challenge) -> Answer<Option<String>> {
+    fn authorize(
+        &self,
+        challenge: &Challenge,
+        method: &Method,
+        repository: &str,
+    ) -> Answer<Option<String>> {
         let credential = self.credential()?;
         match challenge {
             Challenge::Basic => Ok(match credential {
@@ -302,7 +313,13 @@ impl Client {
                 service,
                 scope,
             } => {
-                let query: Vec<String> = [("service", service), ("scope", scope)]
+                let write = ![Method::GET, Method::HEAD].contains(method);
+                let scope = if write {
+                    Some(format!("repository:{repository}:pull,push"))
+                } else {
+                    scope.clone()
+                };
+                let query: Vec<String> = [("service", service), ("scope", &scope)]
                     .into_iter()
                     .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={}", encoded(v))))
                     .collect();
@@ -513,6 +530,67 @@ mod tests {
     }
 
     #[test]
+    fn a_write_asks_to_pull_and_push_its_repository() {
+        use std::sync::{Arc, Mutex, OnceLock};
+        let at: Arc<OnceLock<u16>> = Arc::new(OnceLock::new());
+        let asked: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (port_of, queries) = (at.clone(), asked.clone());
+        let port = stub(6, move |head| {
+            let first = head.lines().next().unwrap_or_default().to_string();
+            let reply = |status: &str, headers: &str, body: &str| {
+                format!(
+                    "HTTP/1.1 {status}\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            if let Some(path) = first.split(' ').nth(1).filter(|p| p.starts_with("/token")) {
+                let query = path.split_once('?').map(|(_, q)| q).unwrap_or_default();
+                queries.lock().unwrap().push(query.to_string());
+                return reply("200 OK", "", r#"{"token":"pushed"}"#);
+            }
+            if head.to_lowercase().contains("authorization: bearer pushed") {
+                return reply("200 OK", "", "{}");
+            }
+            let port = port_of.get().copied().unwrap();
+            reply(
+                "401 Unauthorized",
+                &format!(
+                    "www-authenticate: Bearer realm=\"http://127.0.0.1:{port}/token\",service=\"stub\",scope=\"repository:one:pull\"\r\n"
+                ),
+                "",
+            )
+        });
+        at.set(port).unwrap();
+        let source = Source::new(timber_seams::Seam::Store, "OCI registry stub");
+        let url = format!("http://127.0.0.1:{port}/v2/one/manifests/x");
+        let none = tempfile::TempDir::new().unwrap();
+
+        let client = Client::new(&format!("127.0.0.1:{port}"), &source);
+        let put = under_docker_config(none.path(), || {
+            client.send("one", Method::PUT, &url, &[], Some(b"{}"))
+        })
+        .unwrap();
+        assert_eq!(put.status, StatusCode::OK, "{}", put.words());
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["service=stub&scope=repository%3Aone%3Apull%2Cpush"],
+            "a put asked a token that cannot push"
+        );
+
+        let fresh = Client::new(&format!("127.0.0.1:{port}"), &source);
+        let get = under_docker_config(none.path(), || {
+            fresh.send("one", Method::GET, &url, &[], None)
+        })
+        .unwrap();
+        assert_eq!(get.status, StatusCode::OK, "{}", get.words());
+        assert_eq!(
+            asked.lock().unwrap().last().map(String::as_str),
+            Some("service=stub&scope=repository%3Aone%3Apull"),
+            "a read asked other than the challenge's scope"
+        );
+    }
+
+    #[test]
     fn a_query_value_is_encoded() {
         assert_eq!(
             encoded("repository:acme/timber:pull,push"),
@@ -552,9 +630,10 @@ mod tests {
     }
 
     /// A server on a loopback port answering each request in turn with
-    /// what `answer` makes of its head, closing each connection after.
+    /// what `answer` makes of its head, its body read and set aside,
+    /// closing each connection after.
     fn stub(answers: usize, answer: impl Fn(&str) -> String + Send + 'static) -> u16 {
-        use std::io::{BufRead, BufReader, Write};
+        use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
@@ -562,14 +641,21 @@ mod tests {
                 let mut stream = stream.unwrap();
                 let mut head = String::new();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0;
                 loop {
                     let mut line = String::new();
                     reader.read_line(&mut line).unwrap();
                     if line == "\r\n" || line.is_empty() {
                         break;
                     }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap();
+                        }
+                    }
                     head.push_str(&line);
                 }
+                reader.read_exact(&mut vec![0; length]).unwrap();
                 stream.write_all(answer(&head).as_bytes()).unwrap();
             }
         });

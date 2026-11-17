@@ -3,22 +3,18 @@
 //! host names in `env.TIMBER_TOOLS_ECR` of its `devenv.local.nix`,
 //! reached with the host's Docker credentials, ECR's helper among them,
 //! every name they pass prefixed by the run so no run's names meet an
-//! earlier one's (design D12, D14). It refuses to run, naming the
-//! setting, on a host that names no repository, rather than pass without
-//! running.
+//! earlier one's (design D12, D14), through the live rig the run against
+//! GitHub's registry shares, in `registry/mod.rs`. It refuses to run,
+//! naming the setting, on a host that names no repository, rather than
+//! pass without running.
 
 #![cfg(feature = "tools")]
 
 mod registry;
 
-use std::cell::Cell;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use registry::{cache_entries, unanswered};
+use registry::{cache_entries, run_prefix, store_group_against, Prefixed};
 use timber::profiles::store::registry::Registry;
-use timber_conformance::seams::store::{self, StoreRig};
-use timber_conformance::{run, Rig};
-use timber_seams::{Answer, Digest, Envelope, Held, Manifest, Name, Put, Store};
+use timber_seams::{Manifest, Store};
 
 /// The setting a host names its ECR repository by.
 const SETTING: &str = "TIMBER_TOOLS_ECR";
@@ -37,148 +33,9 @@ fn repository() -> String {
     }
 }
 
-/// A registry store whose every name carries the run's prefix in the
-/// space it is in: an artifact's on its name, so each run lists a
-/// repository of its own, a cache entry's on its build identity, and
-/// every other name before it.
-struct Prefixed {
-    registry: Registry,
-    prefix: String,
-}
-
-impl Prefixed {
-    fn named(&self, name: &Name) -> Name {
-        if let Some((ecosystem, artifact, version)) = name.as_artifact() {
-            return timber_seams::artifact_name(&ecosystem, &self.artifact(&artifact), &version);
-        }
-        match name.as_str().strip_prefix("cache/") {
-            Some(identity) => Name::new(format!("cache/{}{identity}", self.prefix)),
-            None => Name::new(format!("{}{name}", self.prefix)),
-        }
-    }
-
-    fn artifact(&self, name: &timber_seams::EcosystemName) -> timber_seams::EcosystemName {
-        timber_seams::EcosystemName::new(format!("{}{name}", self.prefix))
-    }
-}
-
-impl Store for Prefixed {
-    fn put_bytes(&self, bytes: &[u8]) -> Answer<Put> {
-        self.registry.put_bytes(bytes)
-    }
-    fn put_artifact(&self, manifest: &Manifest) -> Answer<Put> {
-        self.registry.put_artifact(manifest)
-    }
-    fn attach(&self, subject: &Digest, attestation: &Envelope) -> Answer<Put> {
-        self.registry.attach(subject, attestation)
-    }
-    fn claims_of(&self, digest: &Digest) -> Answer<Vec<Envelope>> {
-        self.registry.claims_of(digest)
-    }
-    fn name(&self, name: &Name, to: &Digest, expected: Option<&Digest>) -> Answer<()> {
-        self.registry.name(&self.named(name), to, expected)
-    }
-    fn resolve(&self, name: &Name) -> Answer<Digest> {
-        self.registry.resolve(&self.named(name))
-    }
-    fn read(&self, digest: &Digest) -> Answer<Held> {
-        self.registry.read(digest)
-    }
-    fn versions(
-        &self,
-        ecosystem: &timber_seams::Ecosystem,
-        name: &timber_seams::EcosystemName,
-    ) -> Answer<Vec<timber_seams::Version>> {
-        self.registry.versions(ecosystem, &self.artifact(name))
-    }
-}
-
-/// The store group's rig over the host's ECR repository, a scenario's
-/// names apart from every other's, and a store at a loopback port
-/// nothing listens on, which [`StoreRig::unreachable`] makes the rig's.
-struct EcrRig {
-    live: Prefixed,
-    dead: Registry,
-    down: Cell<bool>,
-}
-
-impl EcrRig {
-    fn new(repository: &str, run: &str, scenario: usize) -> EcrRig {
-        EcrRig {
-            live: Prefixed {
-                registry: Registry::new(repository).expect("the repository the host names"),
-                prefix: format!("{run}-{scenario}-"),
-            },
-            dead: Registry::new(&format!("127.0.0.1:{}/store", unanswered())).unwrap(),
-            down: Cell::new(false),
-        }
-    }
-}
-
-impl Rig for EcrRig {
-    fn profile(&self) -> String {
-        self.live.registry.source().profile.clone()
-    }
-}
-
-impl StoreRig for EcrRig {
-    fn store(&self) -> &dyn Store {
-        if self.down.get() {
-            &self.dead
-        } else {
-            &self.live
-        }
-    }
-
-    fn unreachable(&self) -> String {
-        self.down.set(true);
-        ureq::get(&format!("{}tags/list", self.dead.base()))
-            .call()
-            .expect_err("nothing listens on the port")
-            .to_string()
-    }
-
-    /// The registry's bound: its tag reads may answer a moved name's
-    /// former place for that long (C.1, ADR 0015).
-    fn settles_within(&self) -> Duration {
-        self.live.registry.bound()
-    }
-
-    /// The registry's word: its names take no condition, ECR's tag put
-    /// among them (C.1, ADR 0015).
-    fn names_conditional(&self) -> bool {
-        self.live.registry.names_conditional()
-    }
-}
-
-/// A prefix no earlier run's names carry.
-fn run_prefix() -> String {
-    let started = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("a clock after 1970")
-        .as_secs();
-    format!("run{started}-{}", std::process::id())
-}
-
 #[test]
 fn ecr_keeps_the_stores_contract() {
-    let repository = repository();
-    let run_prefix = run_prefix();
-    let scenario = Cell::new(0);
-    let report = run(store::GROUP, &store::scenarios(), &|| {
-        scenario.set(scenario.get() + 1);
-        Box::new(EcrRig::new(&repository, &run_prefix, scenario.get()))
-    });
-    report.assert();
-    assert_eq!(
-        report.profile,
-        format!("OCI registry {repository}"),
-        "the report names {}",
-        report.profile
-    );
-    assert_eq!(report.ran, store::scenarios().len());
-    let not: Vec<&str> = report.not_applicable.iter().map(|n| n.scenario).collect();
-    assert_eq!(not, ["a name moved from where it is not"], "{report}");
+    store_group_against(&repository());
 }
 
 /// What the run records in ADR 0023 (design D8, D13): an artifact's name

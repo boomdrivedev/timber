@@ -464,7 +464,10 @@ impl Registry {
     /// The bytes of the blob `digest`, once they are found to be its;
     /// none when it is not held. A redirect, as ECR's to its bucket, is
     /// followed, and the digest checked on what finally arrives (design
-    /// D3).
+    /// D3). A `GET` answered 404 is asked after by a `HEAD`: where that
+    /// answers the blob held, as GitHub's registry does in a package its
+    /// push made that holds no manifest yet, the bytes are unreadable in
+    /// the registry's words, never absent (59, rule core.19; record 0039).
     fn blob(&self, repository: &str, digest: &Digest) -> Answer<Option<Vec<u8>>> {
         let url = self.url_in(repository, &format!("blobs/{digest}"));
         let answered = self.send(repository, Method::GET, &url, &[], None)?;
@@ -473,7 +476,18 @@ impl Registry {
                 self.same(digest, &answered.body)?;
                 Ok(Some(answered.body))
             }
-            StatusCode::NOT_FOUND => Ok(None),
+            StatusCode::NOT_FOUND => match self.blob_size(repository, digest)? {
+                None => Ok(None),
+                Some(_) => Err(Not::unreadable(
+                    &self.source,
+                    &url,
+                    Some(format!(
+                        "the registry answers a HEAD of the blob that it holds it, and its GET \
+                         404: {}",
+                        answered.words()
+                    )),
+                )),
+            },
             _ => Err(self.other(&url, &answered)),
         }
     }
@@ -1853,6 +1867,44 @@ mod tests {
             }
             other => panic!("a tag no version writes answered {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_blob_held_and_not_served_is_unreadable_in_the_registrys_words_never_absent() {
+        let stub = Stub::start(
+            Behaviour {
+                serves_blobs_beside_a_manifest_alone: true,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let bytes = b"bytes in a repository that holds no manifest";
+        let digest = store.put_bytes(bytes).unwrap().digest;
+        assert!(store.put_bytes(bytes).unwrap().held_already);
+        match store.read(&digest) {
+            Err(Not::Unreadable(u)) => {
+                assert_eq!(u.source, *store.source());
+                assert_eq!(u.what, format!("{}blobs/{digest}", store.base()));
+                let said = u.said.unwrap();
+                assert!(
+                    said.ends_with(&format!("404: {}", super::stub::GHCR_BLOB_UNKNOWN)),
+                    "{said}"
+                );
+            }
+            other => panic!("bytes the registry holds and will not serve answered {other:?}"),
+        }
+        assert!(matches!(
+            store.read(&Digest::of(b"bytes never put")),
+            Err(Not::Absent(_))
+        ));
+
+        let manifest = Manifest::Artifact {
+            meta: meta("file", "site"),
+            layers: vec![digest.clone()],
+        };
+        store.put_artifact(&manifest).unwrap();
+        assert_eq!(store.read(&digest), Ok(Held::Bytes(bytes.to_vec())));
     }
 
     #[test]
