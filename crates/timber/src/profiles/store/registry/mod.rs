@@ -976,6 +976,82 @@ impl Registry {
         Err(Not::absent(&self.source, to.to_string()))
     }
 
+    /// The repositories timber's index `index`, read from `repository`,
+    /// may be held in beside the repository's own: its component's
+    /// repository, the repository's own for the undeclared component,
+    /// and each of its artifacts' names' repositories, read from the
+    /// index's own annotations (C.1; design D5). A name whose repository
+    /// would run past 255 characters is held nowhere, and is left out.
+    fn holders_of_index(&self, repository: &str, index: &Digest) -> Answer<Vec<String>> {
+        let Some((bytes, typed)) = self.manifest(repository, index)? else {
+            return Ok(Vec::new());
+        };
+        if !typed.artifact_type.as_deref().is_some_and(oci::is_timbers) {
+            return Ok(Vec::new());
+        }
+        let media_type = typed.media_type.unwrap_or_default();
+        let oci::Read::Index(meta) = oci::read(&media_type, &bytes).map_err(|words| {
+            Not::unreadable(
+                &self.source,
+                self.url_in(repository, &format!("manifests/{index}")),
+                Some(words),
+            )
+        })?
+        else {
+            return Ok(Vec::new());
+        };
+        let mut holders = Vec::new();
+        if meta.component().as_str() == REPOSITORY_COMPONENT {
+            holders.push(self.own()?.to_string());
+        } else if let Ok(component) = self.under_own(&[meta.component().as_str()], "") {
+            holders.push(component);
+        }
+        for artifact in meta.artifacts() {
+            let (ecosystem, name) = (artifact.meta.ecosystem(), artifact.meta.name());
+            if let Ok(named) = self.under(&[ARTIFACT_SPACE, ecosystem.as_str(), name.as_str()], "")
+            {
+                holders.push(named);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// The attestation `referrer` of `subject` held in `repository`,
+    /// which holds the subject: its config and layer put, the referrer
+    /// put by its digest, and listed in the subject's referrers tag where
+    /// the put answers no `OCI-Subject`; where the referrer is held
+    /// already, listed in the tag where the registry answers no referrers
+    /// API. True where it was held already (8, 68; design D5, D6).
+    fn attach_in(
+        &self,
+        repository: &str,
+        subject: &Digest,
+        referrer: &oci::Referrer,
+    ) -> Answer<bool> {
+        let descriptor = referrer.descriptor();
+        if self
+            .manifest_head(repository, descriptor.digest.as_str())?
+            .is_some()
+        {
+            return Ok(match self.referrers_api(repository, subject)? {
+                Some(_) => true,
+                None => !self.tag_referrer(repository, subject, &descriptor)?,
+            });
+        }
+        self.put_bytes_in(repository, &referrer.config)?;
+        self.put_bytes_in(repository, &referrer.layer)?;
+        let put = self.put_manifest(
+            repository,
+            descriptor.digest.as_str(),
+            IMAGE_MANIFEST,
+            &referrer.bytes,
+        )?;
+        if put.header("oci-subject").is_none() {
+            self.tag_referrer(repository, subject, &descriptor)?;
+        }
+        Ok(false)
+    }
+
     /// What `digest` holds in `repository`, read as [`Store::read`]
     /// answers it; none where the repository holds no such digest.
     fn read_in(&self, repository: &str, digest: &Digest) -> Answer<Option<Held>> {
@@ -1267,18 +1343,32 @@ impl Store for Registry {
         })
     }
 
-    /// The envelope pushed as a referrer of `subject` in the repository's
-    /// own, and listed in its referrers tag where the registry answers the
-    /// push with no `OCI-Subject`; absent when `subject` is no manifest
-    /// held, and the binding's answer where the store is bound for no
-    /// repository, with nothing written (8, 68, C.1; design D5, D6).
+    /// The envelope pushed as a referrer of `subject` into each
+    /// repository that holds the subject, by a `HEAD` of it: the
+    /// repository's own, each repository the subject was reached in, and,
+    /// for timber's index, its component's repository and each of its
+    /// artifacts' names' repositories, read from the index's own
+    /// annotations; and the one a read found it in. Each is written only
+    /// where the attestation is missing, and listed in the subject's
+    /// referrers tag where the registry answers the push with no
+    /// `OCI-Subject`. Held already only where every holder held it, so an
+    /// attach again after one that failed partway writes what the first
+    /// left out. The subject is found as a read finds it: absent where it
+    /// is no manifest held, and the binding's answer where the store is
+    /// bound for no repository, with nothing written (8, 68, C.1, rule
+    /// core.27; design D4 to D6).
     fn attach(&self, subject: &Digest, attestation: &Envelope) -> Answer<Put> {
-        self.own()?;
+        let own = self.own()?.to_string();
         let found = self.find(subject, |r| self.manifest_head(r, subject.as_str()))?;
-        let Some((repository, (media_type, size, _))) = found else {
+        let Some((found_in, (media_type, size, _))) = found else {
             return Err(Not::absent(&self.source, subject.to_string()));
         };
-        let own = repository.as_str();
+        let mut holders = vec![own];
+        holders.extend(self.reached_in(subject));
+        if media_type == IMAGE_INDEX {
+            holders.extend(self.holders_of_index(&found_in, subject)?);
+        }
+        holders.push(found_in.clone());
         let referrer = oci::referrer(
             Descriptor {
                 media_type,
@@ -1289,35 +1379,23 @@ impl Store for Registry {
             },
             attestation,
         );
-        let descriptor = referrer.descriptor();
-        let digest = attestation.digest();
-        if self
-            .manifest_head(own, descriptor.digest.as_str())?
-            .is_some()
-        {
-            let held_already = match self.referrers_api(own, subject)? {
-                Some(_) => true,
-                None => !self.tag_referrer(own, subject, &descriptor)?,
-            };
-            return Ok(Put {
-                digest,
-                held_already,
-            });
-        }
-        self.put_bytes_in(own, &referrer.config)?;
-        self.put_bytes_in(own, &referrer.layer)?;
-        let put = self.put_manifest(
-            own,
-            descriptor.digest.as_str(),
-            IMAGE_MANIFEST,
-            &referrer.bytes,
-        )?;
-        if put.header("oci-subject").is_none() {
-            self.tag_referrer(own, subject, &descriptor)?;
+        let mut held_already = true;
+        let mut asked: Vec<&String> = Vec::new();
+        for repository in &holders {
+            if asked.contains(&repository) {
+                continue;
+            }
+            asked.push(repository);
+            if *repository != found_in
+                && self.manifest_head(repository, subject.as_str())?.is_none()
+            {
+                continue;
+            }
+            held_already &= self.attach_in(repository, subject, &referrer)?;
         }
         Ok(Put {
-            digest,
-            held_already: false,
+            digest: attestation.digest(),
+            held_already,
         })
     }
 
@@ -2144,6 +2222,92 @@ mod tests {
     }
 
     #[test]
+    fn a_claim_attached_after_the_names_is_held_in_each_repository_holding_its_subject() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "lib", &[("eco", "lib"), ("eco", "lib-docs")]);
+        site.name(&Name::new("lib:lib-v1.3.0"), &version.index, None)
+            .unwrap();
+        for of in ["lib", "lib-docs"] {
+            site.name(&named("eco", of, "1.3.0"), &version.index, None)
+                .unwrap();
+        }
+        let gate = store(&stub);
+        let acceptance = claim("the gate accepted it");
+        let put = gate.attach(&version.index, &acceptance).unwrap();
+        assert!(!put.held_already);
+        let holders = [
+            "acme/store/acme/site",
+            "acme/store/acme/site/lib",
+            "acme/store/artifact/eco/lib",
+            "acme/store/artifact/eco/lib-docs",
+        ];
+        for repository in holders {
+            let claims: Vec<Envelope> = site
+                .referrers(repository, &version.index)
+                .unwrap()
+                .iter()
+                .map(|r| site.envelope(repository, r).unwrap())
+                .collect();
+            assert!(claims.contains(&acceptance), "{repository}: {claims:?}");
+            assert_eq!(claims.len(), 2, "{repository}");
+        }
+        assert!(
+            gate.attach(&version.index, &acceptance)
+                .unwrap()
+                .held_already
+        );
+    }
+
+    #[test]
+    fn an_attestation_held_in_part_is_written_where_it_is_missing() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = published(&site, "web", &[("eco", "site")]);
+        site.name(&named("eco", "site", "1.3.0"), &version.index, None)
+            .unwrap();
+        let (own, named_in) = ("acme/store/acme/site", "acme/store/artifact/eco/site");
+        let acceptance = claim("the gate accepted it");
+        let (media_type, size, _) = site
+            .manifest_head(own, version.index.as_str())
+            .unwrap()
+            .unwrap();
+        let referrer = oci::referrer(
+            Descriptor {
+                media_type,
+                digest: version.index.clone(),
+                size,
+                artifact_type: None,
+                annotations: Default::default(),
+            },
+            &acceptance,
+        );
+        assert!(!site.attach_in(own, &version.index, &referrer).unwrap());
+        let listed = |repository: &str| {
+            referrers_in(&stub, repository, &version.index)
+                .unwrap()
+                .lists(&referrer.descriptor().digest)
+        };
+        assert!(listed(own) && !listed(named_in));
+
+        let before = stub.asked().len();
+        let put = store(&stub).attach(&version.index, &acceptance).unwrap();
+        assert!(!put.held_already, "held in part answered held already");
+        assert!(listed(named_in) && listed("acme/store/acme/site/web"));
+        assert_eq!(
+            writes_of(&stub, before, own),
+            0,
+            "the repository's own, which held it, was written"
+        );
+        assert!(
+            store(&stub)
+                .attach(&version.index, &acceptance)
+                .unwrap()
+                .held_already
+        );
+    }
+
+    #[test]
     fn a_digest_no_name_reached_is_read_from_the_repositorys_own_then_its_cache() {
         let stub = Stub::start(Behaviour::default(), &[]);
         let push = store(&stub).bound_for("moon", true);
@@ -2203,8 +2367,15 @@ mod tests {
         for blob in &version.blobs {
             assert!(held.blobs.contains_key(blob), "{blob} not held");
         }
-        assert!(held.tags.is_empty(), "{:?}", held.tags);
-        assert_eq!(held.manifests.len(), 3, "an attestation was held in lib");
+        // The index is untagged; the attestation attached to it after the
+        // put is held beside it, listed in its referrers tag.
+        assert_eq!(
+            held.tags.keys().collect::<Vec<_>>(),
+            [&tag::referrers(version.index.hex())],
+            "{:?}",
+            held.tags
+        );
+        assert_eq!(held.manifests.len(), 5, "{:?}", held.manifests.keys());
         let own = stub.held("acme/store/acme/site").unwrap();
         assert!(own.manifests.contains_key(&version.index));
         assert_eq!(store.claims_of(&version.index).unwrap().len(), 1);

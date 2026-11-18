@@ -75,7 +75,7 @@ changes. A task that cannot be done without one stops short with
   - Add `a_components_repository_holds_the_claims_on_the_artifacts_its_index_names`.
   - Add `another_tools_referrer_is_not_carried_into_a_names_repository`.
   - Verify with `devenv shell -- cargo test -p timber --lib profiles::store::registry::tests`, where the new tests and every other test of the module pass.
-- [ ] 2.3 Write an attestation into each repository that holds its subject, in `registry/mod.rs` (design D5).
+- [x] 2.3 Write an attestation into each repository that holds its subject, in `registry/mod.rs` (design D5).
   - attach finds its subject as 2.1 does, absent with nothing written where it is found nowhere.
   - It writes into each of these that holds the subject, by a `HEAD` of the manifest: the repository's own, each repository the subject was reached in, and, for an index, its component's repository and each artifact's name's repository, from the index's own annotations.
   - It writes only where the attestation is missing, and answers held already only where every holder held it.
