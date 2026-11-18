@@ -1,15 +1,22 @@
 //! A moved repository's history carried between two roots over the
-//! fakes (C.1, 103, 105; design D4, D5, D8).
+//! fakes, and a move read and carried at a publish's start (C.1, 22, 103,
+//! 105; design D3 to D5, D7, D8).
+
+mod common;
+mod world;
 
 use serde_json::json;
-use timber_core::carry::{self, ChannelCarried, Marked, Root, VersionCarried};
-use timber_fakes::{FakeKeeper, FakeStore, StoreOp};
+use timber_core::carry::{self, ChannelCarried, Marked, Root, Rooted, VersionCarried};
+use timber_core::{Declared, Landed, ROOT_REF};
+use timber_fakes::{FakeKeeper, FakeStore, KeeperOp, RootsOp, StoreOp};
 use timber_seams::{
-    channel_name, moved_name, Answer, Artifact, ArtifactMeta, ChannelId, ChannelName, Claim,
-    ClaimKind, ComponentName, Digest, Ecosystem, EcosystemName, Envelope, Held, IndexMeta, Keeper,
-    Manifest, Moved, MovedTo, Name, Not, Promotion, RepositoryName, Revision, Satisfied, Seam,
-    Signature, SignerId, Source, Store, Version, Why, IN_TOTO,
+    channel_name, moved_name, Answer, Artifact, ArtifactMeta, Audience, ChannelId, ChannelName,
+    Claim, ClaimKind, ComponentName, DeclaredEnvironment, Digest, Ecosystem, EcosystemName,
+    Envelope, EnvironmentName, Held, IndexMeta, Keeper, Manifest, Moved, MovedTo, Name, Not,
+    Promotion, RepositoryName, Required, Revision, Satisfied, Seam, Signature, SignerId, Source,
+    Store, Version, Why, IN_TOTO,
 };
+use world::World;
 
 fn root(owner: &str, name: &str) -> RepositoryName {
     RepositoryName {
@@ -49,6 +56,11 @@ fn sealed(claim: &Claim) -> Envelope {
 /// The version `v<version>` published into `store`: one artifact with a
 /// provenance, the index with an acceptance, named; its index.
 fn published(store: &FakeStore, version: &str) -> Digest {
+    published_as(store, &name(version), version)
+}
+
+/// The version `version` published into `store` and named `named`.
+fn published_as(store: &FakeStore, named: &Name, version: &str) -> Digest {
     let meta = ArtifactMeta::new(
         Ecosystem::new("file"),
         EcosystemName::new("site"),
@@ -92,7 +104,7 @@ fn published(store: &FakeStore, version: &str) -> Digest {
     store
         .attach(&index, &claim(&index, ClaimKind::Acceptance))
         .unwrap();
-    store.name(&name(version), &index, None).unwrap();
+    store.name(named, &index, None).unwrap();
     index
 }
 
@@ -491,4 +503,263 @@ fn a_carry_reads_and_writes_nothing_of_the_cache() {
     }
     assert!(!moving.bound.contents().names.contains_key(&cache));
     assert!(!moving.bound.contents().held.contains_key(&entry));
+}
+
+/// The world's landed head and what its policy file declares there.
+fn landed(world: &World) -> (Landed, Declared) {
+    let landed = Landed::check(&world.fakes.landing, &world.main, &world.head).unwrap();
+    let declared = Declared::read(&world.history(), &landed).unwrap();
+    (landed, declared)
+}
+
+fn rooted(world: &World) -> Answer<Option<Rooted>> {
+    let (landed, declared) = landed(world);
+    carry::root(&world.fakes.seams(), &world.history(), &landed, &declared)
+}
+
+fn record(world: &World) -> Vec<RepositoryName> {
+    world.history().roots(&landed(world).0).unwrap()
+}
+
+fn recorded(world: &World, root: &RepositoryName) {
+    world.history().record_root(&landed(world).0, root).unwrap();
+}
+
+fn lib(channel: &str) -> ChannelId {
+    ChannelId::new(Some(ComponentName::new("lib")), ChannelName::new(channel))
+}
+
+fn web(channel: &str) -> ChannelId {
+    ChannelId::new(Some(ComponentName::new("web")), ChannelName::new(channel))
+}
+
+fn in_force(world: &World, channel: &ChannelId) {
+    world.fakes.policy.require(
+        Audience::Channel(channel.clone()),
+        Required::Channel {
+            claims: vec![],
+            bound_to: None,
+            promoted_by: vec![],
+            approvers: vec![],
+        },
+    );
+}
+
+/// The world moved from `acme/app` to `acme/site`: the record naming
+/// `acme/app`, the roots bound to `acme/site`, and `acme/app` bound with
+/// a store holding the world's two tagged versions, `lib/beta` promoted
+/// to `lib`'s, and a keeper of its own; the root left's store and keeper.
+/// The bound keeper answers `lib/beta`'s chain as the root left's does,
+/// as the git ref ledger's refs, which move with the repository, would.
+fn moved(world: &World) -> (FakeStore, FakeKeeper) {
+    recorded(world, &app());
+    world.fakes.roots.bind(&site());
+    let (left, keeper) = (FakeStore::new(), FakeKeeper::new());
+    let lib_index = published_as(&left, &Name::new("lib:lib-v0.1.0"), "0.1.0");
+    published_as(&left, &Name::new("web:web-v0.1.0"), "0.1.0");
+    let head = promoted(&left, &keeper, &lib("beta"), "0.1.0", &lib_index);
+    world
+        .fakes
+        .keeper
+        .append(&lib("beta"), &head, None)
+        .unwrap();
+    world.fakes.roots.leave(&app(), &left, &keeper);
+    in_force(world, &lib("beta"));
+    (left, keeper)
+}
+
+fn roots_ops(world: &World) -> Vec<RootsOp> {
+    world.fakes.roots.calls().iter().map(|c| c.op).collect()
+}
+
+#[test]
+fn no_root_bound_reads_nothing_and_writes_nothing() {
+    let world = World::new();
+    assert_eq!(rooted(&world), Ok(None));
+    assert!(world.fakes.store.calls().is_empty(), "the store was asked");
+    assert!(
+        world.fakes.keeper.calls().is_empty(),
+        "the ledger was asked"
+    );
+    assert_eq!(roots_ops(&world), [RootsOp::Bound]);
+    assert_eq!(
+        world.shared.git(&["for-each-ref", ROOT_REF]),
+        "",
+        "the record was written"
+    );
+}
+
+#[test]
+fn an_empty_record_records_the_bound_root() {
+    let world = World::new();
+    world.fakes.roots.bind(&root("Acme", "Site"));
+    assert_eq!(rooted(&world), Ok(Some(Rooted::Recorded { root: site() })));
+    assert_eq!(record(&world), [site()]);
+    assert_eq!(roots_ops(&world), [RootsOp::Bound]);
+    assert!(world
+        .fakes
+        .store
+        .calls()
+        .iter()
+        .all(|c| c.op == StoreOp::Resolve));
+}
+
+#[test]
+fn the_same_root_in_another_case_carries_nothing() {
+    let world = World::new();
+    recorded(&world, &site());
+    world.fakes.roots.bind(&root("Acme", "Site"));
+    assert_eq!(rooted(&world), Ok(None));
+    assert_eq!(record(&world), [site()]);
+    assert_eq!(roots_ops(&world), [RootsOp::Bound]);
+}
+
+#[test]
+fn a_moved_repository_is_carried_and_its_root_recorded_last() {
+    let world = World::new();
+    let (left, _) = moved(&world);
+    let answer = rooted(&world);
+    let Ok(Some(Rooted::Carried(carried))) = answer else {
+        panic!("the move was not carried: {answer:?}")
+    };
+    assert_eq!((carried.from.clone(), carried.to.clone()), (app(), site()));
+    assert_eq!(carried.mark, Marked::Made);
+    assert_eq!(
+        carried
+            .versions
+            .iter()
+            .map(|v| (v.name.as_str(), v.carried))
+            .collect::<Vec<_>>(),
+        [
+            ("lib:lib-v0.1.0", VersionCarried::Copied),
+            ("web:web-v0.1.0", VersionCarried::Copied)
+        ]
+    );
+    assert_eq!(carried.channels.len(), 1);
+    assert_eq!(carried.channels[0].channel, lib("beta"));
+    assert_eq!(carried.channels[0].name, ChannelCarried::Made);
+    assert_eq!(roots_ops(&world), [RootsOp::Bound, RootsOp::Left]);
+    assert_eq!(world.fakes.roots.calls()[1].given["from"]["name"], "app");
+    assert_eq!(record(&world), [app(), site()]);
+    assert_eq!(
+        left.contents().names.get(&moved_name()),
+        Some(&mark_digest())
+    );
+    let bound = world.fakes.store.contents();
+    assert!(bound.names.contains_key(&Name::new("lib:lib-v0.1.0")));
+    assert_eq!(
+        bound.names.get(&channel_name(&lib("beta"))),
+        bound.names.get(&Name::new("lib:lib-v0.1.0"))
+    );
+
+    // Carried and recorded, the next publish's read carries nothing.
+    assert_eq!(rooted(&world), Ok(None));
+}
+
+#[test]
+fn a_carry_refused_leaves_the_record_at_the_root_left() {
+    let world = World::new();
+    let (left, _) = moved(&world);
+    let web_mark = left
+        .put_bytes(
+            &MovedTo {
+                to: root("acme", "web"),
+            }
+            .to_bytes(),
+        )
+        .unwrap()
+        .digest;
+    left.name(&moved_name(), &web_mark, None).unwrap();
+    match rooted(&world) {
+        Err(Not::Refused(r)) => assert_eq!(
+            r.why,
+            Why::RootMoved {
+                from: app(),
+                to: root("acme", "web"),
+            }
+        ),
+        other => panic!("a carry from a root marked elsewhere answered {other:?}"),
+    }
+    assert_eq!(record(&world), [app()]);
+}
+
+#[test]
+fn a_bound_root_holding_a_mark_is_refused_naming_where_it_went() {
+    let world = World::new();
+    recorded(&world, &app());
+    world.fakes.roots.bind(&site());
+    let store = &world.fakes.store;
+    let web_mark = store
+        .put_bytes(
+            &MovedTo {
+                to: root("acme", "web"),
+            }
+            .to_bytes(),
+        )
+        .unwrap()
+        .digest;
+    store.name(&moved_name(), &web_mark, None).unwrap();
+    assert_eq!(
+        rooted(&world),
+        Err(Not::refused(
+            &Source::new(Seam::Store, "bound"),
+            Why::RootMoved {
+                from: site(),
+                to: root("acme", "web"),
+            },
+            None
+        ))
+    );
+    assert_eq!(roots_ops(&world), [RootsOp::Bound]);
+    assert_eq!(record(&world), [app()]);
+}
+
+#[test]
+fn a_carry_lists_every_declared_components_versions_and_every_channel_once() {
+    let world = World::new();
+    world.repo.tag("lib-v0.9.0", &world.start);
+    world.repo.tag("lib-v0.10.0", &world.head);
+    let (_, keeper) = moved(&world);
+    for channel in [lib("stable"), web("beta")] {
+        in_force(&world, &channel);
+    }
+    for (name, channel) in [("first", lib("beta")), ("edge", web("edge"))] {
+        world.fakes.policy.declares_at(
+            &world.head,
+            DeclaredEnvironment {
+                name: EnvironmentName::new(name),
+                channel,
+                waits: false,
+                approvers: vec![],
+                target: None,
+            },
+        );
+    }
+    let asked = keeper.calls().len();
+    let answer = rooted(&world);
+    let Ok(Some(Rooted::Carried(carried))) = answer else {
+        panic!("the move was not carried: {answer:?}")
+    };
+    assert_eq!(
+        carried
+            .versions
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "lib:lib-v0.1.0",
+            "lib:lib-v0.9.0",
+            "lib:lib-v0.10.0",
+            "web:web-v0.1.0"
+        ]
+    );
+    let asked_of: Vec<String> = keeper.calls()[asked..]
+        .iter()
+        .filter(|c| c.op == KeeperOp::Chain)
+        .map(|c| c.given["channel"].to_string())
+        .collect();
+    let mut once = asked_of.clone();
+    once.dedup();
+    assert_eq!(asked_of.len(), 4, "{asked_of:?}");
+    assert_eq!(once, asked_of, "a channel was asked twice: {asked_of:?}");
 }

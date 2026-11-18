@@ -12,12 +12,151 @@
 
 use serde::Serialize;
 use timber_seams::{
-    channel_name, moved_name, Answer, ChannelId, Digest, Envelope, Held, Keeper, MovedTo, Name,
-    Not, RepositoryName, Source, Store, Why,
+    channel_name, moved_name, version_name, Answer, ChannelId, Digest, Envelope, Held, Keeper,
+    MovedTo, Name, Not, RepositoryName, Seam, Seams, Source, Store, Why,
 };
 
 use crate::repair::{from_source, head_of};
-use crate::{copy, End};
+use crate::{channels_at, copy, Declared, End, History, Landed, BOUND};
+
+/// 57: what a publish answers of its root (design D6): the root the
+/// record named first, or the history carried to the root bound.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "rooted", rename_all = "snake_case")]
+pub enum Rooted {
+    /// The record named no root, and now names `root`.
+    Recorded { root: RepositoryName },
+    /// The record's last root was another, whose history was carried.
+    Carried(Carried),
+}
+
+/// C.1, design D3, D7: a move read, once per publish, after the landing
+/// check and the policy file's declaration and before any component is
+/// derived. The root the store is bound for first, none ending it with
+/// nothing read or written; then the bound root's mark, a mark there
+/// refusing the publish naming where that root went (D7); then the record
+/// of claimed versions: empty, the bound root recorded; its last root the
+/// bound one, compared lowercased, nothing; another, the history carried
+/// from that root, every version each declared component's tags reach at
+/// the landed revision and every channel in force or followed by an
+/// environment, and the bound root recorded only after the carry answers.
+pub fn root(
+    seams: &Seams,
+    history: &History,
+    landed: &Landed,
+    declared: &Declared,
+) -> Answer<Option<Rooted>> {
+    let Some(bound) = seams.roots.bound()? else {
+        return Ok(None);
+    };
+    let bound = bound.lowercased();
+    let source = Source::new(Seam::Store, BOUND);
+    match seams.store.resolve(&moved_name()) {
+        Ok(at) => return Err(moved_away(seams.store.as_ref(), &source, &bound, &at)),
+        Err(Not::Absent(_)) => {}
+        Err(not) => return Err(not),
+    }
+
+    let recorded = history.roots(landed)?;
+    let Some(last) = recorded.last().map(RepositoryName::lowercased) else {
+        history.record_root(landed, &bound)?;
+        return Ok(Some(Rooted::Recorded { root: bound }));
+    };
+    if last == bound {
+        return Ok(None);
+    }
+
+    let left = seams.roots.left(&last)?;
+    let versions = versions_of(history, landed, declared)?;
+    let channels = channels_of(seams, landed)?;
+    let carried = self::history(
+        Root {
+            repository: &last,
+            store: left.store.as_ref(),
+            source: &left.source,
+            keeper: left.keeper.as_ref(),
+        },
+        Root {
+            repository: &bound,
+            store: seams.store.as_ref(),
+            source: &source,
+            keeper: seams.keeper.as_ref(),
+        },
+        &versions,
+        &channels,
+    )?;
+    history.record_root(landed, &bound)?;
+    Ok(Some(Rooted::Carried(carried)))
+}
+
+/// 22, design D5: the store name of every version the record claims, per
+/// component the policy file declares at the landed revision, each tag
+/// carrying its prefix that the landed revision reaches, in version
+/// order.
+fn versions_of(history: &History, landed: &Landed, declared: &Declared) -> Answer<Vec<Name>> {
+    let mut names = Vec::new();
+    for component in &declared.components {
+        let mut tags = history.tags(landed, &component.prefix)?;
+        tags.sort_by(|a, b| a.version.cmp(&b.version));
+        names.extend(
+            tags.iter()
+                .map(|tag| version_name(&component.name, &tag.name)),
+        );
+    }
+    Ok(names)
+}
+
+/// 131, 136, design D5: each channel the policy answers in force at the
+/// landed revision, then each environment's channel, once each; a policy
+/// that declares none, none.
+fn channels_of(seams: &Seams, landed: &Landed) -> Answer<Vec<ChannelId>> {
+    let mut channels: Vec<ChannelId> = Vec::new();
+    let in_force = match channels_at(seams.policy.as_ref(), landed) {
+        Ok(in_force) => in_force,
+        Err(Not::Absent(_)) => Vec::new(),
+        Err(not) => return Err(not),
+    };
+    let environments = match seams.policy.environments(landed.revision()) {
+        Ok(environments) => environments,
+        Err(Not::Absent(_)) => Vec::new(),
+        Err(not) => return Err(not),
+    };
+    for channel in in_force
+        .into_iter()
+        .map(|c| c.channel)
+        .chain(environments.into_iter().map(|e| e.channel))
+    {
+        if !channels.contains(&channel) {
+            channels.push(channel);
+        }
+    }
+    Ok(channels)
+}
+
+/// D4, D7: `from`, whose `moved` names `at`, refused naming the root its
+/// mark names; unreadable naming the mark where its bytes are no mark.
+fn moved_away(store: &dyn Store, source: &Source, from: &RepositoryName, at: &Digest) -> Not {
+    let mark = match store.read(at) {
+        Ok(Held::Bytes(bytes)) => MovedTo::of_bytes(&bytes),
+        Ok(Held::Manifest(_)) => None,
+        Err(not) => return not,
+    };
+    match mark {
+        Some(mark) => Not::refused(
+            source,
+            Why::RootMoved {
+                from: from.lowercased(),
+                to: mark.to,
+            },
+            None,
+        ),
+        None => Not::unreadable(
+            source,
+            format!("the mark {} at {at}", moved_name()),
+            Some(format!("{at} holds no mark naming a root")),
+        ),
+    }
+}
 
 /// One root of a carry: the repository whose root it is, its store with
 /// the source a copy's answers name it by, and the keeper over it.
@@ -163,25 +302,7 @@ fn mark(from: Root, to: Root) -> Answer<Marked> {
         },
         Err(not) => return Err(not),
     };
-    let other = match from.store.read(&at)? {
-        Held::Bytes(bytes) => MovedTo::of_bytes(&bytes),
-        Held::Manifest(_) => None,
-    };
-    match other {
-        Some(other) => Err(Not::refused(
-            from.source,
-            Why::RootMoved {
-                from: from.repository.lowercased(),
-                to: other.to,
-            },
-            None,
-        )),
-        None => Err(Not::unreadable(
-            from.source,
-            format!("the mark {} at {at}", moved_name()),
-            Some(format!("{at} holds no mark naming a root")),
-        )),
-    }
+    Err(moved_away(from.store, from.source, from.repository, &at))
 }
 
 /// D5, step 3: `channel` carried: its chain read from the root left's
