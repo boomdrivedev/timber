@@ -1403,7 +1403,8 @@ impl Store for Registry {
     }
 
     /// 138: the versions of `name` of `ecosystem`, each tag of the
-    /// name's repository read back, every page of its tag list followed;
+    /// name's repository read back but its index's referrers tag, which
+    /// `tag::of` gives no name, every page of its tag list followed;
     /// the empty list where the registry holds no such repository or it
     /// holds no tag, and unreadable naming the repository and a tag that
     /// does not read back as one the store wrote, never leaving it out,
@@ -1444,6 +1445,9 @@ impl Store for Registry {
             let page: Tags = serde_json::from_slice(&answered.body)
                 .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
             for written in page.tags.unwrap_or_default() {
+                if tag::is_referrers(&written) {
+                    continue;
+                }
                 let Some(version) = tag::read(&written) else {
                     return Err(Not::unreadable(
                         &self.source,
@@ -1496,6 +1500,25 @@ mod tests {
     /// A version of `component` with an artifact of each `(ecosystem,
     /// name)`, put into `store` with an attestation on its index.
     fn published(store: &Registry, component: &str, names: &[(&str, &str)]) -> Offered {
+        offered(store, component, names, false)
+    }
+
+    /// A version as a publish puts it: each artifact put with an
+    /// attestation on it, then the index with one on it.
+    fn attested(store: &Registry, component: &str, names: &[(&str, &str)]) -> Offered {
+        offered(store, component, names, true)
+    }
+
+    /// A version of `component` with an artifact of each `(ecosystem,
+    /// name)`, put into `store` with an attestation on its index, and,
+    /// where `on_artifacts`, one on each artifact before the index is
+    /// put.
+    fn offered(
+        store: &Registry,
+        component: &str,
+        names: &[(&str, &str)],
+        on_artifacts: bool,
+    ) -> Offered {
         let mut artifacts = Vec::new();
         let mut blobs = Vec::new();
         for (ecosystem, name) in names {
@@ -1508,6 +1531,11 @@ mod tests {
                 layers: vec![layer.clone()],
             };
             let digest = store.put_artifact(&manifest).unwrap().digest;
+            if on_artifacts {
+                store
+                    .attach(&digest, &claim(&format!("a claim on {ecosystem} {name}")))
+                    .unwrap();
+            }
             blobs.push(Digest::of(&timber_seams::canonical(&meta(ecosystem, name))));
             blobs.push(layer);
             artifacts.push(Artifact {
@@ -1595,11 +1623,14 @@ mod tests {
             "{:?}",
             own.tags
         );
-        assert_eq!(
-            held.manifests.len(),
-            3,
-            "an attestation was held in the artifact's repository"
+        assert!(
+            held.tags.contains_key(&tag::referrers(version.index.hex())),
+            "the attestation on the index was not held in the artifact's repository: {:?}",
+            held.tags
         );
+        // The index, its two artifacts, the attestation and its subject's
+        // referrers tag.
+        assert_eq!(held.manifests.len(), 5, "{:?}", held.manifests.keys());
         assert_eq!(store.claims_of(&version.index).unwrap().len(), 1);
     }
 
@@ -1995,6 +2026,121 @@ mod tests {
         }
         assert_eq!(asked, ["acme/store/artifact/eco/site"]);
         assert!(stub.held("acme/store/acme/app").is_none());
+    }
+
+    /// The referrers tag `subject` has in `repository` of `stub`.
+    fn referrers_in(stub: &Stub, repository: &str, subject: &Digest) -> Option<Referrers> {
+        let held = stub.held(repository)?;
+        let at = held.tags.get(&tag::referrers(subject.hex()))?;
+        Some(Referrers::parse(&held.manifests[at].1).unwrap())
+    }
+
+    #[test]
+    fn an_artifacts_name_holds_the_claims_on_its_index_and_artifacts() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "web", &[("eco", "site"), ("eco", "cli")]);
+        let names = [
+            (named("eco", "site", "1.3.0"), &version.artifacts[0], "site"),
+            (named("eco", "cli", "1.3.0"), &version.artifacts[1], "cli"),
+        ];
+        for (name, _, _) in &names {
+            site.name(name, &version.index, None).unwrap();
+        }
+        for (name, artifact, of) in names {
+            let repository = format!("acme/store/artifact/eco/{of}");
+            for subject in [&version.index, artifact] {
+                let listed = referrers_in(&stub, &repository, subject)
+                    .unwrap_or_else(|| panic!("{repository} lists nothing on {subject}"));
+                assert_eq!(listed.envelopes().len(), 1, "{repository}: {subject}");
+            }
+            let reader = store_for(&stub, "acme", "app");
+            let (claims, asked) = asked_while(&stub, || {
+                reader.resolve(&name).unwrap();
+                reader.read(&version.index).unwrap();
+                [&version.index, artifact].map(|subject| reader.claims_of(subject))
+            });
+            assert_eq!(asked, [repository.as_str()]);
+            for (subject, claims) in [&version.index, artifact].into_iter().zip(claims) {
+                assert_eq!(claims, site.claims_of(subject), "{subject}");
+                assert_eq!(claims.unwrap().len(), 1, "{subject}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_components_repository_holds_the_claims_on_the_artifacts_its_index_names() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "lib", &[("eco", "lib"), ("eco", "lib-docs")]);
+        let lib = "acme/store/acme/site/lib";
+        let held = stub.held(lib).unwrap();
+        assert!(held.manifests.contains_key(&version.index));
+        for artifact in &version.artifacts {
+            assert!(held.manifests.contains_key(artifact), "{artifact}");
+            let listed = referrers_in(&stub, lib, artifact).unwrap();
+            assert_eq!(listed.envelopes().len(), 1, "{artifact}");
+            let claims: Vec<Envelope> = site
+                .referrers(lib, artifact)
+                .unwrap()
+                .iter()
+                .map(|r| site.envelope(lib, r).unwrap())
+                .collect();
+            assert_eq!(Ok(claims), site.claims_of(artifact), "{artifact}");
+        }
+    }
+
+    #[test]
+    fn another_tools_referrer_is_not_carried_into_a_names_repository() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "web", &[("eco", "site")]);
+        let (own, artifact) = ("acme/store/acme/site", &version.artifacts[0]);
+        let signature = site.put_bytes_in(own, b"another tool's signature").unwrap();
+        site.put_bytes_in(own, EMPTY_JSON).unwrap();
+        let (_, size, _) = site.manifest_head(own, artifact.as_str()).unwrap().unwrap();
+        let other = "application/vnd.example.signature.v1";
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": IMAGE_MANIFEST,
+            "artifactType": other,
+            "config": {
+                "mediaType": oci::EMPTY,
+                "digest": Digest::of(EMPTY_JSON),
+                "size": EMPTY_JSON.len(),
+            },
+            "layers": [{
+                "mediaType": OCTETS,
+                "digest": signature.digest,
+                "size": b"another tool's signature".len(),
+            }],
+            "subject": { "mediaType": IMAGE_MANIFEST, "digest": artifact, "size": size },
+        }))
+        .unwrap();
+        let theirs = Digest::of(&bytes);
+        site.put_manifest(own, theirs.as_str(), IMAGE_MANIFEST, &bytes)
+            .unwrap();
+        let descriptor = Descriptor {
+            media_type: IMAGE_MANIFEST.into(),
+            digest: theirs.clone(),
+            size: bytes.len() as u64,
+            artifact_type: Some(other.into()),
+            annotations: Default::default(),
+        };
+        assert!(site.tag_referrer(own, artifact, &descriptor).unwrap());
+
+        site.name(&named("eco", "site", "1.3.0"), &version.index, None)
+            .unwrap();
+        let repository = "acme/store/artifact/eco/site";
+        let listed = referrers_in(&stub, repository, artifact).unwrap();
+        assert_eq!(listed.envelopes().len(), 1);
+        assert!(!listed.lists(&theirs), "another tool's referrer was listed");
+        assert!(!stub
+            .held(repository)
+            .unwrap()
+            .manifests
+            .contains_key(&theirs));
+        assert!(referrers_in(&stub, own, artifact).unwrap().lists(&theirs));
     }
 
     #[test]
@@ -2451,9 +2597,11 @@ mod tests {
             .filter(|(r, _)| r == repository)
             .map(|(_, taken)| taken)
             .collect();
+        // The version's blobs, and the empty config and the envelope of
+        // the attestation on its index.
         assert_eq!(
             into,
-            vec![false; version.blobs.len()],
+            vec![false; version.blobs.len() + 2],
             "a declined mount was taken"
         );
         let writes: Vec<String> = stub.asked()[before..]
@@ -2464,25 +2612,38 @@ mod tests {
             .map(|a| format!("{} {}", a.method, a.path.split('?').next().unwrap()))
             .collect();
         let mounts = writes.iter().filter(|w| w.starts_with("POST")).count();
-        assert_eq!(mounts, version.blobs.len(), "{writes:#?}");
+        assert_eq!(mounts, version.blobs.len() + 2, "{writes:#?}");
         let first_manifest = writes
             .iter()
             .position(|w| w.contains("/manifests/"))
             .unwrap();
+        assert_eq!(first_manifest, 2 * version.blobs.len(), "{writes:#?}");
         assert!(
             writes[..first_manifest]
                 .iter()
                 .all(|w| w.contains("/blobs/uploads/")),
             "{writes:#?}"
         );
+        let manifests: Vec<&String> = writes
+            .iter()
+            .filter(|w| w.contains("/manifests/"))
+            .collect();
+        let referrers = tag::referrers(version.index.hex());
+        assert_eq!(manifests.len(), 5, "{writes:#?}");
         assert_eq!(
-            writes[first_manifest..],
+            [manifests[0], manifests[1], manifests[3], manifests[4]],
             [
-                format!("PUT /v2/{repository}/manifests/{}", version.artifacts[0]),
-                format!("PUT /v2/{repository}/manifests/{}", version.index),
-                format!("PUT /v2/{repository}/manifests/1.3.0"),
+                &format!("PUT /v2/{repository}/manifests/{}", version.artifacts[0]),
+                &format!("PUT /v2/{repository}/manifests/{}", version.index),
+                &format!("PUT /v2/{repository}/manifests/{referrers}"),
+                &format!("PUT /v2/{repository}/manifests/1.3.0"),
             ]
         );
+        assert!(
+            manifests[2].starts_with(&format!("PUT /v2/{repository}/manifests/sha256:")),
+            "{writes:#?}"
+        );
+        assert_eq!(writes.last(), Some(manifests[4]), "{writes:#?}");
         let held = stub.held(repository).unwrap();
         for blob in &version.blobs {
             assert_eq!(

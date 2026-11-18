@@ -134,7 +134,9 @@ pub(super) fn referrers(hex: &str) -> String {
     format!("{ALGORITHM}-{hex}")
 }
 
-fn is_referrers(tag: &str) -> bool {
+/// Whether `tag` is in the shape of a subject's referrers tag,
+/// `sha256-<hex>`, which no name's tag takes (design D6).
+pub(super) fn is_referrers(tag: &str) -> bool {
     tag.strip_prefix(ALGORITHM)
         .and_then(|rest| rest.strip_prefix('-'))
         .is_some_and(|hex| {
