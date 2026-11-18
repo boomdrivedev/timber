@@ -109,6 +109,26 @@ each repository the subject was reached in, and, for an index, its
 component's repository and each of its artifacts' names' repositories,
 each where the attestation is missing.
 
+A repository renamed or moved to another owner keeps one history in the
+store (C.1 as amended at `boomdrivedev/blueprints` e8700c8; records
+0040, 0041 and 0042). Its record of claimed versions names each root it
+published under, `refs/timber/root` beside the version tags in the
+shared history, so a move is read from git alone (22, 62). The first
+publish after a move, before it builds or claims anything, marks the old
+root with where it went, the tag `moved` in its own at bytes naming the
+new root; copies there every version the record claims, with every
+claim on its digests (103); makes each channel's name at its chain's
+head, so the chain goes on from it (105); and records the new root last.
+A carry that stops partway is carried again by the next publish, which
+writes only what is missing. The old root then answers every read and
+write of its own, its components' and its cache repositories with where
+its history went, and an artifact's name there still reads as before.
+Cache entries are not carried: the pool's next run fills the new root.
+A root left is never written again: a publish whose store is bound for
+it, another repository's at the old address, a checkout's whose remote
+still names it, or a repository's moved back to it, is refused naming
+where it went.
+
 Each part of a repository's path is lowercased and escaped into one path
 component the distribution protocol allows, `@acme/site` written
 `0_40acme_2fsite`, and a path past 255 characters is refused naming it.
