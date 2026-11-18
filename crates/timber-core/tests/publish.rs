@@ -7,6 +7,7 @@ mod world;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use timber_core::carry::{Rooted, VersionCarried};
 use timber_core::{
     answer_json, layout_policy_body, publish, Ask, Kept, Provenance, Published, BOUND, NOTES,
 };
@@ -2290,4 +2291,188 @@ fn each_artifact_a_publish_offers_is_found_by_its_name_and_version_alone() {
     let [(_, claim)] = <[_; 1]>::try_from(layout_policies(&world, &published)).unwrap();
     assert_eq!(claim.subject, *index);
     assert_eq!(claim.body, layout_policy_body(&claims));
+}
+
+// Requirement: A moved repository's first publish carries its history
+
+fn repository(owner: &str, name: &str) -> timber_seams::RepositoryName {
+    timber_seams::RepositoryName {
+        owner: owner.into(),
+        name: name.into(),
+    }
+}
+
+/// The record's roots at the world's head.
+fn record(world: &World) -> Vec<timber_seams::RepositoryName> {
+    let landed =
+        timber_core::Landed::check(&world.fakes.landing, &world.main, &world.head).unwrap();
+    world.history().roots(&landed).unwrap()
+}
+
+/// The world moved from `acme/app`, whose store holds the version each
+/// component was tagged at, to `acme/site`, bound; the root left's store.
+fn moved(world: &World) -> FakeStore {
+    let landed =
+        timber_core::Landed::check(&world.fakes.landing, &world.main, &world.head).unwrap();
+    world
+        .history()
+        .record_root(&landed, &repository("acme", "app"))
+        .unwrap();
+    world.fakes.roots.bind(&repository("acme", "site"));
+    let left = FakeStore::new();
+    for (component, tag) in [("lib", "lib-v0.1.0"), ("web", "web-v0.1.0")] {
+        let index = left
+            .put_artifact(&Manifest::Index(
+                IndexMeta::new(ComponentName::new(component), Version::new("0.1.0"), vec![])
+                    .unwrap(),
+            ))
+            .unwrap()
+            .digest;
+        left.name(&Name::new(format!("{component}:{tag}")), &index, None)
+            .unwrap();
+    }
+    world.fakes.roots.leave(
+        &repository("acme", "app"),
+        &left,
+        &timber_fakes::FakeKeeper::new(),
+    );
+    left
+}
+
+fn position(world: &World, op: StoreOp, name: &str) -> usize {
+    world
+        .fakes
+        .store
+        .calls()
+        .iter()
+        .position(|c| c.op == op && c.given["name"] == name)
+        .unwrap_or_else(|| panic!("the store was asked no {op:?} of {name}"))
+}
+
+#[test]
+fn a_moved_repositorys_publish_carries_before_it_claims() {
+    let world = World::new();
+    let left = moved(&world);
+    let publish = world.publish(&world.ask()).unwrap();
+    let Some(Rooted::Carried(carried)) = &publish.rooted else {
+        panic!("the move was not carried: {publish:?}")
+    };
+    assert_eq!(
+        carried
+            .versions
+            .iter()
+            .map(|v| (v.name.as_str(), v.carried))
+            .collect::<Vec<_>>(),
+        [
+            ("lib:lib-v0.1.0", VersionCarried::Copied),
+            ("web:web-v0.1.0", VersionCarried::Copied)
+        ]
+    );
+    assert!(
+        position(&world, StoreOp::Name, "web:web-v0.1.0")
+            < position(&world, StoreOp::Resolve, "lib:lib-v0.2.0"),
+        "the version was claimed before the history was carried"
+    );
+    assert!(left
+        .contents()
+        .names
+        .contains_key(&timber_seams::moved_name()));
+    assert_eq!(
+        record(&world),
+        [repository("acme", "app"), repository("acme", "site")]
+    );
+    let (component, published) = &publish.components[0];
+    assert_eq!(component.as_str(), "lib");
+    assert!(
+        matches!(published, Ok(Published::Version { .. })),
+        "{published:?}"
+    );
+    let json = serde_json::to_value(&publish).unwrap();
+    assert_eq!(json["rooted"]["rooted"], "carried", "{json}");
+    assert_eq!(json["rooted"]["to"]["name"], "site", "{json}");
+}
+
+#[test]
+fn a_publish_whose_carry_is_refused_claims_and_offers_nothing() {
+    let world = World::new();
+    let left = moved(&world);
+    let web = left
+        .put_bytes(
+            &timber_seams::MovedTo {
+                to: repository("acme", "web"),
+            }
+            .to_bytes(),
+        )
+        .unwrap()
+        .digest;
+    left.name(&timber_seams::moved_name(), &web, None).unwrap();
+
+    let Err(Not::Refused(r)) = world.publish(&world.ask()) else {
+        panic!("a publish whose carry was refused answered")
+    };
+    assert_eq!(
+        r.why,
+        Why::RootMoved {
+            from: repository("acme", "app"),
+            to: repository("acme", "web"),
+        }
+    );
+    assert_eq!(world.fakes.build.calls(), []);
+    assert_eq!(world.fakes.signer.calls(), []);
+    no_pack(&world);
+    assert_eq!(world.shared.git(&["tag", "-l", "lib-v0.2.*"]), "");
+    assert_eq!(world.repo.git(&["tag", "-l", "lib-v0.2.*"]), "");
+    assert!(world.fakes.store.contents().names.is_empty());
+    assert_eq!(record(&world), [repository("acme", "app")]);
+}
+
+#[test]
+fn a_publish_touching_no_component_still_records_its_root() {
+    let world = World::new();
+    world.fakes.roots.bind(&repository("acme", "site"));
+    world.repo.tag("lib-v0.2.0", &world.head);
+    let docs = world.repo.touch("docs: a readme", &["docs"]);
+    world.fakes.landing.land(&world.main, &docs);
+    let publish = world
+        .publish(&Ask {
+            revision: docs.clone(),
+            ..world.ask()
+        })
+        .unwrap();
+    assert_eq!(
+        publish.rooted,
+        Some(Rooted::Recorded {
+            root: repository("acme", "site")
+        })
+    );
+    assert!(
+        publish
+            .components
+            .iter()
+            .all(|(_, a)| matches!(a, Ok(Published::Unchanged { .. }))),
+        "{publish:?}"
+    );
+    assert_eq!(world.fakes.build.calls(), []);
+    let json = serde_json::to_value(&publish).unwrap();
+    assert_eq!(json["rooted"]["rooted"], "recorded", "{json}");
+    assert_eq!(json["rooted"]["root"]["owner"], "acme", "{json}");
+}
+
+#[test]
+fn a_publish_to_a_store_with_no_roots_answers_nothing_of_a_root() {
+    let world = World::new();
+    let publish = world.publish(&world.ask()).unwrap();
+    assert_eq!(publish.rooted, None);
+    let json = serde_json::to_value(&publish).unwrap();
+    assert!(json.get("rooted").is_none(), "{json}");
+    assert!(
+        !world
+            .fakes
+            .store
+            .calls()
+            .iter()
+            .any(|c| c.given["name"] == "moved"),
+        "the store was asked for a mark"
+    );
+    assert_eq!(record(&world), []);
 }

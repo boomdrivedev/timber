@@ -218,6 +218,7 @@ on_both!(
     a_declared_components_versions_and_channels_are_tags_of_its_own_repository,
     cache_entries_are_tags_of_the_build_profiles_cache_repository,
     a_pins_claims_are_read_from_its_artifacts_repository_by_a_store_of_another_repository,
+    a_moved_repositorys_history_is_carried_to_its_new_root,
 );
 
 /// The tags `store`'s repository `under` its root holds, sorted; none
@@ -1392,4 +1393,12 @@ fn the_check_before_the_put_refuses_a_move_from_where_the_name_is_not(kind: Kind
     assert_eq!(wrote, [], "a refused move wrote");
     assert_eq!(store.resolve(&name), Ok(at));
     assert_eq!(store.resolve(&entry), Ok(moved));
+}
+
+/// C.1, 103, 105: a moved repository's history carried between two roots
+/// of one registry, `acme/app` to `acme/site` (design D8), as
+/// [`registry::carried_between`] carries it.
+fn a_moved_repositorys_history_is_carried_to_its_new_root(kind: Kind) {
+    let server = Server::start(kind);
+    registry::carried_between(&server.repository(), ("acme", "app"), ("acme", "site"), "");
 }

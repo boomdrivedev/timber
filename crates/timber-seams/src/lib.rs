@@ -63,6 +63,7 @@ pub mod keeper;
 pub mod landing;
 pub mod policy;
 pub mod projection;
+pub mod root;
 pub mod signer;
 pub mod store;
 pub mod target;
@@ -77,6 +78,7 @@ pub use keeper::*;
 pub use landing::*;
 pub use policy::*;
 pub use projection::*;
+pub use root::*;
 pub use signer::*;
 pub use store::*;
 pub use target::*;
@@ -434,6 +436,7 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            roots: Box::new(NoRoots),
         };
         let environment = |component: &str| Environment {
             name: EnvironmentName::new("cache"),

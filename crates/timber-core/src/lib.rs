@@ -8,7 +8,7 @@
 //! | module | what it keeps | statement, rules |
 //! |---|---|---|
 //! | [`landed`] | a revision is read only once the landing seam says its branch landed it, and the policy for an audience only at such a revision | 14, 65, 77, 82, 83; core.11, core.22 |
-//! | [`history`] | the files, commits and tags of a landed revision, from the local history and the shared one; a commit's message, and the commit as the rule's tool reads it, from the local history alone; a remote's address as written; a branch's head and the newest revision of it a checkout descends from, a revision resolved to its commit, the working tree's root, the common directory every worktree shares, and each worktree's own git directory | 21, 22, 50, 62, 65, 114, 123, 134; core.4 |
+//! | [`history`] | the files, commits and tags of a landed revision, from the local history and the shared one; the record of the roots the repository published under, read from the shared history into a copy that only moves forward and written without force; a commit's message, and the commit as the rule's tool reads it, from the local history alone; a remote's address as written; a branch's head and the newest revision of it a checkout descends from, a revision resolved to its commit, the working tree's root, the common directory every worktree shares, and each worktree's own git directory | 21, 22, 50, 62, 65, 114, 123, 134, C.1; core.4, core.47 |
 //! | [`declared`] | the components, the version rule and the projection each output is packed by, read from the policy file at the landed revision | 65, 123, C.10; core.22 |
 //! | [`version`] | a version per component from the history alone, the commits it is derived from, the components a landing touched, and the claim of the version's name | 21 to 24, 124, 134; core.6, core.13, core.37 |
 //! | [`notes`] | a version's notes, the commits it is derived from rendered by the rule's own tool under the template the version's revision holds, the tool's own default where it holds none, and the ecosystem reserved for them; the commits a tagged version's notes were rendered from, derived again at its landed revision | 18, 21, 63, 134, section 9 |
@@ -21,6 +21,7 @@
 //! | [`in_force`](mod@in_force) | the policy in force at the branch's landed head: what acceptance and a layout require, and every channel the policy's channels answer lists with how it moves and its policy, each part and each channel its own answer | 58, 60, 82, 131, C.10; core.31, core.32 |
 //! | [`record`] | the host's record rebuilt from the store and git: an entry per tag the branch landed whose name the store resolves to its component's index at that version, its notes' commits derived again at the tag's revision, every read before any write, nothing rewritten or deleted | 22, 58 to 63, 134; core.4, core.19, core.20 |
 //! | [`copy`](mod@copy) | a version copied from one store to another through the store seam, every attestation going with its digest, the index last and the name made from nothing, and no channel | 1 to 3, 6, 8, 103; core.4, core.6, core.12, core.27 |
+//! | [`carry`] | a move read once per publish, from the root the store is bound for and the record's last root: none bound reading nothing, a bound root marked left refused naming where it went, an empty record given the bound root, and a moved repository's history carried from the root it left to the one its store is bound for, the bound root recorded after: the root left marked with where it went first, each version the record claims copied with every claim on it, each channel's name made at its chain's head and the bound chain checked to go on from it, writing only what is missing and nothing of the cache | 22, 62, 103, 105, C.1; core.6, core.47, core.50 |
 //! | [`repair`] | a channel's name moved in the store to the version the ledger's head promotion is about, and a race lost on it reported and repaired from the ledger | 39, 101, 106, 109; core.6 |
 //! | [`verify`](mod@verify) | which signer the policy names made each attestation on a version, and whether each counts, and the notes its index names | 3, 9, 65, 80, 81, 116, 117, 134; core.4, core.7 |
 //! | [`cache`](mod@cache) | a cache entry under its build identity in the store, written by packing with no version and named from nothing, never an artifact; a checkout's cache filled from a landed revision's passing verdicts, an entry gone answered and refusing nothing | 52 to 54, 100, C.3; core.6, core.11, core.30 |
@@ -50,6 +51,7 @@
 pub mod after;
 pub mod apply;
 pub mod cache;
+pub mod carry;
 pub mod copy;
 pub mod declared;
 pub mod gate;

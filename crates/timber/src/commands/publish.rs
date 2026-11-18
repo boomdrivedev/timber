@@ -13,6 +13,10 @@
 //! this step, the host's binding of what tells it, calls one and then
 //! the other. It reads the moment of the gate's act from the clock and
 //! hands it to the core, which reads none.
+//!
+//! Before the components, the text says the root the publish recorded,
+//! or the history it carried from the root the repository left, as the
+//! core's answer carries it (C.1; design D6).
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -20,6 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Args;
 use serde_json::{json, Value};
+use timber_core::carry::{ChannelCarried, Rooted, VersionCarried};
 use timber_core::{
     accept, answer_json, publish, AcceptAsk, Ask, History, Judged, Kept, Moved, Publish, Published,
     ToldBy, WhyWanting, LOCAL,
@@ -277,12 +282,56 @@ fn gate(out: &mut dyn Write, version: &str, gate: &Gate) -> io::Result<()> {
     }
 }
 
+/// The root a publish recorded, or the history it carried, before its
+/// components (C.1; design D6): a line per version the root left did not
+/// hold and per channel whose name the carry made.
+fn root(out: &mut dyn Write, rooted: &Rooted) -> io::Result<()> {
+    let carried = match rooted {
+        Rooted::Recorded { root } => return writeln!(out, "recorded the root {root}"),
+        Rooted::Carried(carried) => carried,
+    };
+    let versions = carried
+        .versions
+        .iter()
+        .filter(|v| v.carried != VersionCarried::NotHeld)
+        .count();
+    writeln!(
+        out,
+        "carried {}'s history to {}: {versions} versions, {} channels",
+        carried.from,
+        carried.to,
+        carried.channels.len()
+    )?;
+    for version in &carried.versions {
+        if version.carried == VersionCarried::NotHeld {
+            writeln!(
+                out,
+                "  {} passed over: {} does not hold it",
+                version.name, carried.from
+            )?;
+        }
+    }
+    for channel in &carried.channels {
+        if channel.name == ChannelCarried::Made {
+            writeln!(
+                out,
+                "  {} made at {}, its head {}",
+                channel.channel, channel.index, channel.head
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn text(out: &mut dyn Write, answer: &Answer<Offered>) -> io::Result<()> {
     let offered = match answer {
         Ok(offered) => offered,
         Err(not) => return render::not(out, "", not),
     };
     let publish = &offered.publish;
+    if let Some(rooted) = &publish.rooted {
+        root(out, rooted)?;
+    }
     if publish.components.is_empty() {
         writeln!(out, "no component was touched since its last release")?;
     }
@@ -348,4 +397,92 @@ fn text(out: &mut dyn Write, answer: &Answer<Offered>) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use timber_core::carry::{Carried, CarriedChannel, CarriedVersion, Marked};
+    use timber_seams::{ChannelId, ChannelName, Digest, Name, RepositoryName};
+
+    use super::*;
+
+    fn root(owner: &str, name: &str) -> RepositoryName {
+        RepositoryName {
+            owner: owner.into(),
+            name: name.into(),
+        }
+    }
+
+    fn printed(rooted: Rooted) -> String {
+        let offered = Offered {
+            publish: Publish {
+                rooted: Some(rooted),
+                components: vec![],
+            },
+            gate: vec![],
+        };
+        let mut out = Vec::new();
+        text(&mut out, &Ok(offered)).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn the_text_says_the_root_recorded() {
+        let text = printed(Rooted::Recorded {
+            root: root("acme", "site"),
+        });
+        assert_eq!(
+            text,
+            "recorded the root acme/site\nno component was touched since its last release\n"
+        );
+    }
+
+    #[test]
+    fn the_text_says_the_history_carried() {
+        let (head, index) = (Digest::of(b"the head"), Digest::of(b"v1.2.0's index"));
+        let beta = ChannelId::new(None, ChannelName::new("beta"));
+        let stable = ChannelId::new(None, ChannelName::new("stable"));
+        let text = printed(Rooted::Carried(Carried {
+            from: root("acme", "app"),
+            to: root("acme", "site"),
+            mark: Marked::Made,
+            versions: vec![
+                CarriedVersion {
+                    name: Name::new("v1.0.0"),
+                    carried: VersionCarried::NotHeld,
+                },
+                CarriedVersion {
+                    name: Name::new("v1.1.0"),
+                    carried: VersionCarried::HeldAlready,
+                },
+                CarriedVersion {
+                    name: Name::new("v1.2.0"),
+                    carried: VersionCarried::Copied,
+                },
+            ],
+            channels: vec![
+                CarriedChannel {
+                    channel: beta,
+                    head: head.clone(),
+                    index: index.clone(),
+                    name: ChannelCarried::Made,
+                },
+                CarriedChannel {
+                    channel: stable,
+                    head: head.clone(),
+                    index: index.clone(),
+                    name: ChannelCarried::HeldAlready,
+                },
+            ],
+        }));
+        assert_eq!(
+            text,
+            format!(
+                "carried acme/app's history to acme/site: 2 versions, 2 channels\n\
+                 \x20 v1.0.0 passed over: acme/app does not hold it\n\
+                 \x20 beta made at {index}, its head {head}\n\
+                 no component was touched since its last release\n"
+            )
+        );
+    }
 }

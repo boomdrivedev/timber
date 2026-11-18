@@ -11,7 +11,10 @@
 //! prefix, a store whose every name carries it, bound for the repository
 //! `timber-checks/store` under the root the host names, and the store
 //! group run there (design D4; the change
-//! each-repositorys-spaces-sit-under-its-own-root's design D7).
+//! each-repositorys-spaces-sit-under-its-own-root's design D7); and a
+//! moved repository's history carried between two roots of one registry
+//! (C.1; the change a-moved-repository-keeps-its-history-in-the-store's
+//! design D8).
 
 #![allow(dead_code)]
 
@@ -694,4 +697,184 @@ pub fn cache_entries(store: &dyn Store, within: Duration) {
         answer => panic!("a name at a digest not held answered {answer:?}"),
     }
     assert!(matches!(store.resolve(&three), Err(Not::Absent(_))));
+}
+
+/// C.1, 103, 105: a moved repository's history carried by
+/// `carry::history` from `from` to `to`, two roots under `root`, each
+/// with the store ledger over its own store, every name carrying
+/// `prefix` (the change a-moved-repository-keeps-its-history-in-the-store's
+/// design D8). Under `from`, through a store carrying to `to`, so a mark
+/// an earlier run left is read past, a version of `<prefix>web` is
+/// published, named by its artifact `<prefix>site`, accepted and promoted
+/// to `<prefix>web/beta`; carried, the version resolves under `to` with
+/// every claim and the chain walks to the same head there, and a store
+/// for `from` is refused naming `to` for the channel while it still reads
+/// the artifact's name and its claims.
+pub fn carried_between(root: &str, from: (&str, &str), to: (&str, &str), prefix: &str) {
+    use serde_json::json;
+    use timber::profiles::ledger::store::InStore;
+    use timber_core::carry::{self, ChannelCarried, Root, VersionCarried};
+    use timber_seams::{
+        artifact_name, channel_name, Artifact, ArtifactMeta, ChannelId, ChannelName, Claim,
+        ClaimKind, ComponentName, Ecosystem, EcosystemName, IndexMeta, Keeper, Moved, Promotion,
+        Revision, Satisfied, Seam, Signature, SignerId, Source, Version, IN_TOTO,
+    };
+
+    let repository = |(owner, name): (&str, &str)| RepositoryName {
+        owner: owner.into(),
+        name: name.into(),
+    };
+    let (from, to) = (repository(from), repository(to));
+    let at = |r: &RepositoryName| store_under(root, &r.owner, &r.name);
+    let left = || at(&from).carrying_to(to.clone());
+    let kept = TempDir::new().unwrap();
+    let signed = |payload: Vec<u8>, sig: u8| {
+        Envelope::signed(
+            IN_TOTO,
+            payload,
+            Signature {
+                signer: SignerId::new("gate"),
+                keyid: String::new(),
+                sig: vec![sig],
+            },
+        )
+    };
+
+    let (component, site) = (format!("{prefix}web"), format!("{prefix}site"));
+    let meta = ArtifactMeta::new(
+        Ecosystem::new("file"),
+        EcosystemName::new(&site),
+        Version::new("1.2.0"),
+    )
+    .unwrap();
+    let publisher = left();
+    let layer = publisher
+        .put_bytes(format!("{prefix} the site at 1.2.0").as_bytes())
+        .unwrap()
+        .digest;
+    let artifact = publisher
+        .put_artifact(&Manifest::Artifact {
+            meta: meta.clone(),
+            layers: vec![layer],
+        })
+        .unwrap()
+        .digest;
+    let index = publisher
+        .put_artifact(&Manifest::Index(
+            IndexMeta::new(
+                ComponentName::new(&component),
+                Version::new("1.2.0"),
+                vec![Artifact {
+                    digest: artifact,
+                    meta: meta.clone(),
+                }],
+            )
+            .unwrap(),
+        ))
+        .unwrap()
+        .digest;
+    let version = Name::new(format!("{component}:{component}-v1.2.0"));
+    let pin = artifact_name(meta.ecosystem(), meta.name(), meta.version());
+    publisher.name(&version, &index, None).unwrap();
+    publisher.name(&pin, &index, None).unwrap();
+    let acceptance = signed(
+        Claim {
+            subject: index.clone(),
+            kind: ClaimKind::Acceptance,
+            revision: Revision::new("4f2a9c1"),
+            build: None,
+            body: json!({}),
+        }
+        .payload(),
+        4,
+    );
+    publisher.attach(&index, &acceptance).unwrap();
+    let beta = ChannelId::new(
+        Some(ComponentName::new(&component)),
+        ChannelName::new("beta"),
+    );
+    let promotion = signed(
+        Promotion {
+            channel: ChannelName::new("beta"),
+            component: ComponentName::new(&component),
+            to: Moved {
+                version: Version::new("1.2.0"),
+                index: index.clone(),
+            },
+            from: None,
+            predecessor: None,
+            asked_by: SignerId::new("gate"),
+            policy: Satisfied {
+                revision: Revision::new("4f2a9c1"),
+                claims: vec![acceptance.digest()],
+            },
+            at: 1_793_000_000,
+        }
+        .claim(Revision::new("4f2a9c1"))
+        .payload(),
+        5,
+    );
+    InStore::new(Box::new(left()), kept.path().join("published"))
+        .append(&beta, &promotion, None)
+        .unwrap();
+
+    let (left_store, bound_store) = (left(), at(&to));
+    let left_keeper = InStore::new(Box::new(left()), kept.path().join("left"));
+    let bound_keeper = InStore::new(Box::new(at(&to)), kept.path().join("bound"));
+    let (left_source, bound_source) = (
+        Source::new(Seam::Store, format!("registry {root}, {from}")),
+        Source::new(Seam::Store, format!("registry {root}, {to}")),
+    );
+    let carried = carry::history(
+        Root {
+            repository: &from,
+            store: &left_store,
+            source: &left_source,
+            keeper: &left_keeper,
+        },
+        Root {
+            repository: &to,
+            store: &bound_store,
+            source: &bound_source,
+            keeper: &bound_keeper,
+        },
+        std::slice::from_ref(&version),
+        std::slice::from_ref(&beta),
+    )
+    .unwrap();
+    assert_eq!(carried.versions[0].carried, VersionCarried::Copied);
+    assert_eq!(carried.channels[0].name, ChannelCarried::Made);
+    assert_eq!(carried.channels[0].head, promotion.digest());
+
+    let reader = at(&to);
+    assert_eq!(reader.resolve(&version), Ok(index.clone()));
+    let mut claims: Vec<Digest> = reader
+        .claims_of(&index)
+        .unwrap()
+        .iter()
+        .map(Envelope::digest)
+        .collect();
+    claims.sort();
+    let mut expected = vec![acceptance.digest(), promotion.digest()];
+    expected.sort();
+    assert_eq!(claims, expected, "the version's claims were not carried");
+    assert_eq!(reader.resolve(&channel_name(&beta)), Ok(index.clone()));
+    let walked = InStore::new(Box::new(at(&to)), kept.path().join("walked"))
+        .chain(&beta)
+        .unwrap();
+    assert_eq!(walked.claims, vec![promotion]);
+
+    match at(&from).resolve(&channel_name(&beta)) {
+        Err(Not::Refused(r)) => assert_eq!(
+            r.why,
+            Why::RootMoved {
+                from: from.lowercased(),
+                to: to.lowercased(),
+            }
+        ),
+        other => panic!("the channel at the root left answered {other:?}"),
+    }
+    let stale = at(&from);
+    assert_eq!(stale.resolve(&pin), Ok(index.clone()));
+    assert_eq!(stale.claims_of(&index).map(|c| c.len()), Ok(2));
 }

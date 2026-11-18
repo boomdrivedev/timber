@@ -3,7 +3,9 @@
 //! where the landing carries verdicts, and what publish refuses (2 to 22,
 //! 52, 58, 102, 110, 111, 134); and, below the marker, a landing read from
 //! its copy as last fetched, a no refused saying when and a yes published
-//! as from the remote (14, 59, 77).
+//! as from the remote (14, 59, 77); and a moved repository's first
+//! publish carrying its history to its new root, and a publish under a
+//! root left refused (22, 58, 62, 103, 105, C.1).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -112,6 +114,18 @@ pub fn scenarios() -> Vec<Scenario<FakeWorld>> {
             plays: None,
             cites: &[14, 59, 77],
             run: a_revision_landed_as_last_fetched,
+        },
+        Scenario {
+            name: "a moved repository's first publish carries its history",
+            plays: None,
+            cites: &[22, 62, 103, 105],
+            run: a_moved_repositorys_first_publish_carries_its_history,
+        },
+        Scenario {
+            name: "a publish under a root left is refused",
+            plays: None,
+            cites: &[22, 58],
+            run: a_publish_under_a_root_left_is_refused,
         },
     ]
 }
@@ -1242,4 +1256,223 @@ fn a_revision_landed_as_last_fetched(world: &FakeWorld) {
         alike.writes(),
         "the store was offered otherwise"
     );
+}
+
+/// The root the world's repository publishes under first, and the one it
+/// moves to.
+pub(crate) fn app() -> timber_core::RepositoryName {
+    timber_core::RepositoryName {
+        owner: "acme".into(),
+        name: "app".into(),
+    }
+}
+
+pub(crate) fn site() -> timber_core::RepositoryName {
+    timber_core::RepositoryName {
+        owner: "acme".into(),
+        name: "site".into(),
+    }
+}
+
+/// What a moved world's first publish found and did: the move, the
+/// indexes of `0.1.0` and `0.2.0` published before it, the claim at
+/// `stable`'s head before it, and the publish's answer.
+pub(crate) struct Carried {
+    pub moved: crate::world::Move,
+    pub indexes: (Digest, Digest),
+    pub head_left: Digest,
+    pub publish: Publish,
+}
+
+/// The world published under `acme/app`, `start` as `0.1.0` and `head`
+/// as `0.2.0`, each index carrying the gate's acceptance and the rebuild
+/// signer's matching rebuild, and `stable` promoted to `0.1.0`; then moved
+/// to `acme/site`, and a revision grown since landed with no verdicts and
+/// published, which carries the history (C.1, 22, 62, 103, 105).
+pub(crate) fn carried(world: &FakeWorld) -> Carried {
+    world.root_at(&app());
+    let mut indexes = Vec::new();
+    for revision in [&world.start, &world.head] {
+        passing(world, revision);
+        let published = ok(one(world.publish(&world.ask(revision))), "the publish");
+        let Published::Version { index, .. } = published else {
+            panic!("{revision} was not published: {published:?}")
+        };
+        world.attach_as(
+            crate::world::GATE,
+            &index,
+            ClaimKind::Acceptance,
+            revision,
+            serde_json::json!({}),
+        );
+        world.attach_as(
+            crate::world::REBUILDER,
+            &index,
+            ClaimKind::Rebuild,
+            revision,
+            serde_json::json!({ "matched": true }),
+        );
+        indexes.push(index);
+    }
+    world.channel_policy(crate::world::STABLE, true, None);
+    let head_left = match world.promote(&world.promote_ask(
+        crate::world::STABLE,
+        timber_core::To::Version(Version::new("0.1.0")),
+    )) {
+        Ok(timber_core::Promoted::Moved { claim, .. }) => claim,
+        other => panic!("stable's promotion under acme/app answered {other:?}"),
+    };
+
+    let moved = world.move_to(&app(), &site());
+    let grown = world.grow();
+    world.land(&grown, &[]);
+    world.outputs(
+        &grown,
+        &[("site", Outcome::Pass), ("server", Outcome::Pass)],
+    );
+    let publish = ok(
+        world.publish(&world.ask(&grown)),
+        "the publish after the move",
+    );
+    Carried {
+        moved,
+        indexes: (indexes[0].clone(), indexes[1].clone()),
+        head_left,
+        publish,
+    }
+}
+
+/// The roots the record of claimed versions names at `revision`.
+fn record(world: &FakeWorld, revision: &Revision) -> Vec<timber_core::RepositoryName> {
+    let landed = ok(
+        timber_core::Landed::check(&world.fakes.landing, &world.main, revision),
+        "the landing",
+    );
+    ok(world.history().roots(&landed), "the record's roots")
+}
+
+fn a_moved_repositorys_first_publish_carries_its_history(world: &FakeWorld) {
+    let Carried {
+        moved,
+        indexes,
+        head_left,
+        publish,
+    } = carried(world);
+    let Some(timber_core::carry::Rooted::Carried(carried)) = &publish.rooted else {
+        panic!("the first publish after the move carried nothing: {publish:?}")
+    };
+    assert_eq!((&carried.from, &carried.to), (&app(), &site()));
+    let versions: Vec<(&str, timber_core::carry::VersionCarried)> = carried
+        .versions
+        .iter()
+        .map(|v| (v.name.as_str(), v.carried))
+        .collect();
+    assert_eq!(
+        versions,
+        [
+            ("v0.1.0", timber_core::carry::VersionCarried::Copied),
+            ("v0.2.0", timber_core::carry::VersionCarried::Copied)
+        ],
+        "the versions the record claims were not carried"
+    );
+    let stable = ChannelId::new(None, ChannelName::new(crate::world::STABLE));
+    assert_eq!(carried.channels.len(), 1, "{carried:?}");
+    assert_eq!(carried.channels[0].channel, stable);
+    assert_eq!(carried.channels[0].head, head_left);
+
+    for (version, index) in [("v0.1.0", &indexes.0), ("v0.2.0", &indexes.1)] {
+        assert_eq!(
+            ok(
+                moved.store.resolve(&Name::new(version)),
+                "resolve at acme/site"
+            ),
+            *index,
+            "{version} is not at its index at acme/site"
+        );
+        assert_eq!(
+            ok(moved.store.claims_of(index), "the claims at acme/site"),
+            ok(moved.left.claims_of(index), "the claims at acme/app"),
+            "{version}'s claims were not carried with it"
+        );
+    }
+    assert!(
+        ok(moved.store.claims_of(&indexes.0), "the claims at acme/site")
+            .iter()
+            .any(|e| e.digest() == head_left),
+        "stable's promotion was not carried beside its index"
+    );
+    assert_eq!(
+        ok(
+            moved.store.resolve(&timber_seams::channel_name(&stable)),
+            "resolve stable at acme/site"
+        ),
+        indexes.0,
+        "stable's name at acme/site is not at its head"
+    );
+    let mark = ok(
+        moved.left.resolve(&timber_seams::moved_name()),
+        "the mark at acme/app",
+    );
+    let Held::Bytes(bytes) = ok(moved.left.read(&mark), "the mark's bytes") else {
+        panic!("the mark at acme/app holds no bytes")
+    };
+    assert_eq!(
+        timber_seams::MovedTo::of_bytes(&bytes).map(|m| m.to),
+        Some(site()),
+        "the mark at acme/app does not name acme/site"
+    );
+    let grown = &publish.components[0];
+    assert!(
+        matches!(&grown.1, Ok(Published::Version { version, .. }) if version.as_str() == "0.3.0"),
+        "the revision after the move was not published: {grown:?}"
+    );
+    assert!(
+        moved.store.resolve(&Name::new("v0.3.0")).is_ok()
+            && moved.left.resolve(&Name::new("v0.3.0")).is_err(),
+        "0.3.0 was not published at acme/site alone"
+    );
+    let landed_at = world.repo().head();
+    assert_eq!(record(world, &landed_at), [app(), site()]);
+}
+
+fn a_publish_under_a_root_left_is_refused(world: &FakeWorld) {
+    world.root_at(&site());
+    let web = timber_core::RepositoryName {
+        owner: "acme".into(),
+        name: "web".into(),
+    };
+    let mark = ok(
+        world
+            .fakes
+            .store
+            .put_bytes(&timber_seams::MovedTo { to: web.clone() }.to_bytes()),
+        "the mark's bytes",
+    )
+    .digest;
+    ok(
+        world
+            .fakes
+            .store
+            .name(&timber_seams::moved_name(), &mark, None),
+        "the mark",
+    );
+    passing(world, &world.head);
+    let writes = world.writes().len();
+
+    let answer = world.publish(&world.ask(&world.head));
+    match answer {
+        Err(Not::Refused(r)) => assert_eq!(
+            r.why,
+            Why::RootMoved {
+                from: site(),
+                to: web,
+            },
+            "the refusal does not name where the root went"
+        ),
+        other => panic!("a publish under a root left answered {other:?}"),
+    }
+    assert_eq!(world.writes().len(), writes, "the store was written");
+    assert!(world.build_calls().is_empty(), "the build was asked");
+    assert_eq!(world.shared().tag_at(TAG), None, "{TAG} was claimed");
+    assert_eq!(record(world, &world.head), [], "the record was written");
 }

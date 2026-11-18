@@ -5,10 +5,10 @@ mod common;
 use std::collections::BTreeSet;
 use std::fs;
 
-use common::{landed, Fixture};
+use common::{landed, Fixture, Repo};
 use semver::Version;
-use timber_core::{paths_hold, History};
-use timber_seams::{Branch, Not, Revision, Seam};
+use timber_core::{paths_hold, History, ROOT_REF};
+use timber_seams::{Branch, Not, RepositoryName, Revision, Seam, Why};
 
 #[test]
 fn a_path_that_is_not_a_repository_is_unreadable_with_gits_words() {
@@ -332,4 +332,283 @@ fn a_components_paths_hold_a_path_as_git_cliffs_filter_matches_it() {
     };
     assert_eq!(u.source.seam, Seam::History);
     assert!(u.what.contains("crates/["), "{u:?}");
+}
+
+fn root(owner: &str, name: &str) -> RepositoryName {
+    RepositoryName {
+        owner: owner.into(),
+        name: name.into(),
+    }
+}
+
+/// A clone of a new shared history, its `main` pushed at one commit, and
+/// that commit landed.
+fn shared_clone(fixture: &Fixture) -> (Repo, Repo, Revision) {
+    let shared = fixture.bare("shared.git");
+    let clone = fixture.clone_of(&shared, "clone");
+    let rev = clone.touch("feat: one", &["a"]);
+    clone.git(&["push", "-q", "origin", "main"]);
+    (shared, clone, rev)
+}
+
+/// The root `repo`'s ref of the record names at its tip, as git reads it.
+fn root_at_tip(repo: &Repo) -> String {
+    repo.git(&["cat-file", "blob", &format!("{ROOT_REF}:root")])
+}
+
+/// A commit of the record naming `named` on `parent`, written into `repo`
+/// by the git command as another host would, and pushed to `refs/b/root`
+/// of its remote; its id.
+fn written_elsewhere(repo: &Repo, named: &str, parent: Option<&str>) -> String {
+    let blob = git_fed(
+        repo,
+        &["hash-object", "-w", "--stdin"],
+        &format!("{named}\n"),
+    );
+    let tree = git_fed(repo, &["mktree"], &format!("100644 blob {blob}\troot\n"));
+    let mut args = vec!["commit-tree", tree.as_str(), "-m", named];
+    if let Some(parent) = parent {
+        args.extend(["-p", parent]);
+    }
+    let commit = repo.git(&args);
+    repo.git(&["push", "-q", "origin", &format!("{commit}:refs/b/root")]);
+    commit
+}
+
+fn git_fed(repo: &Repo, args: &[&str], input: &str) -> String {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// A hook in `shared` that, at the first push it is handed, moves the
+/// record's ref to `refs/b/root` before the push's own update, as another
+/// host's write landing first would.
+fn racing_hook(shared: &Repo) {
+    let hook = shared.path.join("hooks").join("pre-receive");
+    fs::write(
+        &hook,
+        "#!/bin/sh\n\
+         cat >/dev/null\n\
+         [ -e raced ] && exit 0\n\
+         touch raced\n\
+         env -u GIT_QUARANTINE_PATH git update-ref refs/timber/root refs/b/root\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn the_root_record_is_empty_where_no_ref_is_held() {
+    let fixture = Fixture::new();
+    let (_, clone, rev) = shared_clone(&fixture);
+    assert_eq!(clone.history().roots(&landed(&rev)).unwrap(), []);
+    let alone = fixture.repo("alone");
+    let rev = alone.touch("feat: one", &["a"]);
+    assert_eq!(alone.history().roots(&landed(&rev)).unwrap(), []);
+}
+
+#[test]
+fn the_root_record_holds_the_first_root_written_and_pushed() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let history = clone.history();
+    history
+        .record_root(&landed(&rev), &root("acme", "app"))
+        .unwrap();
+
+    assert_eq!(history.roots(&landed(&rev)).unwrap(), [root("acme", "app")]);
+    assert_eq!(root_at_tip(&shared), "acme/app");
+    assert_eq!(
+        shared.git(&["rev-parse", ROOT_REF]),
+        clone.git(&["rev-parse", ROOT_REF]),
+        "the copy is not where the remote is"
+    );
+    assert_eq!(
+        shared.git(&["log", "-1", "--format=%an <%ae>|%cn <%ce>|%s|%P", ROOT_REF]),
+        "timber <timber@localhost>|timber <timber@localhost>|acme/app|"
+    );
+    let other = fixture.clone_of(&shared, "other");
+    assert_eq!(
+        other.history().roots(&landed(&rev)).unwrap(),
+        [root("acme", "app")]
+    );
+}
+
+#[test]
+fn the_root_record_appends_a_second_root_after_the_first() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let history = clone.history();
+    history
+        .record_root(&landed(&rev), &root("acme", "app"))
+        .unwrap();
+    let first = shared.git(&["rev-parse", ROOT_REF]);
+    history
+        .record_root(&landed(&rev), &root("acme", "site"))
+        .unwrap();
+
+    assert_eq!(
+        history.roots(&landed(&rev)).unwrap(),
+        [root("acme", "app"), root("acme", "site")]
+    );
+    assert_eq!(shared.git(&["rev-parse", &format!("{ROOT_REF}^")]), first);
+    assert_eq!(root_at_tip(&shared), "acme/site");
+}
+
+#[test]
+fn the_root_record_written_lowercases_the_root() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let history = clone.history();
+    history
+        .record_root(&landed(&rev), &root("Acme", "Site"))
+        .unwrap();
+    assert_eq!(root_at_tip(&shared), "acme/site");
+    assert_eq!(
+        history.roots(&landed(&rev)).unwrap(),
+        [root("acme", "site")]
+    );
+}
+
+#[test]
+fn the_root_record_read_again_after_a_push_refused_is_done_where_it_names_the_root() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let theirs = written_elsewhere(&clone, "acme/site", None);
+    racing_hook(&shared);
+
+    let history = clone.history();
+    history
+        .record_root(&landed(&rev), &root("acme", "site"))
+        .unwrap();
+    assert_eq!(shared.git(&["rev-parse", ROOT_REF]), theirs);
+    assert_eq!(
+        history.roots(&landed(&rev)).unwrap(),
+        [root("acme", "site")]
+    );
+}
+
+#[test]
+fn the_root_record_refused_where_another_root_was_written_first_names_gits_words() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let theirs = written_elsewhere(&clone, "acme/web", None);
+    racing_hook(&shared);
+
+    let history = clone.history();
+    let Err(Not::Refused(r)) = history.record_root(&landed(&rev), &root("acme", "site")) else {
+        panic!("a root written over another's was recorded")
+    };
+    assert_eq!(r.source.profile, "git, origin");
+    assert_eq!(r.why, Why::Said);
+    let said = r.said.unwrap();
+    assert!(said.contains(ROOT_REF), "{said}");
+    assert!(said.contains("rejected"), "{said}");
+    assert_eq!(shared.git(&["rev-parse", ROOT_REF]), theirs);
+    assert_eq!(history.roots(&landed(&rev)).unwrap(), [root("acme", "web")]);
+}
+
+#[test]
+fn the_root_record_is_unreadable_where_the_remote_holds_less_than_the_copy() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let history = clone.history();
+    history
+        .record_root(&landed(&rev), &root("acme", "app"))
+        .unwrap();
+    let first = shared.git(&["rev-parse", ROOT_REF]);
+    history
+        .record_root(&landed(&rev), &root("acme", "site"))
+        .unwrap();
+    let second = shared.git(&["rev-parse", ROOT_REF]);
+    shared.git(&["update-ref", ROOT_REF, &first]);
+
+    let Err(Not::Unreadable(u)) = history.roots(&landed(&rev)) else {
+        panic!("a remote holding less than the copy was read")
+    };
+    assert_eq!(u.source.profile, "git, origin");
+    assert!(u.what.contains(&second), "{}", u.what);
+    assert!(!u.what.contains(&first), "{}", u.what);
+    assert_eq!(
+        clone.git(&["rev-parse", ROOT_REF]),
+        second,
+        "the copy moved back"
+    );
+
+    shared.git(&["update-ref", "-d", ROOT_REF]);
+    let Err(Not::Unreadable(u)) = history.roots(&landed(&rev)) else {
+        panic!("a remote holding none of the copy was read")
+    };
+    assert!(
+        u.what.contains(&first) && u.what.contains(&second),
+        "{}",
+        u.what
+    );
+}
+
+#[test]
+fn the_root_record_is_unreadable_where_the_remote_cannot_be_reached() {
+    let fixture = Fixture::new();
+    let (shared, clone, rev) = shared_clone(&fixture);
+    let history = clone.history();
+    history
+        .record_root(&landed(&rev), &root("acme", "app"))
+        .unwrap();
+    fs::remove_dir_all(&shared.path).unwrap();
+
+    for answer in [
+        history.roots(&landed(&rev)).map(|_| ()),
+        history.record_root(&landed(&rev), &root("acme", "site")),
+    ] {
+        let Err(Not::Unreadable(u)) = answer else {
+            panic!("the record was read with its remote gone: {answer:?}")
+        };
+        assert_eq!(u.source.profile, "git, origin");
+        let said = u.said.unwrap();
+        assert!(
+            said.contains("does not appear to be a git repository"),
+            "{said}"
+        );
+    }
+    assert_eq!(root_at_tip(&clone), "acme/app");
+}
+
+#[test]
+fn the_root_record_of_a_branch_with_no_remote_is_the_own_ref() {
+    let fixture = Fixture::new();
+    let repo = fixture.repo("alone");
+    let rev = repo.touch("feat: one", &["a"]);
+    let history = repo.history();
+    history
+        .record_root(&landed(&rev), &root("acme", "app"))
+        .unwrap();
+    history
+        .record_root(&landed(&rev), &root("acme", "site"))
+        .unwrap();
+    assert_eq!(
+        history.roots(&landed(&rev)).unwrap(),
+        [root("acme", "app"), root("acme", "site")]
+    );
+    assert_eq!(root_at_tip(&repo), "acme/site");
+    assert_eq!(repo.git(&["remote"]), "");
 }

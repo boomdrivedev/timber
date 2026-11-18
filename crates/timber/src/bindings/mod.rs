@@ -149,7 +149,8 @@ use serde::de::DeserializeOwned;
 use timber_core::{History, RepositoryName};
 use timber_seams::{
     Answer, Branch, Digest, Ecosystem, EcosystemName, Envelope, Held, IsLanded, Landing, Manifest,
-    Name, NamedSigner, Not, Put, Revision, Seam, Seams, SignerId, Source, Store, Verdicts, Version,
+    Name, NamedSigner, Not, Put, Revision, RootLeft, Roots, Seam, Seams, SignerId, Source, Store,
+    Verdicts, Version,
 };
 
 use crate::profiles::signer::Signing;
@@ -367,6 +368,15 @@ impl Table {
     /// unreadable naming the file, the table and the key.
     pub fn unreadable(&self, said: impl Into<String>) -> Not {
         unreadable(&self.file, Some(&self.at()), said)
+    }
+
+    /// `what` is not there for this table's profile: absent naming the
+    /// file and the table.
+    pub fn absent(&self, what: impl std::fmt::Display) -> Not {
+        Not::absent(
+            &source(&self.file),
+            format!("{what}, as {} binds", self.at()),
+        )
     }
 
     /// What a seam's profile family answers for a key that names none of
@@ -713,7 +723,10 @@ impl Landing for NoLanding {
 /// store is bound for the repository [`repository_named`] answers for the
 /// landing's remote, written or given, the given one's for a push before
 /// a landing whose file names no `[landing]`, the answer kept and not
-/// required (114, C.1). The
+/// required (114, C.1). Every command's binding answers the roots of its
+/// store: the repository a registry is bound for, none for a layout, and
+/// a root left's store and ledger, carrying to the bound repository (C.1;
+/// design D2). The
 /// signers are bound in the signer family's order: the one the host
 /// signs with first, and every other bound profile after it,
 /// verify-only (92).
@@ -851,12 +864,63 @@ pub fn bind(
             },
             projections,
             targets,
+            roots: Box::new(HostRoots {
+                store: store.clone(),
+                repository: named_repository.clone(),
+                ledger: bindings.ledger.clone(),
+                checkout: repository.to_path_buf(),
+                remote: remote.clone(),
+                named: named.clone(),
+            }),
         },
         store: named,
         signer: signing.map(Signing::signer),
         gate,
         trust,
     })
+}
+
+/// C.1: the roots of the host's store (design D2): the repository a
+/// registry is bound for, the checkout's as [`repository_named`] answered
+/// it, its absent or unreadable answer among them, and none for a layout,
+/// which places no name by repository; and a root left bound with the
+/// store `[store]` names under the same registry and root, carrying to
+/// the bound repository, and the ledger the file names, or the given,
+/// over it, with the store's source.
+struct HostRoots {
+    store: Table,
+    repository: Answer<RepositoryName>,
+    ledger: Option<Table>,
+    checkout: PathBuf,
+    remote: Option<String>,
+    named: Source,
+}
+
+impl Roots for HostRoots {
+    fn bound(&self) -> Answer<Option<RepositoryName>> {
+        match self.store.key() {
+            "registry" => self.repository.clone().map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    fn left(&self, from: &RepositoryName) -> Answer<RootLeft> {
+        let to = self.repository.clone()?;
+        let open = || profiles::store::left(&self.store, from, &to);
+        let store = open()?;
+        let keeper = profiles::ledger::left(
+            self.ledger.as_ref(),
+            &self.checkout,
+            self.remote.clone(),
+            &open,
+            from,
+        )?;
+        Ok(RootLeft {
+            store,
+            keeper,
+            source: self.named.clone(),
+        })
+    }
 }
 
 /// 114: the remote of the landing the host binds in the repository at
