@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use registry::{cache_manifest, Kind, Proxy, RegistryRig, Server, PASSWORD, USER};
+use registry::{cache_manifest, site, Kind, Proxy, RegistryRig, Server, PASSWORD, USER};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use timber::profiles::store::layout::Layout;
@@ -92,6 +92,24 @@ fn refused<T: std::fmt::Debug>(answer: Answer<T>) -> timber_seams::Refusal {
     }
 }
 
+/// Where the API of `store`'s repository `under` its root is, as a URL
+/// ending in `/`.
+fn base_of(store: &Registry, under: &str) -> String {
+    match under {
+        "" => store.base().to_string(),
+        under => format!("{}{under}/", store.base()),
+    }
+}
+
+/// Where the API of the repository's own of a store bound for
+/// `acme/site` is.
+fn own(store: &Registry) -> String {
+    base_of(store, OWN)
+}
+
+/// The repository's own of a store bound for `acme/site`, under its root.
+const OWN: &str = "acme/site";
+
 /// What a registry answers a plain `GET` of `url` accepting `accept`.
 fn get(url: &str, accept: &str) -> (u16, Vec<u8>) {
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -163,7 +181,7 @@ fn the_reference_distribution_answers_no_referrers_api() {
     let server = Server::start(Kind::Distribution);
     let store = server.store();
     let subject = put(&store, "1.0.0");
-    let (status, _) = get(&format!("{}referrers/{subject}", store.base()), IMAGE_INDEX);
+    let (status, _) = get(&format!("{}referrers/{subject}", own(&store)), IMAGE_INDEX);
     assert_eq!(status, 404);
 }
 
@@ -199,15 +217,13 @@ on_both!(
     artifact_names_are_tags_of_their_own_repositories,
     a_declared_components_versions_and_channels_are_tags_of_its_own_repository,
     cache_entries_are_tags_of_the_build_profiles_cache_repository,
+    a_pins_claims_are_read_from_its_artifacts_repository_by_a_store_of_another_repository,
 );
 
-/// The tags `store`'s repository `under` its declared one holds, sorted;
-/// none where the registry holds no such repository.
+/// The tags `store`'s repository `under` its root holds, sorted; none
+/// where the registry holds no such repository.
 fn tags_of(store: &Registry, under: &str) -> Option<Vec<String>> {
-    let base = match under {
-        "" => store.base().to_string(),
-        under => format!("{}{under}/", store.base()),
-    };
+    let base = base_of(store, under);
     let (status, bytes) = get(&format!("{base}tags/list"), "application/json");
     if status == 404 {
         return None;
@@ -222,11 +238,22 @@ fn tags_of(store: &Registry, under: &str) -> Option<Vec<String>> {
     Some(tags)
 }
 
-/// Whether `store`'s repository `under` its declared one holds the
-/// manifest `digest`.
+/// The tags `store`'s repository `under` its root holds but subjects'
+/// referrers tags, sorted; none where the registry holds no such
+/// repository.
+fn names_in(store: &Registry, under: &str) -> Option<Vec<String>> {
+    tags_of(store, under).map(|tags| {
+        tags.into_iter()
+            .filter(|t| !t.starts_with("sha256-"))
+            .collect()
+    })
+}
+
+/// Whether `store`'s repository `under` its root holds the manifest
+/// `digest`.
 fn holds(store: &Registry, under: &str, digest: &Digest) -> bool {
     let (status, _) = get(
-        &format!("{}{under}/manifests/{digest}", store.base()),
+        &format!("{}manifests/{digest}", base_of(store, under)),
         &format!("{IMAGE_INDEX}, {IMAGE_MANIFEST}"),
     );
     status == 200
@@ -256,8 +283,8 @@ fn index_of(store: &Registry, component: &str, name: &str, bytes: &[u8]) -> Dige
     index
 }
 
-/// No repository but the declared one holds an attestation: none of
-/// `under`'s tags is a referrers tag, and where the registry answers a
+/// `store`'s repository `under` its root holds no attestation: none of
+/// its tags is a referrers tag, and where the registry answers a
 /// referrers API, none lists a referrer of `subject` there.
 fn no_attestation_under(store: &Registry, kind: Kind, under: &str, subject: &Digest) {
     let tags = tags_of(store, under).unwrap_or_default();
@@ -267,7 +294,7 @@ fn no_attestation_under(store: &Registry, kind: Kind, under: &str, subject: &Dig
     );
     if kind == Kind::Zot {
         let (status, bytes) = get(
-            &format!("{}{under}/referrers/{subject}", store.base()),
+            &format!("{}referrers/{subject}", base_of(store, under)),
             IMAGE_INDEX,
         );
         if status == 200 {
@@ -276,6 +303,27 @@ fn no_attestation_under(store: &Registry, kind: Kind, under: &str, subject: &Dig
         }
     }
     assert!(!store.claims_of(subject).unwrap().is_empty());
+}
+
+/// `store`'s repository `under` its root lists `count` of timber's
+/// attestations on `subject`, by the referrers API on zot and by the
+/// referrers tag on the distribution, each a referrer the repository
+/// holds (C.1; design D5).
+fn attestations_under(store: &Registry, kind: Kind, under: &str, subject: &Digest, count: usize) {
+    let entries = listed_in(store, under, subject, kind);
+    let ours: Vec<&String> = entries
+        .iter()
+        .filter(|(_, t)| t.as_deref() == Some(ENVELOPE))
+        .map(|(d, _)| d)
+        .collect();
+    assert_eq!(ours.len(), count, "{under} lists {entries:?} on {subject}");
+    for digest in ours {
+        let (status, _) = get(
+            &format!("{}manifests/{digest}", base_of(store, under)),
+            IMAGE_MANIFEST,
+        );
+        assert_eq!(status, 200, "{under} lists {digest} and does not hold it");
+    }
 }
 
 fn artifact_names_are_tags_of_their_own_repositories(kind: Kind) {
@@ -293,18 +341,19 @@ fn artifact_names_are_tags_of_their_own_repositories(kind: Kind) {
     assert_eq!(store.resolve(&scoped), Ok(first.clone()));
     assert_eq!(store.resolve(&plain), Ok(second.clone()));
     assert_eq!(
-        tags_of(&store, "artifact/npm/0_40acme_2fsite"),
+        names_in(&store, "artifact/npm/0_40acme_2fsite"),
         Some(vec!["1.3.0".into()])
     );
     assert_eq!(
-        tags_of(&store, "artifact/npm/acme-site"),
+        names_in(&store, "artifact/npm/acme-site"),
         Some(vec!["1.3.0".into()])
     );
+    assert_eq!(names_in(&store, "acme/site/artifact"), None);
 
     let built = name("@acme/site", "1.0.0+build.1");
     store.name(&built, &first, None).unwrap();
     assert_eq!(
-        tags_of(&store, "artifact/npm/0_40acme_2fsite"),
+        names_in(&store, "artifact/npm/0_40acme_2fsite"),
         Some(vec!["1.0.0_2bbuild.1".into(), "1.3.0".into()])
     );
     let mut listed = store
@@ -327,11 +376,17 @@ fn artifact_names_are_tags_of_their_own_repositories(kind: Kind) {
         }
     );
     assert_eq!(store.resolve(&scoped), Ok(first.clone()));
-    for (under, subject) in [
-        ("artifact/npm/0_40acme_2fsite", &first),
-        ("artifact/npm/acme-site", &second),
+    for (under, index, written) in [
+        ("artifact/npm/0_40acme_2fsite", &first, "@acme/site"),
+        ("artifact/npm/acme-site", &second, "acme-site"),
     ] {
-        no_attestation_under(&store, kind, under, subject);
+        attestations_under(&store, kind, under, index, 1);
+        let Ok(Held::Manifest(Manifest::Index(meta))) = store.read(index) else {
+            panic!("{index} read as no index");
+        };
+        let artifact = &meta.artifacts()[0];
+        assert_eq!(artifact.meta.name().as_str(), written);
+        attestations_under(&store, kind, under, &artifact.digest, 1);
     }
 }
 
@@ -340,10 +395,13 @@ fn a_declared_components_versions_and_channels_are_tags_of_its_own_repository(ki
     let store = server.store();
     let lib = index_of(&store, "lib", "lib", b"the lib");
     let app = index_of(&store, "app", "app", b"the app");
-    assert!(holds(&store, "lib", &lib), "lib's index is not held in lib");
+    assert!(
+        holds(&store, "acme/site/lib", &lib),
+        "lib's index is not held in lib"
+    );
     // The reference distribution answers a repository with no tag 404.
     assert_eq!(
-        tags_of(&store, "lib").unwrap_or_default(),
+        names_in(&store, "acme/site/lib").unwrap_or_default(),
         Vec::<String>::new(),
         "lib's index is tagged"
     );
@@ -357,14 +415,15 @@ fn a_declared_components_versions_and_channels_are_tags_of_its_own_repository(ki
     assert_eq!(store.resolve(&libs), Ok(lib.clone()));
     assert_eq!(store.resolve(&apps), Ok(app.clone()));
     assert_eq!(
-        tags_of(&store, "lib"),
+        names_in(&store, "acme/site/lib"),
         Some(vec!["beta".into(), "lib-v1.2.0".into()])
     );
-    assert_eq!(tags_of(&store, "app"), Some(vec!["beta".into()]));
-    let declared = tags_of(&store, "").unwrap();
+    assert_eq!(names_in(&store, "acme/site/app"), Some(vec!["beta".into()]));
+    assert_eq!(names_in(&store, "lib"), None, "lib was held under the root");
+    let own = names_in(&store, OWN).unwrap_or_default();
     assert!(
-        declared.iter().all(|t| t.starts_with("sha256-")),
-        "the declared repository holds a component's tag: {declared:?}"
+        own.is_empty(),
+        "the repository's own holds a component's tag: {own:?}"
     );
     assert_eq!(
         refused(store.name(&libs, &app, Some(&Digest::of(b"a third")))).why,
@@ -379,23 +438,26 @@ fn a_declared_components_versions_and_channels_are_tags_of_its_own_repository(ki
     store
         .name(&Name::new("channel/stable"), &undeclared, None)
         .unwrap();
-    let declared = tags_of(&store, "").unwrap();
-    assert!(
-        declared.contains(&"v1.2.0".into()) && declared.contains(&"channel_2fstable".into()),
-        "{declared:?}"
+    assert_eq!(
+        names_in(&store, OWN),
+        Some(vec!["channel_2fstable".into(), "v1.2.0".into()])
     );
-    assert_eq!(tags_of(&store, "repository"), None);
+    assert_eq!(tags_of(&store, "acme/site/repository"), None);
 
-    assert!(!holds(&store, "lib", &undeclared));
+    assert!(!holds(&store, "acme/site/lib", &undeclared));
     store
         .name(&Name::new("channel/lib/stable"), &undeclared, None)
         .unwrap();
     assert!(
-        holds(&store, "lib", &undeclared),
+        holds(&store, "acme/site/lib", &undeclared),
         "the index was not held in lib"
     );
-    for (under, subject) in [("lib", &lib), ("app", &app)] {
-        no_attestation_under(&store, kind, under, subject);
+    for (under, subject) in [
+        ("acme/site/lib", &lib),
+        ("acme/site/app", &app),
+        ("acme/site/lib", &undeclared),
+    ] {
+        attestations_under(&store, kind, under, subject, 1);
     }
 }
 
@@ -406,21 +468,31 @@ fn cache_entries_are_tags_of_the_build_profiles_cache_repository(kind: Kind) {
     let entry = Name::new("cache/b7e1");
     publish.name(&entry, &bytes, None).unwrap();
     assert_eq!(publish.resolve(&entry), Ok(bytes.clone()));
-    assert_eq!(tags_of(&publish, "cache/moon"), Some(vec!["b7e1".into()]));
+    assert_eq!(
+        tags_of(&publish, "acme/site/cache/moon"),
+        Some(vec!["b7e1".into()])
+    );
+    assert_eq!(tags_of(&publish, "cache/moon"), None);
 
     let repository = server.repository();
-    let push = Registry::new(&repository).unwrap().bound_for("moon", true);
+    let push = site(&repository).bound_for("moon", true);
     let pushed = push.put_bytes(b"a pushed entry").unwrap().digest;
     push.name(&entry, &pushed, None).unwrap();
     assert_eq!(push.resolve(&entry), Ok(pushed.clone()));
-    assert_eq!(tags_of(&push, "cache/moon"), Some(vec!["b7e1".into()]));
-    let (status, _) = get(&format!("{}cache/moon/blobs/{pushed}", push.base()), "*/*");
+    assert_eq!(
+        tags_of(&push, "acme/site/cache/moon"),
+        Some(vec!["b7e1".into()])
+    );
+    let (status, _) = get(
+        &format!("{}blobs/{pushed}", base_of(&push, "acme/site/cache/moon")),
+        "*/*",
+    );
     assert_eq!(status, 200, "the cache repository holds no bytes");
-    assert_eq!(tags_of(&push, ""), None, "the declared repository was made");
-    let (status, _) = get(&format!("{}blobs/{pushed}", push.base()), "*/*");
-    assert_eq!(status, 404, "the declared repository holds the bytes");
+    assert_eq!(tags_of(&push, OWN), None, "the repository's own was made");
+    let (status, _) = get(&format!("{}blobs/{pushed}", own(&push)), "*/*");
+    assert_eq!(status, 404, "the repository's own holds the bytes");
 
-    let sync = Registry::new(&repository).unwrap().bound_for("moon", false);
+    let sync = site(&repository).bound_for("moon", false);
     let resolved = sync.resolve(&entry).unwrap();
     assert_eq!(
         sync.read(&resolved),
@@ -433,10 +505,52 @@ fn cache_entries_are_tags_of_the_build_profiles_cache_repository(kind: Kind) {
         .name(&Name::new("cache/c4d2"), &layer, None)
         .unwrap();
     assert_eq!(
-        tags_of(&publish, "cache/moon"),
+        tags_of(&publish, "acme/site/cache/moon"),
         Some(vec!["b7e1".into(), "c4d2".into()])
     );
-    no_attestation_under(&publish, kind, "cache/moon", &attested);
+    no_attestation_under(&publish, kind, "acme/site/cache/moon", &attested);
+}
+
+fn a_pins_claims_are_read_from_its_artifacts_repository_by_a_store_of_another_repository(
+    kind: Kind,
+) {
+    let server = Server::start(kind);
+    let publisher = server.store();
+    let index = index_of(&publisher, "web", "site", b"the site");
+    let name = timber_seams::artifact_name(
+        &Ecosystem::new("npm"),
+        &EcosystemName::new("site"),
+        &Version::new("1.3.0"),
+    );
+    publisher.name(&name, &index, None).unwrap();
+    let acceptance = attestation(&index, "it was accepted");
+    assert!(!publisher.attach(&index, &acceptance).unwrap().held_already);
+
+    let proxy = Proxy::before(&server);
+    let reader = proxy.store_for(&server.root(), "acme", "app");
+    proxy.passed();
+    assert_eq!(reader.resolve(&name), Ok(index.clone()));
+    let Ok(Held::Manifest(Manifest::Index(meta))) = reader.read(&index) else {
+        panic!("{index} read as no index");
+    };
+    let artifact = meta.artifacts()[0].digest.clone();
+    assert_eq!(reader.read(&artifact), publisher.read(&artifact));
+    let on_index = reader.claims_of(&index).unwrap();
+    assert_eq!(on_index.len(), 2, "{on_index:?}");
+    assert!(on_index.contains(&acceptance));
+    assert_eq!(Ok(on_index), publisher.claims_of(&index));
+    let on_artifact = reader.claims_of(&artifact).unwrap();
+    assert_eq!(on_artifact.len(), 1);
+    assert_eq!(Ok(on_artifact), publisher.claims_of(&artifact));
+    let named_in = format!(
+        "/v2/{}/artifact/npm/site/",
+        server.root().split_once('/').unwrap().1
+    );
+    let passed = proxy.passed();
+    assert!(
+        passed.iter().all(|p| p.path.starts_with(&named_in)),
+        "the reader asked beyond {named_in}: {passed:#?}"
+    );
 }
 
 fn the_same_bytes_put_twice_are_uploaded_once(kind: Kind) {
@@ -474,7 +588,7 @@ fn one_artifact_has_one_digest_in_a_layout_and_in_a_registry(kind: Kind) {
     assert_eq!(digests[0], digests[1]);
     let held = fs::read(layout.root().join("blobs/sha256").join(digests[0].hex())).unwrap();
     let (status, bytes) = get(
-        &format!("{}manifests/{}", registry.base(), digests[1]),
+        &format!("{}manifests/{}", own(&registry), digests[1]),
         IMAGE_MANIFEST,
     );
     assert_eq!(status, 200);
@@ -553,7 +667,7 @@ fn the_same_attestation_attached_twice_is_held_once(kind: Kind) {
 /// referrers API, as that tool would list it; its digest.
 fn their_referrer(store: &Registry, subject: &Digest, kind: Kind) -> Digest {
     let (_, held) = get(
-        &format!("{}manifests/{subject}", store.base()),
+        &format!("{}manifests/{subject}", own(store)),
         IMAGE_MANIFEST,
     );
     let layer = store.put_bytes(b"their signature").unwrap().digest;
@@ -568,10 +682,10 @@ fn their_referrer(store: &Registry, subject: &Digest, kind: Kind) -> Digest {
     }))
     .unwrap();
     let digest = Digest::of(&manifest);
-    let url = format!("{}manifests/{digest}", store.base());
+    let url = format!("{}manifests/{digest}", own(store));
     assert_eq!(put_raw(&url, IMAGE_MANIFEST, &manifest), 201);
     if kind == Kind::Distribution {
-        let tag = format!("{}manifests/sha256-{}", store.base(), subject.hex());
+        let tag = format!("{}manifests/sha256-{}", own(store), subject.hex());
         let (status, bytes) = get(&tag, IMAGE_INDEX);
         let mut index: Value = if status == 200 {
             serde_json::from_slice(&bytes).unwrap()
@@ -592,12 +706,25 @@ fn their_referrer(store: &Registry, subject: &Digest, kind: Kind) -> Digest {
     digest
 }
 
-/// The digests a subject's referrers are listed by: by the referrers
-/// API on zot, and by the referrers tag on the distribution.
+/// The digests a subject's referrers are listed by in the repository's
+/// own.
 fn listed(store: &Registry, subject: &Digest, kind: Kind) -> Vec<(String, Option<String>)> {
+    listed_in(store, OWN, subject, kind)
+}
+
+/// The digests a subject's referrers are listed by in `store`'s
+/// repository `under` its root: by the referrers API on zot, and by the
+/// referrers tag on the distribution.
+fn listed_in(
+    store: &Registry,
+    under: &str,
+    subject: &Digest,
+    kind: Kind,
+) -> Vec<(String, Option<String>)> {
+    let base = base_of(store, under);
     let url = match kind {
-        Kind::Zot => format!("{}referrers/{subject}", store.base()),
-        Kind::Distribution => format!("{}manifests/sha256-{}", store.base(), subject.hex()),
+        Kind::Zot => format!("{base}referrers/{subject}"),
+        Kind::Distribution => format!("{base}manifests/sha256-{}", subject.hex()),
     };
     let (status, bytes) = get(&url, IMAGE_INDEX);
     assert_eq!(status, 200, "{url}: {}", String::from_utf8_lossy(&bytes));
@@ -638,13 +765,13 @@ fn another_tools_referrer_is_not_answered_and_is_left(kind: Kind) {
         2
     );
     let (status, _) = get(
-        &format!("{}manifests/{theirs}", store.base()),
+        &format!("{}manifests/{theirs}", own(&store)),
         IMAGE_MANIFEST,
     );
     assert_eq!(status, 200, "their referrer was removed");
     if kind == Kind::Zot {
         let (status, _) = get(
-            &format!("{}manifests/sha256-{}", store.base(), subject.hex()),
+            &format!("{}manifests/sha256-{}", own(&store), subject.hex()),
             IMAGE_INDEX,
         );
         assert_eq!(
@@ -667,7 +794,7 @@ fn the_reference_distributions_referrers_tag_lists_both_attestations() {
         store.attach(&subject, envelope).unwrap();
     }
     let (status, bytes) = get(
-        &format!("{}manifests/sha256-{}", store.base(), subject.hex()),
+        &format!("{}manifests/sha256-{}", own(&store), subject.hex()),
         IMAGE_INDEX,
     );
     assert_eq!(status, 200);
@@ -697,7 +824,7 @@ fn a_referrers_tag_rewritten_before_the_read_back_is_unreadable() {
     let repository = server.repository();
     let mut store = proxy.store(&repository);
     let subject = put(&store, "1.0.0");
-    let direct = Registry::new(&repository).unwrap().base().to_string();
+    let direct = own(&site(&repository));
     store.between_put_and_read_back(move |tag| {
         if tag.starts_with("sha256-") {
             let empty = json!({"schemaVersion": 2, "mediaType": IMAGE_INDEX, "manifests": []});
@@ -733,13 +860,13 @@ fn a_race_lost_after_the_put_is_refused_naming_the_other_writer(kind: Kind) {
     let server = Server::start(kind);
     let proxy = Proxy::before(&server);
     let repository = server.repository();
-    let direct = Registry::new(&repository).unwrap();
+    let direct = site(&repository);
     let [at, to, other] = ["1.0.0", "1.1.0", "1.2.0"].map(|v| put(&direct, v));
     let name = Name::new("site-v1");
     direct.name(&name, &at, None).unwrap();
     let mut store = proxy.store(&repository);
     let (moved, to_) = (other.clone(), to.clone());
-    let writer = Registry::new(&repository).unwrap();
+    let writer = site(&repository);
     store.between_put_and_read_back(move |_| {
         writer
             .name(&Name::new("site-v1"), &moved, Some(&to_))
@@ -773,14 +900,13 @@ fn put_back_after_the_put(
     let server = Server::start(kind);
     let proxy = Proxy::before(&server);
     let repository = server.repository();
-    let direct = Registry::new(&repository).unwrap();
+    let direct = site(&repository);
     let [at, to] = ["1.0.0", "1.1.0"].map(|v| put(&direct, v));
     direct.name(&Name::new("site-v1"), &at, None).unwrap();
     let mut store = proxy.store(&repository);
     let (former, moved) = (at.clone(), to.clone());
     store.between_put_and_read_back(move |tag| {
-        Registry::new(&repository)
-            .unwrap()
+        site(&repository)
             .name(&Name::new(tag), &former, Some(&moved))
             .expect("the tag is put back at the former place");
         shown(repository.clone(), former.clone(), moved.clone());
@@ -803,8 +929,7 @@ fn a_read_back_at_the_former_place_within_the_bound_is_no_lost_race(kind: Kind) 
         put_back_after_the_put(kind, |repository, former, moved| {
             thread::spawn(move || {
                 thread::sleep(Duration::from_secs(1));
-                Registry::new(&repository)
-                    .unwrap()
+                site(&repository)
                     .name(&Name::new("site-v1"), &moved, Some(&former))
                     .expect("the registry shows the put");
             });
@@ -859,7 +984,7 @@ fn two_names_differing_only_in_escaped_characters_resolve_apart(kind: Kind) {
     for (name, digest) in names.iter().zip(&digests) {
         assert_eq!(store.resolve(name).as_ref(), Ok(digest));
     }
-    let (status, bytes) = get(&format!("{}tags/list", store.base()), "application/json");
+    let (status, bytes) = get(&format!("{}tags/list", own(&store)), "application/json");
     assert_eq!(status, 200);
     let tags: Value = serde_json::from_slice(&bytes).unwrap();
     let mut tags: Vec<&str> = tags["tags"]
@@ -872,14 +997,15 @@ fn two_names_differing_only_in_escaped_characters_resolve_apart(kind: Kind) {
     assert_eq!(tags, ["a_2fb_2bc", "a_5f2fb_2bc"]);
 }
 
-/// The moon build profile's cache repository under `store`'s declared
-/// one, as a path, and its API's base (design D9).
+/// The moon build profile's cache repository under the repository's own
+/// of `store`, bound for `acme/site`, as a path, and its API's base
+/// (design D3, D9).
 fn cache_of(store: &Registry) -> (String, String) {
     let path = format!(
-        "{}/cache/moon",
+        "{}/{OWN}/cache/moon",
         store.repository().split_once('/').unwrap().1
     );
-    let base = format!("{}cache/moon/", store.base());
+    let base = base_of(store, &format!("{OWN}/cache/moon"));
     (path, base)
 }
 
@@ -946,14 +1072,14 @@ fn a_race_lost_on_a_cache_entrys_name_is_refused_naming_the_other_writer(kind: K
     let server = Server::start(kind);
     let proxy = Proxy::before(&server);
     let repository = server.repository();
-    let direct = Registry::new(&repository).unwrap().bound_for("moon", false);
+    let direct = site(&repository).bound_for("moon", false);
     let [at, to, other] =
         [b"one".as_slice(), b"two", b"three"].map(|bytes| direct.put_bytes(bytes).unwrap().digest);
     let name = Name::new("cache/site");
     direct.name(&name, &at, None).unwrap();
     let mut store = proxy.store(&repository).bound_for("moon", false);
     let (moved, to_) = (other.clone(), to.clone());
-    let writer = Registry::new(&repository).unwrap().bound_for("moon", false);
+    let writer = site(&repository).bound_for("moon", false);
     store.between_put_and_read_back(move |_| {
         writer
             .name(&Name::new("cache/site"), &moved, Some(&to_))
@@ -1165,7 +1291,7 @@ fn a_version_in_a_layout_copied_into_a_registry(kind: Kind) {
 fn a_race_lost_on_a_channels_tag_is_repaired_from_the_ledger(kind: Kind) {
     let server = Server::start(kind);
     let repository = server.repository();
-    let direct = Registry::new(&repository).unwrap();
+    let direct = site(&repository);
     let [first, second] = ["1.3.0", "1.4.0"].map(|version| {
         let digest = put(&direct, version);
         direct
@@ -1203,8 +1329,8 @@ fn a_race_lost_on_a_channels_tag_is_repaired_from_the_ledger(kind: Kind) {
     );
     keeper.append(&stable, &promotion, None).unwrap();
 
-    let mut store = Registry::new(&repository).unwrap();
-    let writer = Registry::new(&repository).unwrap();
+    let mut store = site(&repository);
+    let writer = site(&repository);
     let (moved, raced) = (second.clone(), std::cell::Cell::new(false));
     store.between_put_and_read_back(move |tag| {
         if !raced.replace(true) {

@@ -88,7 +88,7 @@ changes. A task that cannot be done without one stops short with
 
 ## 3. The proof on registries
 
-- [ ] 3.1 Run the tools layer's registry tests under the root (design D7).
+- [x] 3.1 Run the tools layer's registry tests under the root (design D7).
   - In `crates/timber/tests/registry/mod.rs`, `Server::store()` and `RegistryRig` bind the repository `acme/site`, and add `Server::store_for(owner, name)`. `tags_of`, `holds` and `cache_of` in `crates/timber/tests/registry_store.rs` read under the root.
   - Rewrite `artifact_names_are_tags_of_their_own_repositories`, `a_declared_components_versions_and_channels_are_tags_of_its_own_repository` and `cache_entries_are_tags_of_the_build_profiles_cache_repository` for D3's places.
   - Add `a_pins_claims_are_read_from_its_artifacts_repository_by_a_store_of_another_repository` to `on_both!`. One store publishes and attaches an acceptance after naming. A store for another repository resolves the artifact's name and reads every claim on the index and the artifact.
