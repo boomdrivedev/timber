@@ -8,7 +8,8 @@
 
 use serde::Serialize;
 use timber_seams::{
-    Answer, ChannelId, Claim, ClaimKind, Digest, Keeper, Name, Not, Read, Seam, Source, Store, Why,
+    Answer, ChannelId, Claim, ClaimKind, Digest, Envelope, Keeper, Name, Not, Read, Seam, Source,
+    Store, Why,
 };
 
 use crate::BOUND;
@@ -36,6 +37,14 @@ pub enum Followed {
 /// with the ledger's words, when the ledger answered it as last read,
 /// whose head may be behind the one held (101, 106).
 fn head(keeper: &dyn Keeper, channel: &ChannelId) -> Answer<Digest> {
+    Ok(head_of(channel, &from_source(keeper, channel)?)?.1)
+}
+
+/// The claims of `channel`'s chain as the ledger's source holds them;
+/// unreadable naming the chain, with the ledger's words, where the ledger
+/// answered it as last read, whose head may be behind the one held (101,
+/// 106); any other answer as the keeper gives it.
+pub(crate) fn from_source(keeper: &dyn Keeper, channel: &ChannelId) -> Answer<Vec<Envelope>> {
     let chain = keeper.chain(channel)?;
     if let Read::Kept { said, .. } = chain.read {
         return Err(Not::unreadable(
@@ -44,14 +53,21 @@ fn head(keeper: &dyn Keeper, channel: &ChannelId) -> Answer<Digest> {
             Some(said),
         ));
     }
-    let Some(head) = chain.claims.last() else {
+    Ok(chain.claims)
+}
+
+/// The claim at the head of `claims`, `channel`'s chain, and the digest
+/// it is a promotion about (39): absent for an empty chain; unreadable
+/// naming the head where it holds no promotion claim of timber's form.
+pub(crate) fn head_of(channel: &ChannelId, claims: &[Envelope]) -> Answer<(Envelope, Digest)> {
+    let Some(head) = claims.last() else {
         return Err(Not::absent(
             &Source::new(Seam::Keeper, BOUND),
             format!("chain of {channel}"),
         ));
     };
     match Claim::from_envelope(head) {
-        Some(claim) if claim.kind == ClaimKind::Promotion => Ok(claim.subject),
+        Some(claim) if claim.kind == ClaimKind::Promotion => Ok((head.clone(), claim.subject)),
         _ => Err(Not::unreadable(
             &Source::new(Seam::Keeper, BOUND),
             format!("the head of the chain of {channel}, {}", head.digest()),
