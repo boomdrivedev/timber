@@ -5,6 +5,7 @@ status: proposed
 date: 2026-11-17
 decision-makers:
 - the construct stage of the change each-repositorys-spaces-sit-under-its-own-root, by its design D1 to D6 and D8
+- the code stage of the same change, by two answers its design left open, under "What the code stage chose"
 ---
 
 # A registry store is bound for the checkout's repository, reads a digest where its name was resolved, and holds each claim beside its subject
@@ -71,3 +72,10 @@ Option 1 for each, as the change's design D1 to D6 and D8 say.
 - An attach that fails partway is answered with the failure unchanged; until the next attach writes what is missing, a reader of the name that lacks it reads less. A gate's move waits on its own attach's answer (core.45).
 - A digest of another repository's that no name in the process reached is absent, which is what 138 asks: a consumer reaches another's versions through their names.
 - The forms the profile writes and how name reads a tag are unchanged, so ECR's check asks for no new run (core.38); its next run checks the new places.
+
+## What the code stage chose
+
+Two answers the design left open, the code stage's own, each cheap to change:
+
+- **A digest no name reached, read by a store bound for no repository, is answered as the binding answered the repository**, absent naming the landing's remote or unreadable naming its address, since the repository's own and its cache repository are the next places asked and the store has neither. The path not taken was absent naming the digest, which reads as bytes never put where the store could not ask (core.19).
+- **attach writes into the repository a read found its subject in as well**, beside the repository's own, the repositories the subject was reached in and an index's holders. That repository is one of those but where the subject is held only in the cache repository, so a claim is never answered absent for a subject a read finds. The path not taken was answering absent there, which tells a gate a manifest it can read is not held.
