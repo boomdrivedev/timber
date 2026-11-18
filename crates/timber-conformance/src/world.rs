@@ -16,7 +16,10 @@ use timber_core::{
     artifact_name, cache_name, publish, sync_checkout, verify, Ask, CheckoutAsk, CheckoutSynced,
     History, Kept, Layouts, Publish, RepositoryName, Verified, VerifyAsk,
 };
-use timber_fakes::{BuildOp, Call, FakeProjection, FakeSigner, Fakes, KeeperOp, StoreOp, TargetOp};
+use timber_fakes::{
+    BuildOp, Call, FakeKeeper, FakeProjection, FakeSigner, FakeStore, Fakes, KeeperOp, StoreOp,
+    TargetOp,
+};
 use timber_seams::{
     Answer, Artifact, ArtifactMeta, Audience, Branch, BuildId, ChannelId, ChannelName, Check,
     Claim, ClaimKind, ComponentName, Contents, Digest, Ecosystem, EcosystemName, Envelope,
@@ -119,6 +122,23 @@ pub struct FakeWorld {
     /// The store's calls the world asked itself to hold what a check
     /// job pushed, by their place in its record.
     seeded: RefCell<Vec<usize>>,
+    /// The store and keeper bound once the repository moved, in place of
+    /// the fakes' own (C.1).
+    moved: RefCell<Option<(FakeStore, FakeKeeper)>>,
+}
+
+/// A move of the world's repository (C.1; design D8): the root it left,
+/// bound with the store and keeper the world bound until then, and the
+/// root it moved to, bound with a fresh store and a keeper holding the
+/// chains the left one held, as the ledger's refs move with the
+/// repository. Each handle sees every asking of what it is.
+pub struct Move {
+    pub from: RepositoryName,
+    pub to: RepositoryName,
+    pub left: FakeStore,
+    pub left_keeper: FakeKeeper,
+    pub store: FakeStore,
+    pub keeper: FakeKeeper,
 }
 
 impl Rig for FakeWorld {
@@ -234,6 +254,38 @@ impl FakeWorld {
             head,
             packs: Rc::new(RefCell::new(Vec::new())),
             seeded: RefCell::new(Vec::new()),
+            moved: RefCell::new(None),
+        }
+    }
+
+    /// The world's store bound for `root`, as a registry's is for the
+    /// repository its checkout is of, so a publish records the root
+    /// (C.1).
+    pub fn root_at(&self, root: &RepositoryName) {
+        self.fakes.roots.bind(root);
+    }
+
+    /// The world's repository moved from `from` to `to` (C.1; design D8):
+    /// `from` bound as a root left with the store and keeper bound until
+    /// now, and `to` bound with a fresh store and a keeper holding the
+    /// chains the left one held; handles to both.
+    pub fn move_to(&self, from: &RepositoryName, to: &RepositoryName) -> Move {
+        let (left, left_keeper) = self
+            .moved
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| (self.fakes.store.clone(), self.fakes.keeper.clone()));
+        self.fakes.roots.leave(from, &left, &left_keeper);
+        self.fakes.roots.bind(to);
+        let (store, keeper) = (FakeStore::new(), left_keeper.chains_copied());
+        *self.moved.borrow_mut() = Some((store.clone(), keeper.clone()));
+        Move {
+            from: from.clone(),
+            to: to.clone(),
+            left,
+            left_keeper,
+            store,
+            keeper,
         }
     }
 
@@ -394,9 +446,15 @@ impl FakeWorld {
     }
 
     /// The fakes as the one binding, each projection watched so the world
-    /// sees what the shared history held at each pack.
+    /// sees what the shared history held at each pack; once the repository
+    /// moved, the store and keeper of the root it moved to in place of the
+    /// fakes' own.
     pub fn seams(&self) -> Seams {
         let mut seams = self.fakes.seams();
+        if let Some((store, keeper)) = &*self.moved.borrow() {
+            seams.store = Box::new(store.clone());
+            seams.keeper = Box::new(keeper.clone());
+        }
         for (ecosystem, projection) in &self.fakes.projections {
             seams.projections.insert(
                 ecosystem.clone(),
@@ -957,6 +1015,42 @@ mod tests {
     use timber_seams::Store;
 
     use super::*;
+
+    #[test]
+    fn a_world_moved_binds_its_store_as_the_root_left_and_a_fresh_one_bound() {
+        let world = FakeWorld::new();
+        let (app, site) = (
+            RepositoryName {
+                owner: "acme".into(),
+                name: "app".into(),
+            },
+            RepositoryName {
+                owner: "acme".into(),
+                name: "site".into(),
+            },
+        );
+        world.root_at(&app);
+        assert_eq!(world.seams().roots.bound(), Ok(Some(app.clone())));
+        let index = world
+            .fakes
+            .store
+            .put_bytes(b"v0.1.0's index")
+            .unwrap()
+            .digest;
+        let moved = world.move_to(&app, &site);
+        let seams = world.seams();
+        assert_eq!(seams.roots.bound(), Ok(Some(site.clone())));
+        assert!(
+            seams.store.read(&index).is_err(),
+            "the bound store is the one left"
+        );
+        let Ok(left) = seams.roots.left(&app) else {
+            panic!("the root left is not bound")
+        };
+        assert!(left.store.read(&index).is_ok());
+        assert_eq!(moved.left.calls().len(), world.fakes.store.calls().len());
+        assert_eq!(moved.store.calls().len(), 1);
+    }
 
     #[test]
     fn two_worlds_built_alike_have_equal_revisions() {

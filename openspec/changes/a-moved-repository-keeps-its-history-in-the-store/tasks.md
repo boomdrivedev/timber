@@ -95,7 +95,7 @@ one stops short with `flume needs`.
 
 ## 4. The suite
 
-- [ ] 4.1 Give the conformance world a second root, in `crates/timber-conformance/src/world.rs` (design D8). The world binds `FakeRoots`, none bound by default. Add a way to move the world's repository: the roots bound to a new root, the world's store and keeper bound as the root left, and a fresh fake store and keeper as the bound ones, with handles to both. Verify with `devenv shell -- cargo test -p timber-conformance --lib`.
+- [x] 4.1 Give the conformance world a second root, in `crates/timber-conformance/src/world.rs` (design D8). The world binds `FakeRoots`, none bound by default. Add a way to move the world's repository: the roots bound to a new root, the world's store and keeper bound as the root left, and a fresh fake store and keeper as the bound ones, with handles to both. Verify with `devenv shell -- cargo test -p timber-conformance --lib`.
 - [ ] 4.2 Add the scenarios below the line of `crates/timber-conformance/src/core/publish.rs` and `core/ledger.rs` (design D8):
   - publish group, "a moved repository's first publish carries its history", citing 22, 62, 103 and 105: a version published, accepted and promoted at the first root, the repository moved, and the next publish answers the history carried, the new root holding the version with its claims and the channel's name at its head, the old root holding the mark, and the record naming the new root;
   - publish group, "a publish under a root left is refused", citing 22 and 58: the bound root holds a mark, and the publish is refused naming where it went with nothing claimed;
