@@ -5,12 +5,13 @@ status: proposed
 date: 2026-11-18
 decision-makers:
 - the construct stage of the change a-moved-repository-keeps-its-history-in-the-store, by its design D1 to D5 and D7
+- boomdrive-design, by its ruling on the code stage's question of a pool's push at a root left, relayed by boomdrive-planner on 2026-11-18
 - the code stage of the same change, by the answers its design left open, under "What the code stage chose"
 ---
 
 # A moved repository's record names each root, its first publish after a move marks the root left and carries its history, and a root left is never written again
 
-Status: proposed. Every choice here is the construct stage's own, made on statement C.1 as amended at `boomdrivedev/blueprints` e8700c8, on the branch `design/timber-a-moved-repository-keeps-its-history`, and on record 0040 as amended on 2026-11-18 (b0956f3a), and each is cheap to change: no form the registry profile writes, no layout store and no digest changes, and a store keeps every byte it held, a root left gaining one tag.
+Status: proposed. Every choice here but what a pool's push does at a root left is the construct stage's own, made on statement C.1 as amended at `boomdrivedev/blueprints` e8700c8, on the branch `design/timber-a-moved-repository-keeps-its-history`, and on record 0040 as amended on 2026-11-18 (b0956f3a), and each is cheap to change: no form the registry profile writes, no layout store and no digest changes, and a store keeps every byte it held, a root left gaining one tag.; what a pool's push does there is boomdrive-design's ruling, on the code stage's question.
 
 Deciders: the construct stage of the change `a-moved-repository-keeps-its-history-in-the-store`, carrying out record 0040's amendment of 2026-11-18, boomdrive-design's, on batch 35's review: a repository that is renamed or moves owner keeps one history in the store, carried to its new root by its first publish after the move.
 
@@ -44,10 +45,16 @@ For when a publish reads a move (design D3):
 
 For how a root left answers (design D4):
 
-1. **One name of the repository's own, `moved`, made by the seam's one function, at the canonical JSON `{"moved_to":"<owner>/<name>"}` of the root moved to, lowercased; written by the carry before anything else; read by the registry store once in its life, at its first operation reaching the repository's own, its components' or its cache repositories, every such operation then refused `RootMoved` naming both roots, and the artifact space read as before (chosen).** No version's, channel's, cache entry's or artifact's name can be `moved` (core.48). A command bound for a root left is answered at its first read of a chain, a channel's name or a claim beside an index; a pool's push is refused with nothing written; a sync reads the artifact space as before.
+1. **One name of the repository's own, `moved`, made by the seam's one function, at the canonical JSON `{"moved_to":"<owner>/<name>"}` of the root moved to, lowercased; written by the carry before anything else; read by the registry store once in its life, at its first operation reaching the repository's own, its components' or its cache repositories, every such operation then refused `RootMoved` naming both roots, and the artifact space read as before (chosen).** No version's, channel's, cache entry's or artifact's name can be `moved` (core.48). A command bound for a root left is answered at its first read of a chain, a channel's name or a claim beside an index; a sync reads the artifact space as before.
 2. A mark per channel. Another repository at the old address would still publish its own components and cache there.
 3. Each core path checking the mark. The gate, the ledger, apply, `after` and status each read the store their own way, and the store ledger's walk is a profile's.
 4. Readers reading the record. Another repository taking the old address holds no record of it.
+
+For a pool's push at a root left (design D4; boomdrive-design's ruling, relayed by boomdrive-planner on 2026-11-18):
+
+1. **Never refused: a push's store reads no mark, and writes its cache entries into the root's cache repository as at any root (chosen).** What a root left refuses is history, a publish, a claim and a channel's move. Cache entries are no history: "Cache entries are not carried; the next build fills them" (record 0040 as amended), and a revision's entries serve the builds of that revision, so a pre-move revision's cache keeps serving an old release branch's builds.
+2. A mark in the root left's cache repository too, which a push reads there. It refuses exactly the builds of a revision from before the move, leaving an old release branch uncached.
+3. The pool's credential given read on its repository's own package, where a push reads the mark. Record 0040 gives the pool's token write on its cache packages and nothing else.
 
 For what a carry carries and in what order (design D5):
 
@@ -63,7 +70,7 @@ For a root the repository left, named again (design D7):
 
 ## Decision outcome
 
-Option 1 for each, as the change's design D1 to D5 and D7 say.
+Option 1 for each, as the change's design D1 to D5 and D7 say, D4 as boomdrive-design ruled for a pool's push.
 
 ### Consequences
 
@@ -83,5 +90,4 @@ Answers the design left open, the code stage's own, each cheap to change:
 - **A carry answers each channel's name `made`, `held_already` or `moved_on`.** A name the bound root holds past the head left, after an earlier carry, is neither made nor held at the head, and saying so tells the reader why the carry left it. The path not taken was answering it held already.
 - **A fork the carry finds names the last claim the two chains share as its predecessor, none where they share none, and the two heads as its claims.** The path not taken was always naming none, which reads as two first claims.
 - **Rule core.78's details name the reads of the mark the core keeps beside the store's own profile:** a publish's root reading the bound root's mark through the store seam, and a carry writing the root left's mark and reading it there, as design D3's step 2 and D5's step 1 have them. The path not taken was design D9's "a mark read by any but the store's own profile", which those two steps would break.
-- **A push's store reads no mark, for now.** It asks nothing of the repository's own, which a pool's credential may not read (135, rule core.62; record 0040), so it cannot read `moved` there, and a pool's push bound for a root left is not refused as design D4 says it is. How a push learns where a root went is asked of the design. The path not taken was reading the mark in the repository's own, which refuses every pool's push of a private repository whose job is given write on its cache package alone.
 - **The conformance world's root moved to is bound with a fresh store and a keeper holding the chains the root left's keeper held**, as the git ref ledger's refs move with the repository; a fake keeper reads no store, so a keeper holding nothing would answer no chain the carry could go on from.

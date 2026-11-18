@@ -218,7 +218,9 @@ where that names a mark naming another root than the one it carries to,
 answers each such operation `Refused(Why::RootMoved { from, to })` and
 writes nothing. A tag absent there is no mark. A mark it cannot read is
 unreadable naming the tag. An artifact's name, and the digests it
-reaches, are read as before.
+reaches, are read as before. A push's store reads no mark: it asks
+nothing of the repository's own (135, core.62), and the mark guards
+history alone, a publish, a claim and a channel's move.
 
 `Why::RootMoved { from, to }` reads "`<from>`'s history moved to
 `<to>`".
@@ -228,7 +230,11 @@ What a command bound for a root left answers:
 - the gate, a promotion, apply, an `after` channel and status: their
   first read of a chain, a channel's name or a claim beside an index is
   `RootMoved`, the store ledger's walk among them;
-- a pool's push: `RootMoved`, nothing written;
+- a pool's push: its cache entries written into the root's cache
+  repository as at any root, never refused, since cache entries are no
+  history and serve the builds of the revision they came from (record
+  0040 as amended: they are not carried, and the next build fills
+  them);
 - a publish: refused at D3's step 2;
 - a sync: as before, from the artifact space.
 
@@ -241,6 +247,12 @@ The paths not taken:
   ledger's walk is a profile's.
 - **Readers reading the record.** Another repository taking the old
   address holds no record of it.
+- **A pool's push refused by a mark in its cache repository.** It
+  refuses the builds of a revision from before the move, and leaves an
+  old release branch uncached.
+- **A pool's push reading the mark in the repository's own.** Record
+  0040 gives the pool's credential write on its cache packages and
+  nothing else.
 
 ### D5. What the carry carries, in order
 
@@ -387,9 +399,11 @@ Rule core.78:
 Its details rule out a carry that writes before the mark, a record
 written before the versions and channels are carried, a record ref
 forced or moved back (core.47), a channel's name carried from the root
-left's name (core.50), a cache entry carried, a write under a root
-marked left, and a mark read by any but the store's own profile. They
-leave out a carry again writing what the last one missed.
+left's name (core.50), a cache entry carried, a write of history under
+a root marked left, a publish, a claim or a channel's move, and a mark
+read by a pool's push or by any core path but a publish's root and its
+carry. They leave out a carry again writing what the last one missed,
+and a pool's push of cache entries into a root marked left.
 
 ## Risks / Trade-offs
 

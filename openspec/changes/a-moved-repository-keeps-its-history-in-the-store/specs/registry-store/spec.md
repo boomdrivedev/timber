@@ -25,6 +25,18 @@ operation.
 - **WHEN** a store bound for a repository whose own holds no mark makes three operations there
 - **THEN** it asks for `moved` once
 
+### Requirement: A pool's push reads no mark
+
+A push's store, which asks nothing of the repository's own, SHALL read
+no mark and SHALL write its cache entries at a root left as at any root,
+cache entries being no history and serving the builds of the revision
+they came from (135, C.1).
+
+#### Scenario: A push at the old root
+
+- **WHEN** a push's store bound for `acme/app`, whose own holds a mark naming `acme/site`, puts a cache entry's bytes and names it
+- **THEN** the entry is held in `acme/app`'s cache repository, and `moved` is never asked for
+
 ### Requirement: A carry's store reads past the mark naming where it carries
 
 A store bound for a root its repository left, to carry from it to

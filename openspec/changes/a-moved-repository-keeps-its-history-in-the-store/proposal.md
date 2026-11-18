@@ -47,7 +47,9 @@ other repository's history writes under a root one left.
   names another refuses every read and write of the repository's own,
   its components' and its cache repositories with a new refusal,
   `RootMoved`, naming both roots. It reads the artifact space as before.
-  Only a carry's binding reads past the mark naming where it carries.
+  Only a carry's binding reads past the mark naming where it carries. A
+  pool's push reads no mark and writes its cache entries there as at
+  any root, cache entries being no history.
 - **A root left is never written again.** A publish whose bound root
   holds a mark is refused naming where that root went, before anything
   is written: another repository at an address one left, a checkout
