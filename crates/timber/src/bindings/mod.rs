@@ -8,7 +8,7 @@
 //! ```toml
 //! [store]
 //! layout = "~/.local/share/timber/layout"
-//! # registry = "registry.example.com/timber"   # a registry in its place
+//! # registry = "registry.example.com/timber"   # a registry's <host>/<root> in its place
 //!
 //! [landing]
 //! branch = { remote = "origin" }   # the remote optional
@@ -81,6 +81,17 @@
 //! never guessed past: a broken one is unreadable naming the file and the
 //! table or key, with the parser's words where it has them (58, 59, rule
 //! core.19), and binds nothing given in its place.
+//!
+//! A registry store is bound for the repository the checkout is of, by
+//! the owner and name the address of its landing's remote ends in, the
+//! landing as the file names it or as given, `push --left`'s among them,
+//! as the serving process names the repository (114, 118, C.1): its own
+//! repository under the root holds its versions, channels and cache
+//! entries. Where that answer is absent or unreadable, as for a checkout
+//! with no remote, the store is bound all the same and answers it for
+//! every write and every name of the repository's own spaces, so a sync
+//! still reads an artifact's name (the change
+//! each-repositorys-spaces-sit-under-its-own-root's design D2).
 //!
 //! The binding binds the store, the landing, the ledger and the signers,
 //! written or given, carries the signers it trusts, its own among them
@@ -698,7 +709,11 @@ impl Landing for NoLanding {
 /// design D3). Every table is read, `[gate]` among them, and nothing is made: a
 /// publish or a push makes the layout at its store's first operation, so
 /// path with `~/` expanded, so the record names a directory a reader
-/// finds whoever's home it was written under (61, 118; design D9). The
+/// finds whoever's home it was written under (61, 118; design D9). Every
+/// store is bound for the repository [`repository_named`] answers for the
+/// landing's remote, written or given, the given one's for a push before
+/// a landing whose file names no `[landing]`, the answer kept and not
+/// required (114, C.1). The
 /// signers are bound in the signer family's order: the one the host
 /// signs with first, and every other bound profile after it,
 /// verify-only (92).
@@ -758,10 +773,19 @@ pub fn bind(
         None if command == For::Left => (Box::new(NoLanding), None),
         None => profiles::landing::given(file, repository)?,
     };
+    // The repository the checkout is of, by its landing's remote, the
+    // given landing's for a push before a landing whose file names none,
+    // as the serving process names it: every store is bound for it, the
+    // answer kept and not required (114, C.1; design D2).
+    let named_repository = match (&bindings.landing, command) {
+        (None, For::Left) => profiles::landing::given_remote(file, repository)
+            .and_then(|given| repository_named(repository, given.as_deref())),
+        _ => repository_named(repository, remote.as_deref()),
+    };
     // A publish or a push makes the layout at its store's first
     // operation, through whichever binding of it is asked first.
     let make = matches!(command, For::Publish | For::Push | For::Left);
-    let opened = || profiles::store::bind(store, make);
+    let opened = || profiles::store::bind(store, make, named_repository.clone());
     let ledger = |open: &dyn Fn() -> Answer<Box<dyn Store>>| match &bindings.ledger {
         Some(ledger) => profiles::ledger::bind(ledger, repository, open),
         None => Ok(profiles::ledger::given(repository, remote.clone())),
@@ -772,7 +796,10 @@ pub fn bind(
         // operation, so every other ledger's chains are read and each
         // environment is answered from the host's copy (60, 61).
         let open = || -> Answer<Box<dyn Store>> {
-            Ok(profiles::store::bind(store, false).unwrap_or_else(Unopened::answering))
+            Ok(
+                profiles::store::bind(store, false, named_repository.clone())
+                    .unwrap_or_else(Unopened::answering),
+            )
         };
         let keeper = ledger(&open)?;
         (open()?, keeper, BTreeMap::new(), BTreeMap::new())
@@ -783,11 +810,11 @@ pub fn bind(
     } else if command == For::Apply {
         // Apply judges the claims attached to the head's index, and each
         // target reads through a store of its own; neither is made (42).
-        let bound = profiles::store::bind(store, false)?;
+        let bound = profiles::store::bind(store, false, named_repository.clone())?;
         let targets = profiles::target::bound(
-            &|| profiles::store::bind(store, false),
+            &|| profiles::store::bind(store, false, named_repository.clone()),
             repository,
-            repository_named(repository, remote.as_deref()),
+            named_repository.clone(),
             &bindings.credentials,
         )?;
         let keeper = ledger(&opened)?;
@@ -798,10 +825,11 @@ pub fn bind(
         // repository on a registry (135; design D9).
         let build = Some(profiles::build::name());
         let push = matches!(command, For::Push | For::Left);
-        let bound = profiles::store::bind_for(store, make, build, push)?;
-        let cache = profiles::store::bind_for(store, make, build, push)?;
-        let crates = profiles::store::bind_for(store, make, build, push)?;
-        let packages = profiles::store::bind_for(store, make, build, push)?;
+        let bind = || profiles::store::bind_for(store, make, build, push, named_repository.clone());
+        let bound = bind()?;
+        let cache = bind()?;
+        let crates = bind()?;
+        let packages = bind()?;
         let keeper = ledger(&opened)?;
         (
             bound,

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use timber_seams::{
-    Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put, Seam,
-    Source, Store, Version,
+    Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put,
+    RepositoryName, Seam, Source, Store, Version,
 };
 
 use crate::bindings::{self, Table};
@@ -59,23 +59,35 @@ pub fn given(file: &Path, xdg_data_home: Option<&OsStr>, home: Option<&Path>) ->
 /// asked of it and never at its binding, so a publish refused before it
 /// asks the store anything leaves nothing behind (60, rule core.11); and
 /// opened otherwise, so a layout that is not there is unreadable in the
-/// operating system's words; `registry`, the repository it names, which
-/// no binding makes, whatever `make`; unreadable naming any other key.
-pub fn bind(table: &Table, make: bool) -> Answer<Box<dyn Store>> {
-    bind_for(table, make, None, false)
+/// operating system's words; `registry`, the registry and the root it
+/// names, `<host>/<root>`, which no binding makes, whatever `make`, bound
+/// for `repository`, the checkout's as the binding answered it, whose own
+/// repository under the root holds its versions, channels and cache
+/// entries, and which a layout ignores (114, C.1; design D2); unreadable
+/// naming any other key.
+pub fn bind(
+    table: &Table,
+    make: bool,
+    repository: Answer<RepositoryName>,
+) -> Answer<Box<dyn Store>> {
+    bind_for(table, make, None, false, repository)
 }
 
 /// The store `[store]` names as [`bind`] binds it, bound for the build
-/// profile `build`, whose cache repository on a registry holds each cache
-/// entry, and, where `push`, putting bytes there too and nothing in the
-/// declared repository, since a push writes cache entries alone (52, 135,
-/// C.1, rule core.14; design D9). A layout holds every name as written,
-/// whatever it is bound for.
+/// profile `build`, whose cache repository under the repository's own on
+/// a registry holds each cache entry, and, where `push`, putting bytes
+/// there too and nothing in the repository's own, since a push writes
+/// cache entries alone (52, 135, C.1, rule core.14; design D9). A
+/// registry is bound for `repository` all the same where the binding
+/// answered it absent or unreadable, that answer kept for every write
+/// and every name of the repository's own spaces (design D2). A layout
+/// holds every name as written, whatever it is bound for.
 pub fn bind_for(
     table: &Table,
     make: bool,
     build: Option<&str>,
     push: bool,
+    repository: Answer<RepositoryName>,
 ) -> Answer<Box<dyn Store>> {
     match table.key() {
         "layout" => {
@@ -89,7 +101,7 @@ pub fn bind_for(
             Ok(Box::new(Layout::open(&path)?))
         }
         "registry" => {
-            let registry = registry(table)?;
+            let registry = registry(table)?.for_repository(repository);
             Ok(Box::new(match build {
                 Some(build) => registry.bound_for(build, push),
                 None => registry,
@@ -101,7 +113,7 @@ pub fn bind_for(
 
 /// The store as the host's file names it, which the record keeps (61,
 /// 118): its key, and the layout's path with `~/` expanded or the
-/// registry's repository; nothing is read or made.
+/// registry's host and root; nothing is read or made.
 pub fn named(table: &Table) -> Answer<Source> {
     let at = match table.key() {
         "layout" => table.path()?.display().to_string(),
@@ -111,12 +123,16 @@ pub fn named(table: &Table) -> Answer<Source> {
     Ok(Source::new(Seam::Store, format!("{} {at}", table.key())))
 }
 
-/// The registry `[store] registry` names by its repository; unreadable
-/// naming the file, the key and the value when it names none. The file
+/// The registry `[store] registry` names by its host and root, bound for
+/// no repository; unreadable naming the file, the key and the value when
+/// it names none. The file
 /// names no credential: the host's Docker configuration holds it (64).
 fn registry(table: &Table) -> Answer<Registry> {
     let text = table.value().as_str().ok_or_else(|| {
-        table.unreadable(format!("{} is not a repository in a string", table.value()))
+        table.unreadable(format!(
+            "{} is not a registry's host and root in a string",
+            table.value()
+        ))
     })?;
     Registry::new(text).map_err(|not| match not {
         Not::Refused(r) => table.unreadable(r.said.unwrap_or_else(|| r.why.to_string())),
@@ -225,8 +241,9 @@ mod tests {
         let path = dir.path().join("data/timber/layout");
         let text = path.to_str().unwrap();
         let table = Table::given(&file(), "store", "layout", text.into());
-        let store = bind(&table, true).unwrap();
-        let cache = bind(&table, true).unwrap();
+        let unnamed = || Err(Not::absent(&Source::new(Seam::Store, "test"), "repository"));
+        let store = bind(&table, true, unnamed()).unwrap();
+        let cache = bind(&table, true, unnamed()).unwrap();
         assert!(!path.exists(), "binding made {}", path.display());
         assert!(matches!(
             cache.resolve(&Name::new("v0.1.0")),
@@ -238,7 +255,7 @@ mod tests {
         );
         let put = store.put_bytes(b"abc").unwrap();
         assert_eq!(cache.read(&put.digest), Ok(Held::Bytes(b"abc".to_vec())));
-        assert!(bind(&table, false).is_ok());
+        assert!(bind(&table, false, unnamed()).is_ok());
     }
 
     #[test]

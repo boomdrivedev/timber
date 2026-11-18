@@ -38,6 +38,20 @@ tasks:
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_ECR']
     tags: [check-ecr]
     options: {runFromWorkspaceRoot: true}
+  # The registry store's group, the cache manifest's scenarios, and a
+  # repository the push makes read with no credential, against the
+  # repository of GitHub's registry the host names in devenv.local.nix
+  # (env.TIMBER_TOOLS_GHCR, as ghcr.io/<owner>/<path>), reached with the
+  # credential for ghcr.io the host's Docker configuration gives, behind
+  # the `tools` feature; it refuses to run, naming the setting, on a host
+  # that names no repository of ghcr.io. It needs a credential a person
+  # signs in for, so it runs outside the gate under a tag of its own, by
+  # hand with `moon run ':#check-ghcr'` (core.38).
+  tools-ghcr:
+    command: 'cargo test -p timber --features tools --test registry_ghcr'
+    inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_GHCR']
+    tags: [check-ghcr]
+    options: {runFromWorkspaceRoot: true}
   # The key service signer's group against the KMS keys the host names in
   # devenv.local.nix (env.TIMBER_TOOLS_KMS_KEY, and
   # env.TIMBER_TOOLS_KMS_STRANGER as the stranger), behind the `tools`

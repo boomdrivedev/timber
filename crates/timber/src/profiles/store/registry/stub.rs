@@ -2,7 +2,8 @@
 //! tests (design D17): repositories of blobs, manifests and tags spoken
 //! to over the distribution protocol as far as the store speaks it, every
 //! request kept, a mount it may decline, repositories it may make on
-//! push or hold only where made, and a tag list it pages.
+//! push or hold only where made, a tag list it pages, and a blob it may
+//! serve only beside a manifest.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -67,6 +68,10 @@ pub(crate) struct Behaviour {
     /// `NAME_UNKNOWN`, as a registry whose repository was deleted between
     /// pages does.
     pub loses_later_pages: bool,
+    /// It answers a `GET` of a blob `BLOB_UNKNOWN` in a repository that
+    /// holds no manifest, while a `HEAD` answers the blob held, as
+    /// GitHub's registry does in a package its push made (record 0039).
+    pub serves_blobs_beside_a_manifest_alone: bool,
 }
 
 impl Default for Behaviour {
@@ -76,6 +81,7 @@ impl Default for Behaviour {
             declines_mounts: false,
             page: 100,
             loses_later_pages: false,
+            serves_blobs_beside_a_manifest_alone: false,
         }
     }
 }
@@ -90,6 +96,11 @@ pub(crate) struct Stub {
 /// The registry's words for a repository it does not hold.
 pub(crate) const NAME_UNKNOWN: &str =
     r#"{"errors":[{"code":"NAME_UNKNOWN","message":"repository name not known to registry"}]}"#;
+
+/// GitHub's registry's words for a `GET` of a blob in a package that
+/// holds no manifest, verbatim as it answered on 2026-11-17 (record 0039).
+pub(crate) const GHCR_BLOB_UNKNOWN: &str =
+    "{\"errors\":[{\"code\":\"BLOB_UNKNOWN\",\"message\":\"blob unknown to registry\"}]}\n";
 
 impl Stub {
     /// A stub behaving as `behaviour`, holding the repositories `made`.
@@ -342,6 +353,14 @@ fn handle(
         .filter(|d| !d.starts_with("uploads"))
     {
         let held = &state.repositories[&repository];
+        if method == "GET"
+            && behaviour.serves_blobs_beside_a_manifest_alone
+            && held.manifests.is_empty()
+        {
+            return Reply::new(404)
+                .header("content-type", "application/json")
+                .body(GHCR_BLOB_UNKNOWN);
+        }
         return match Digest::parse(digest).ok().and_then(|d| held.blobs.get(&d)) {
             Some(bytes) => Reply::new(200)
                 .header("content-length", bytes.len().to_string())

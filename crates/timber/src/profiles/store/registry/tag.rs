@@ -80,17 +80,18 @@ pub(super) fn component(text: &str) -> String {
     out
 }
 
-/// The repository path `parts` make under `declared`, each written as one
-/// path component, for what `held` names as written; refused naming it,
-/// the path and its length where the path runs, with `host` before it,
-/// past 255 characters (design D12).
+/// The repository path `parts` make under `root`, the store's root or a
+/// repository under it, each written as one path component, for what
+/// `held` names as written; refused naming it, the path and its length
+/// where the path runs, with `host` before it, past 255 characters
+/// (design D12).
 pub(super) fn repository(
     host: &str,
-    declared: &str,
+    root: &str,
     parts: &[&str],
     held: &str,
 ) -> Result<String, String> {
-    let mut path = declared.to_string();
+    let mut path = root.to_string();
     for part in parts {
         path.push('/');
         path.push_str(&component(part));
@@ -133,7 +134,9 @@ pub(super) fn referrers(hex: &str) -> String {
     format!("{ALGORITHM}-{hex}")
 }
 
-fn is_referrers(tag: &str) -> bool {
+/// Whether `tag` is in the shape of a subject's referrers tag,
+/// `sha256-<hex>`, which no name's tag takes (design D6).
+pub(super) fn is_referrers(tag: &str) -> bool {
     tag.strip_prefix(ALGORITHM)
         .and_then(|rest| rest.strip_prefix('-'))
         .is_some_and(|hex| {

@@ -2,11 +2,16 @@
 //! zot and a reference distribution, each started on a free loopback
 //! port over a temporary directory and a config the test writes, by the
 //! binary the devenv shell pins, waited on until `GET /v2/` answers, and
-//! stopped when dropped; the store group's rig over a fresh repository of
-//! one; a proxy in front of one that keeps every request it passes and
-//! alters a response body when told to; and the cache manifest's
-//! scenarios a registry plays through the store alone, which the run
-//! against ECR pushes as the tools layer does.
+//! stopped when dropped; stores bound for a repository under a root of
+//! one, `acme/site` where a test names no other (C.1); the store group's
+//! rig over a fresh root of one; a proxy in front of one that keeps every request it passes and
+//! alters a response body when told to; the cache manifest's scenarios a
+//! registry plays through the store alone; and the one live rig the runs
+//! by hand against a hosted registry, ECR's and GitHub's, share: a run's
+//! prefix, a store whose every name carries it, bound for the repository
+//! `timber-checks/store` under the root the host names, and the store
+//! group run there (design D4; the change
+//! each-repositorys-spaces-sit-under-its-own-root's design D7).
 
 #![allow(dead_code)]
 
@@ -22,13 +27,15 @@ use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
 use timber::profiles::store::registry::Registry;
-use timber_conformance::seams::store::{settled, StoreRig};
-use timber_conformance::Rig;
-use timber_seams::{Digest, Held, Name, Not, Store, Why};
+use timber_conformance::seams::store::{self, settled, StoreRig};
+use timber_conformance::{run, Rig};
+use timber_seams::{
+    Answer, Digest, Envelope, Held, Manifest, Name, Not, Put, RepositoryName, Store, Why,
+};
 
 /// The one user the registries that ask for a credential take, and the
 /// bcrypt of its password, as `htpasswd -nbB` writes it.
@@ -211,7 +218,8 @@ impl Server {
         format!("127.0.0.1:{}", self.port)
     }
 
-    /// A repository no other asking has been given.
+    /// A root no other asking has been given, as the host's
+    /// `[store] registry` names one.
     pub fn repository(&self) -> String {
         static MADE: AtomicU64 = AtomicU64::new(0);
         format!(
@@ -221,10 +229,39 @@ impl Server {
         )
     }
 
-    /// A registry store over a fresh repository.
-    pub fn store(&self) -> Registry {
-        Registry::new(&self.repository()).expect("a repository text")
+    /// The server's one root, which [`Server::store`] and
+    /// [`Server::store_for`] share.
+    pub fn root(&self) -> String {
+        format!("{}/store", self.host())
     }
+
+    /// A registry store under the server's root, bound for the repository
+    /// `acme/site`, whose own is `<root>/acme/site`.
+    pub fn store(&self) -> Registry {
+        self.store_for("acme", "site")
+    }
+
+    /// A registry store under the server's root, bound for the repository
+    /// `owner/name`.
+    pub fn store_for(&self, owner: &str, name: &str) -> Registry {
+        store_under(&self.root(), owner, name)
+    }
+}
+
+/// A registry store under `root`, `<host>/<path>`, bound for the
+/// repository `owner/name` (C.1).
+pub fn store_under(root: &str, owner: &str, name: &str) -> Registry {
+    Registry::new(root)
+        .expect("a registry's host and root")
+        .for_repository(Ok(RepositoryName {
+            owner: owner.into(),
+            name: name.into(),
+        }))
+}
+
+/// A registry store under `root`, bound for the repository `acme/site`.
+pub fn site(root: &str) -> Registry {
+    store_under(root, "acme", "site")
 }
 
 impl Drop for Server {
@@ -234,9 +271,10 @@ impl Drop for Server {
     }
 }
 
-/// The store group's rig: a registry store over a fresh repository of a
-/// server the test started, and one at a port nothing listens on, which
-/// [`StoreRig::unreachable`] makes the rig's store.
+/// The store group's rig: a registry store under a fresh root of a server
+/// the test started, bound for the repository `acme/site`, and one at a
+/// port nothing listens on, which [`StoreRig::unreachable`] makes the
+/// rig's store.
 pub struct RegistryRig {
     _server: Rc<Server>,
     live: Registry,
@@ -247,8 +285,8 @@ pub struct RegistryRig {
 impl RegistryRig {
     pub fn new(server: &Rc<Server>) -> RegistryRig {
         RegistryRig {
-            live: server.store(),
-            dead: Registry::new(&format!("127.0.0.1:{}/store", unanswered())).unwrap(),
+            live: site(&server.repository()),
+            dead: site(&format!("127.0.0.1:{}/store", unanswered())),
             _server: server.clone(),
             down: Cell::new(false),
         }
@@ -290,6 +328,164 @@ impl StoreRig for RegistryRig {
     fn names_conditional(&self) -> bool {
         self.live.names_conditional()
     }
+}
+
+/// The repository a live rig's stores are bound for under the root the
+/// host names, `<root>/timber-checks/store` its own (C.1).
+pub const LIVE: (&str, &str) = ("timber-checks", "store");
+
+/// A registry store under the root `root` the host names, bound for the
+/// live rig's repository, [`LIVE`].
+pub fn live(root: &str) -> Registry {
+    store_under(root, LIVE.0, LIVE.1)
+}
+
+/// A prefix no earlier run's names carry.
+pub fn run_prefix() -> String {
+    let started = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_secs();
+    format!("run{started}-{}", std::process::id())
+}
+
+/// A registry store whose every name carries the run's prefix in the
+/// space it is in: an artifact's on its name, so each run lists a
+/// repository of its own, a cache entry's on its build identity, and
+/// every other name before it.
+pub struct Prefixed {
+    pub registry: Registry,
+    pub prefix: String,
+}
+
+impl Prefixed {
+    fn named(&self, name: &Name) -> Name {
+        if let Some((ecosystem, artifact, version)) = name.as_artifact() {
+            return timber_seams::artifact_name(&ecosystem, &self.artifact(&artifact), &version);
+        }
+        match name.as_str().strip_prefix("cache/") {
+            Some(identity) => Name::new(format!("cache/{}{identity}", self.prefix)),
+            None => Name::new(format!("{}{name}", self.prefix)),
+        }
+    }
+
+    fn artifact(&self, name: &timber_seams::EcosystemName) -> timber_seams::EcosystemName {
+        timber_seams::EcosystemName::new(format!("{}{name}", self.prefix))
+    }
+}
+
+impl Store for Prefixed {
+    fn put_bytes(&self, bytes: &[u8]) -> Answer<Put> {
+        self.registry.put_bytes(bytes)
+    }
+    fn put_artifact(&self, manifest: &Manifest) -> Answer<Put> {
+        self.registry.put_artifact(manifest)
+    }
+    fn attach(&self, subject: &Digest, attestation: &Envelope) -> Answer<Put> {
+        self.registry.attach(subject, attestation)
+    }
+    fn claims_of(&self, digest: &Digest) -> Answer<Vec<Envelope>> {
+        self.registry.claims_of(digest)
+    }
+    fn name(&self, name: &Name, to: &Digest, expected: Option<&Digest>) -> Answer<()> {
+        self.registry.name(&self.named(name), to, expected)
+    }
+    fn resolve(&self, name: &Name) -> Answer<Digest> {
+        self.registry.resolve(&self.named(name))
+    }
+    fn read(&self, digest: &Digest) -> Answer<Held> {
+        self.registry.read(digest)
+    }
+    fn versions(
+        &self,
+        ecosystem: &timber_seams::Ecosystem,
+        name: &timber_seams::EcosystemName,
+    ) -> Answer<Vec<timber_seams::Version>> {
+        self.registry.versions(ecosystem, &self.artifact(name))
+    }
+}
+
+/// The store group's rig under the root of a hosted registry the host
+/// names, bound for the repository [`LIVE`], a scenario's names apart from
+/// every other's by the run's prefix, and a store at a loopback port
+/// nothing listens on, which [`StoreRig::unreachable`] makes the rig's.
+pub struct LiveRig {
+    live: Prefixed,
+    dead: Registry,
+    down: Cell<bool>,
+}
+
+impl LiveRig {
+    pub fn new(repository: &str, run: &str, scenario: usize) -> LiveRig {
+        LiveRig {
+            live: Prefixed {
+                registry: live(repository),
+                prefix: format!("{run}-{scenario}-"),
+            },
+            dead: live(&format!("127.0.0.1:{}/store", unanswered())),
+            down: Cell::new(false),
+        }
+    }
+}
+
+impl Rig for LiveRig {
+    fn profile(&self) -> String {
+        self.live.registry.source().profile.clone()
+    }
+}
+
+impl StoreRig for LiveRig {
+    fn store(&self) -> &dyn Store {
+        if self.down.get() {
+            &self.dead
+        } else {
+            &self.live
+        }
+    }
+
+    fn unreachable(&self) -> String {
+        self.down.set(true);
+        ureq::get(&format!("{}tags/list", self.dead.base()))
+            .call()
+            .expect_err("nothing listens on the port")
+            .to_string()
+    }
+
+    /// The registry's bound: its tag reads may answer a moved name's
+    /// former place for that long (C.1, ADR 0015).
+    fn settles_within(&self) -> Duration {
+        self.live.registry.bound()
+    }
+
+    /// The registry's word: its names take no condition, ECR's and
+    /// GitHub's tag put among them (C.1, ADR 0015).
+    fn names_conditional(&self) -> bool {
+        self.live.registry.names_conditional()
+    }
+}
+
+/// The store group run under the root `repository`, a fresh [`LiveRig`]
+/// for each scenario under one run's prefix: every scenario passes and
+/// ran, the report names the registry and the root, and only the refusal of a name moved
+/// from where it is not is not applicable, since no registry the profile
+/// binds takes a conditional tag put (C.1, ADR 0015).
+pub fn store_group_against(repository: &str) {
+    let run_prefix = run_prefix();
+    let scenario = Cell::new(0);
+    let report = run(store::GROUP, &store::scenarios(), &|| {
+        scenario.set(scenario.get() + 1);
+        Box::new(LiveRig::new(repository, &run_prefix, scenario.get()))
+    });
+    report.assert();
+    assert_eq!(
+        report.profile,
+        format!("OCI registry {repository}"),
+        "the report names {}",
+        report.profile
+    );
+    assert_eq!(report.ran, store::scenarios().len());
+    let not: Vec<&str> = report.not_applicable.iter().map(|n| n.scenario).collect();
+    assert_eq!(not, ["a name moved from where it is not"], "{report}");
 }
 
 /// One request a [`Proxy`] passed: its method, its path, and the status
@@ -335,10 +531,17 @@ impl Proxy {
         }
     }
 
-    /// A registry store over `repository`, reached through the proxy.
+    /// A registry store under the root `repository`, reached through the
+    /// proxy, bound for the repository `acme/site`.
     pub fn store(&self, repository: &str) -> Registry {
+        self.store_for(repository, "acme", "site")
+    }
+
+    /// A registry store under the root `repository`, reached through the
+    /// proxy, bound for the repository `owner/name`.
+    pub fn store_for(&self, repository: &str, owner: &str, name: &str) -> Registry {
         let (_, path) = repository.split_once('/').unwrap();
-        Registry::new(&format!("127.0.0.1:{}/{path}", self.port)).unwrap()
+        store_under(&format!("127.0.0.1:{}/{path}", self.port), owner, name)
     }
 
     /// Every request passed since the last asking, in order.

@@ -515,7 +515,7 @@ fn a_profile_no_family_knows_is_unreadable_naming_the_table() {
 }
 
 #[test]
-fn a_registry_binds_a_store_named_by_its_repository() {
+fn a_registry_binds_a_store_named_by_its_host_and_root() {
     let host = Host::new();
     host.write("[store]\nregistry = \"localhost:5000/timber\"\n\n[landing]\nbranch = {}\n");
     let binding = host.bind(host.dir.path(), For::Verify).unwrap();
@@ -533,7 +533,7 @@ fn a_registry_binds_a_store_named_by_its_repository() {
     match binding
         .seams
         .store
-        .resolve(&timber_seams::Name::new("v1.0.0"))
+        .resolve(&timber_seams::Name::new("artifact/eco/site@1.0.0"))
     {
         Err(Not::Unreadable(u)) => assert_eq!(
             u.source,
@@ -543,8 +543,80 @@ fn a_registry_binds_a_store_named_by_its_repository() {
     }
 }
 
+/// The host's directory made a git checkout whose `origin` is at `url`.
+fn checkout_of(host: &Host, url: &str) {
+    git_in(host.dir.path(), &["init", "-q", "-b", "main"]);
+    git_in(host.dir.path(), &["remote", "add", "origin", url]);
+}
+
+/// The repository each request `stub` was asked since its request
+/// `since` was for.
+fn asked_of(
+    stub: &crate::profiles::store::registry::stub::Stub,
+    since: usize,
+) -> Vec<Option<String>> {
+    stub.asked()[since..]
+        .iter()
+        .map(|a| a.repository().map(str::to_string))
+        .collect()
+}
+
 #[test]
-fn a_pushs_store_puts_bytes_into_the_cache_repository_and_no_other_commands_does() {
+fn a_pushs_store_puts_bytes_into_its_cache_repository_and_every_other_commands_into_its_own() {
+    use crate::profiles::store::registry::stub::{Behaviour, Stub};
+    let stub = Stub::start(Behaviour::default(), &[]);
+    let host = Host::new();
+    checkout_of(&host, "https://github.com/Acme/Site.git");
+    host.write(&format!(
+        "[store]\nregistry = \"{}\"\n\n[landing]\nbranch = {{ remote = \"origin\" }}\n",
+        stub.repository("acme/store")
+    ));
+    for (command, repository) in [
+        (For::Push, "acme/store/acme/site/cache/moon"),
+        (For::Left, "acme/store/acme/site/cache/moon"),
+        (For::Publish, "acme/store/acme/site"),
+        (For::Sync, "acme/store/acme/site"),
+    ] {
+        let binding = host.bind(host.dir.path(), command).unwrap();
+        let before = stub.asked().len();
+        let bytes = format!("{command:?}'s bytes");
+        binding.seams.store.put_bytes(bytes.as_bytes()).unwrap();
+        let asked = asked_of(&stub, before);
+        assert!(
+            !asked.is_empty() && asked.iter().all(|r| r.as_deref() == Some(repository)),
+            "{command:?}: {asked:?}"
+        );
+    }
+}
+
+#[test]
+fn a_check_jobs_store_is_bound_for_the_given_remotes_repository() {
+    use crate::profiles::store::registry::stub::{Behaviour, Stub};
+    let stub = Stub::start(Behaviour::default(), &[]);
+    let host = Host::new();
+    checkout_of(&host, "https://github.com/acme/site");
+    host.write(&format!(
+        "[store]\nregistry = \"{}\"\n",
+        stub.repository("acme/store")
+    ));
+    let binding = host.bind(host.dir.path(), For::Left).unwrap();
+    binding
+        .seams
+        .store
+        .put_bytes(b"a check job's entry")
+        .unwrap();
+    let asked = asked_of(&stub, 0);
+    assert!(
+        !asked.is_empty()
+            && asked
+                .iter()
+                .all(|r| r.as_deref() == Some("acme/store/acme/site/cache/moon")),
+        "{asked:?}"
+    );
+}
+
+#[test]
+fn a_store_whose_landing_names_no_remote_resolves_an_artifacts_name_and_refuses_a_put() {
     use crate::profiles::store::registry::stub::{Behaviour, Stub};
     let stub = Stub::start(Behaviour::default(), &[]);
     let host = Host::new();
@@ -552,25 +624,28 @@ fn a_pushs_store_puts_bytes_into_the_cache_repository_and_no_other_commands_does
         "[store]\nregistry = \"{}\"\n\n[landing]\nbranch = {{}}\n",
         stub.repository("acme/store")
     ));
-    for (command, repository) in [
-        (For::Push, "acme/store/cache/moon"),
-        (For::Left, "acme/store/cache/moon"),
-        (For::Publish, "acme/store"),
-        (For::Sync, "acme/store"),
-    ] {
-        let binding = host.bind(host.dir.path(), command).unwrap();
-        let before = stub.asked().len();
-        let bytes = format!("{command:?}'s bytes");
-        binding.seams.store.put_bytes(bytes.as_bytes()).unwrap();
-        let asked: Vec<_> = stub.asked()[before..]
-            .iter()
-            .map(|a| a.repository().map(str::to_string))
-            .collect();
-        assert!(
-            !asked.is_empty() && asked.iter().all(|r| r.as_deref() == Some(repository)),
-            "{command:?}: {asked:?}"
-        );
+    let sync = host.bind(host.dir.path(), For::Sync).unwrap();
+    let name = Name::new("artifact/eco/site@1.3.0");
+    assert!(matches!(
+        sync.seams.store.resolve(&name),
+        Err(Not::Absent(_))
+    ));
+    let asked = asked_of(&stub, 0);
+    assert!(
+        !asked.is_empty()
+            && asked
+                .iter()
+                .all(|r| r.as_deref() == Some("acme/store/artifact/eco/site")),
+        "{asked:?}"
+    );
+
+    let publish = host.bind(host.dir.path(), For::Publish).unwrap();
+    let before = stub.asked().len();
+    match publish.seams.store.put_bytes(b"site") {
+        Err(Not::Absent(a)) => assert!(a.what.contains("remote of the landing"), "{}", a.what),
+        other => panic!("a put with no remote answered {other:?}"),
     }
+    assert_eq!(stub.asked().len(), before, "the stub was asked");
 }
 
 #[test]
