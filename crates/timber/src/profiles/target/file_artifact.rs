@@ -323,12 +323,12 @@ mod tests {
     fn an_index_of_another_version_is_refused_naming_both() {
         let store = FakeStore::default();
         let digest = put_index(&store, "1.3.0", Vec::new());
-        let verified = Verified::new(digest.clone(), Version::new("1.4.0"));
+        let verified = Verified::new(digest.clone(), Version::new("1.4.0"), "dashboards-v1.4.0");
         assert_eq!(
             refused_said(index(&store, &verified, &source())),
             format!("the index {digest} names version 1.3.0, and the version verified is 1.4.0")
         );
-        let same = Verified::new(digest, Version::new("1.3.0"));
+        let same = Verified::new(digest, Version::new("1.3.0"), "dashboards-v1.3.0");
         assert_eq!(
             index(&store, &same, &source()).map(|m| m.version().clone()),
             Ok(Version::new("1.3.0"))
@@ -391,7 +391,11 @@ mod tests {
             }
             other => panic!("a missing layer answered {other:?}, not unreadable"),
         }
-        let gone = Verified::new(Digest::of(b"no index"), Version::new("1.3.0"));
+        let gone = Verified::new(
+            Digest::of(b"no index"),
+            Version::new("1.3.0"),
+            "dashboards-v1.3.0",
+        );
         match index(&store, &gone, &source()) {
             Err(Not::Unreadable(u)) => {
                 assert_eq!(u.what, "the index of version 1.3.0");
@@ -410,7 +414,7 @@ mod tests {
         let digest = put_index(&store, "1.3.0", Vec::new());
         let meta = index(
             &store,
-            &Verified::new(digest, Version::new("1.3.0")),
+            &Verified::new(digest, Version::new("1.3.0"), "dashboards-v1.3.0"),
             &source(),
         )
         .unwrap();

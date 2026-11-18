@@ -5,14 +5,14 @@ each task's check is its own.
 
 ## 1. The verified version names its tag
 
-- [ ] 1.1 In `crates/timber-seams/src/target.rs`, give `Verified` a third field, `tag`, the version's name in the shared history: `Verified::new(index, version, tag)` and `Verified::tag()`, its comment citing 22 and 90 (design D2; seam-contracts spec, "A target's contract"). Pass a tag in the seams crate's own makers (`target.rs`'s test and `lib.rs`). Assert the tag in `every_type_round_trips_through_json`. Verify with `devenv shell -- cargo test -p timber-seams target::tests::every_type_round_trips_through_json`.
-- [ ] 1.2 Make the core hand the tag (environment-apply spec, "Apply hands the target the verified version"; design D2):
+- [x] 1.1 In `crates/timber-seams/src/target.rs`, give `Verified` a third field, `tag`, the version's name in the shared history: `Verified::new(index, version, tag)` and `Verified::tag()`, its comment citing 22 and 90 (design D2; seam-contracts spec, "A target's contract"). Pass a tag in the seams crate's own makers (`target.rs`'s test and `lib.rs`). Assert the tag in `every_type_round_trips_through_json`. Verify with `devenv shell -- cargo test -p timber-seams target::tests::every_type_round_trips_through_json`.
+- [x] 1.2 Make the core hand the tag (environment-apply spec, "Apply hands the target the verified version"; design D2):
   - In `crates/timber-core/src/apply.rs`, make the `Verified` it hands the target with the tag `<prefix><version>`, the component's prefix as the policy at the landed head declares it. Name the tag through one function that `tagged` uses too.
   - Pass a tag in every other maker of `Verified` in `crates/timber-fakes/` and `crates/timber-conformance/`, the tag the version's component would take, and in the expected JSON of `crates/timber-conformance/src/core/apply.rs`.
   - Add `the_verified_version_names_the_components_tag` to `crates/timber-core/tests/apply.rs`: a component declaring the prefix `web-v` applies its head `1.2.0`, and the fake target records the tag `web-v1.2.0` in the version it was handed.
   - Add `the_fake_records_the_tag_it_is_handed` to `crates/timber-fakes/src/target.rs`'s tests.
   - Verify with `devenv shell -- cargo test -p timber-core --test apply the_verified_version_names_the_components_tag`, `devenv shell -- cargo test -p timber-fakes target::tests::the_fake_records_the_tag_it_is_handed` and `devenv shell -- cargo test -p timber-conformance --test fakes the_core_applies_over_the_fakes`.
-- [ ] 1.3 Pass a tag in every maker of `Verified` in `crates/timber/`: `profiles/target/file_artifact.rs`, the Nix cache's, the clan push profile's and the Dash0 target's tests, and `tests/nix_cache.rs`, `tests/nix_fleet_push.rs` and `tests/dash0.rs` (design D2). No profile reads it. Verify with `devenv shell -- cargo test -p timber --lib profiles::target::` and `devenv shell -- cargo test -p timber --features tools --no-run --test nix_cache --test nix_fleet_push --test dash0`.
+- [x] 1.3 Pass a tag in every maker of `Verified` in `crates/timber/`: `profiles/target/file_artifact.rs`, the Nix cache's, the clan push profile's and the Dash0 target's tests, and `tests/nix_cache.rs`, `tests/nix_fleet_push.rs` and `tests/dash0.rs` (design D2). No profile reads it. Verify with `devenv shell -- cargo test -p timber --lib profiles::target::` and `devenv shell -- cargo test -p timber --features tools --no-run --test nix_cache --test nix_fleet_push --test dash0`.
 
 ## 2. A run's own variables, and the notes read in the family module
 

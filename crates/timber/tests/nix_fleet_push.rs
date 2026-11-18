@@ -190,7 +190,8 @@ fn publish(store: &Layout, dir: &Path, version: &str, revision: &str, root: &str
     .unwrap()
     .published_from(Revision::new(revision), Some(repository()));
     let index = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-    Verified::new(index, version)
+    let tag = format!("{}{version}", component.prefix);
+    Verified::new(index, version, tag)
 }
 
 /// A layout that answers a read of a digest it was told stands for
@@ -354,7 +355,7 @@ impl TargetRig for FleetRig {
         let a = &self.fleet.versions[0];
         let mut aliases = self.fleet.store.aliases.borrow_mut();
         aliases.insert(digest.clone(), a.index().clone());
-        Verified::new(digest.clone(), a.version().clone())
+        Verified::new(digest.clone(), a.version().clone(), a.tag())
     }
 
     fn environment(&self, _head: Option<&Digest>) -> Environment {

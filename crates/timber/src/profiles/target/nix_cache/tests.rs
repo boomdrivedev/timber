@@ -152,7 +152,11 @@ fn publish(store: &FakeStore, files: &[(&str, &str, &str)]) -> Verified {
     )
     .unwrap();
     let digest = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-    Verified::new(digest, Version::new(VERSION))
+    Verified::new(
+        digest,
+        Version::new(VERSION),
+        format!("{COMPONENT}-v{VERSION}"),
+    )
 }
 
 fn closure_of(roots: &[String]) -> String {
@@ -421,7 +425,11 @@ fn a_closure_file_whose_bytes_are_not_its_layers_is_refused_and_nothing_runs() {
 #[test]
 fn an_index_the_store_does_not_hold_is_unreadable_naming_the_version() {
     let (store, programs) = (FakeStore::new(), Programs::new());
-    let version = Verified::new(index(9), Version::new(VERSION));
+    let version = Verified::new(
+        index(9),
+        Version::new(VERSION),
+        format!("{COMPONENT}-v{VERSION}"),
+    );
     let (what, said) = unreadable(programs.target(&store).apply(&swancloud(), &version));
     assert_eq!(what, "the index of version 0.4.0");
     assert_eq!(said, format!("the store holds no {}", index(9)));
@@ -431,7 +439,11 @@ fn an_index_the_store_does_not_hold_is_unreadable_naming_the_version() {
 fn an_index_of_another_version_than_the_one_verified_is_refused() {
     let (store, programs) = (FakeStore::new(), Programs::new());
     let published = publish(&store, &[("file", COMPONENT, &closure_of(&[root()]))]);
-    let version = Verified::new(published.index().clone(), Version::new("0.5.0"));
+    let version = Verified::new(
+        published.index().clone(),
+        Version::new("0.5.0"),
+        format!("{COMPONENT}-v0.5.0"),
+    );
     let said = refused_said(programs.target(&store).apply(&swancloud(), &version));
     assert!(
         said.ends_with("names version 0.4.0, and the version verified is 0.5.0"),
