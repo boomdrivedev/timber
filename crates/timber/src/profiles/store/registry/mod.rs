@@ -87,6 +87,7 @@ pub struct Registry {
     build: Option<String>,
     push: bool,
     mounts: RefCell<Vec<(String, bool)>>,
+    reached: RefCell<Vec<(Digest, String)>>,
 }
 
 /// The space of repositories under the root an artifact's names are held
@@ -179,6 +180,7 @@ impl Registry {
             build: None,
             push: false,
             mounts: RefCell::new(Vec::new()),
+            reached: RefCell::new(Vec::new()),
         })
     }
 
@@ -544,8 +546,10 @@ impl Registry {
         }
     }
 
-    /// The bytes of the manifest `digest` and the media type they name,
-    /// once they are found to be its; none when it is not held.
+    /// The bytes of the manifest `digest` of `repository` and the media
+    /// type they name, once they are found to be its; none when it is not
+    /// held. Each digest the manifest names is kept as reached in
+    /// `repository` (design D4).
     fn manifest(&self, repository: &str, digest: &Digest) -> Answer<Option<(Vec<u8>, Typed)>> {
         let url = self.url_in(repository, &format!("manifests/{digest}"));
         let answered = self.send(
@@ -564,6 +568,9 @@ impl Registry {
                     typed.media_type = answered
                         .header("content-type")
                         .map(|t| t.split(';').next().unwrap_or(t).trim().to_string());
+                }
+                for (_, named) in oci::named(&answered.body).unwrap_or_default() {
+                    self.keep(&named, repository);
                 }
                 Ok(Some((answered.body, typed)))
             }
@@ -635,6 +642,55 @@ impl Registry {
             digest,
             held_already: false,
         })
+    }
+
+    /// `digest` kept as reached in `repository`, after every repository
+    /// it was reached in before, for the store's life alone: the next
+    /// process keeps it again from the names it resolves, so it is no
+    /// record (rule core.20; design D4).
+    fn keep(&self, digest: &Digest, repository: &str) {
+        let mut reached = self.reached.borrow_mut();
+        if !reached.iter().any(|(d, r)| d == digest && r == repository) {
+            reached.push((digest.clone(), repository.to_string()));
+        }
+    }
+
+    /// The repositories `digest` was reached in, in the order reached.
+    fn reached_in(&self, digest: &Digest) -> Vec<String> {
+        self.reached
+            .borrow()
+            .iter()
+            .filter(|(d, _)| d == digest)
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
+    /// The first repository `ask` finds `digest` in, with what it found:
+    /// each repository the digest was reached in first, in the order
+    /// reached, then the repository's own, then the bound build
+    /// profile's cache repository, each asked once; none where none
+    /// holds it, and the binding's answer where the store is bound for no
+    /// repository and no repository the digest was reached in holds it
+    /// (72, 138, C.1; design D4).
+    fn find<T>(
+        &self,
+        digest: &Digest,
+        ask: impl Fn(&str) -> Answer<Option<T>>,
+    ) -> Answer<Option<(String, T)>> {
+        let reached = self.reached_in(digest);
+        for repository in &reached {
+            if let Some(found) = ask(repository)? {
+                return Ok(Some((repository.clone(), found)));
+            }
+        }
+        let mut rest = vec![self.own()?.to_string()];
+        rest.extend(self.cache_repository()?);
+        for repository in rest.into_iter().filter(|r| !reached.contains(r)) {
+            if let Some(found) = ask(&repository)? {
+                return Ok(Some((repository, found)));
+            }
+        }
+        Ok(None)
     }
 
     /// The repository path `parts` make under the root, each written as
@@ -745,24 +801,25 @@ impl Registry {
     }
 
     /// The manifest `digest` held in `repository` with everything it
-    /// names, each asked after by a `HEAD` first and only what the
-    /// repository lacks written: each blob mounted from the repository's
-    /// own, each manifest an index names held the same way, then the
-    /// manifest put by its digest in its own bytes read from the
-    /// repository's own, since a registry takes a manifest only where
-    /// what it names is held (8, rule core.5; design D3).
+    /// names and timber's attestations on each, each asked after by a
+    /// `HEAD` first and only what the repository lacks written: the
+    /// manifest found as a read finds it, each manifest an index names
+    /// held the same way, each blob mounted from the repository the
+    /// manifest was found in, then the manifest put by its digest in its
+    /// own bytes, since a registry takes a manifest only where what it
+    /// names is held, and then its attestations carried from there (8,
+    /// C.1, rule core.5; design D4, D5).
     fn hold(&self, repository: &str, digest: &Digest) -> Answer<()> {
-        let own = self.own()?;
-        if repository == own || self.manifest_head(repository, digest.as_str())?.is_some() {
+        if self.manifest_head(repository, digest.as_str())?.is_some() {
             return Ok(());
         }
-        let Some((bytes, typed)) = self.manifest(own, digest)? else {
+        let Some((from, (bytes, typed))) = self.find(digest, |r| self.manifest(r, digest))? else {
             return Err(Not::absent(&self.source, digest.to_string()));
         };
         let unreadable = |words: String| {
             Not::unreadable(
                 &self.source,
-                self.url_in(own, &format!("manifests/{digest}")),
+                self.url_in(&from, &format!("manifests/{digest}")),
                 Some(words),
             )
         };
@@ -770,11 +827,54 @@ impl Registry {
             if manifest {
                 self.hold(repository, &named)?;
             } else {
-                self.mount(repository, &named, own)?;
+                self.mount(repository, &named, &from)?;
             }
         }
         let media_type = typed.media_type.unwrap_or_else(|| IMAGE_MANIFEST.into());
         self.put_manifest(repository, digest.as_str(), &media_type, &bytes)?;
+        self.carry(&from, repository, digest)
+    }
+
+    /// Each of timber's attestations on `subject` that `from` holds, held
+    /// in `repository` too: the referrer's config and layer mounted from
+    /// `from`, the referrer put by its digest unless it is held, and
+    /// listed in the subject's referrers tag where the put answers no
+    /// `OCI-Subject`, or where it was held and the registry answers no
+    /// referrers API. Another tool's referrers stay where they are (8,
+    /// C.1, rule core.27; design D5).
+    fn carry(&self, from: &str, repository: &str, subject: &Digest) -> Answer<()> {
+        for referrer in self.referrers(from, subject)? {
+            let at = referrer.digest.as_str();
+            if self.manifest_head(repository, at)?.is_none() {
+                let Some((bytes, _)) = self.manifest(from, &referrer.digest)? else {
+                    return Err(Not::unreadable(
+                        &self.source,
+                        self.url_in(from, &format!("manifests/{at}")),
+                        Some(format!(
+                            "the referrers of {subject} name {at}, which the registry does not \
+                             hold"
+                        )),
+                    ));
+                };
+                let named = oci::named(&bytes).map_err(|words| {
+                    Not::unreadable(
+                        &self.source,
+                        self.url_in(from, &format!("manifests/{at}")),
+                        Some(words),
+                    )
+                })?;
+                for (_, blob) in named {
+                    self.mount(repository, &blob, from)?;
+                }
+                let put = self.put_manifest(repository, at, IMAGE_MANIFEST, &bytes)?;
+                if put.header("oci-subject").is_some() {
+                    continue;
+                }
+            } else if self.referrers_api(repository, subject)?.is_some() {
+                continue;
+            }
+            self.tag_referrer(repository, subject, &referrer)?;
+        }
         Ok(())
     }
 
@@ -826,17 +926,24 @@ impl Registry {
     /// held in `place`'s repository: `to`'s own where `to` is a manifest,
     /// held as [`Registry::hold`] holds it; and where `to` is bytes, the
     /// cache manifest of them, the bytes held as [`Registry::mount`]
-    /// holds them (design D8, D14). `to` is asked of the repository's own
-    /// and then the cache repository, as a read is, and of the cache
-    /// repository alone by a push's store, which asks nothing of the
-    /// repository's own its credential may not read (135; design D9).
-    /// Absent where `to` is neither.
+    /// holds them (design D8, D14). `to` is asked of each repository it
+    /// was reached in, the repository's own and then the cache
+    /// repository, as a read is, and of the cache repository alone by a
+    /// push's store, which asks nothing of the repository's own its
+    /// credential may not read (135; design D4, D9). Absent where `to` is
+    /// neither.
     fn named_at(&self, place: &Place, to: &Digest) -> Answer<(String, Vec<u8>)> {
         let asked = if self.push && place.space == Space::Cache {
             vec![place.repository.clone()]
         } else {
-            let mut asked = vec![self.own()?.to_string()];
-            asked.extend(self.cache_repository()?);
+            let mut asked = self.reached_in(to);
+            for repository in
+                std::iter::once(self.own()?.to_string()).chain(self.cache_repository()?)
+            {
+                if !asked.contains(&repository) {
+                    asked.push(repository);
+                }
+            }
             asked
         };
         for repository in &asked {
@@ -932,6 +1039,19 @@ impl Registry {
             thread::sleep(wait.min(left));
             wait *= 2;
         }
+    }
+
+    /// timber's referrers of `subject` in `repository`, from the
+    /// referrers API or, where the registry answers none, the referrers
+    /// tag; another tool's referrers are never answered (design D5, D6).
+    fn referrers(&self, repository: &str, subject: &Digest) -> Answer<Vec<Descriptor>> {
+        Ok(match self.referrers_api(repository, subject)? {
+            Some(listed) => listed,
+            None => self
+                .referrers_tag(repository, &tag::referrers(subject.hex()))?
+                .map(|r| r.envelopes())
+                .unwrap_or_default(),
+        })
     }
 
     /// The referrers index the referrers tag `tag` of `repository` holds;
@@ -1153,10 +1273,12 @@ impl Store for Registry {
     /// held, and the binding's answer where the store is bound for no
     /// repository, with nothing written (8, 68, C.1; design D5, D6).
     fn attach(&self, subject: &Digest, attestation: &Envelope) -> Answer<Put> {
-        let own = self.own()?;
-        let Some((media_type, size, _)) = self.manifest_head(own, subject.as_str())? else {
+        self.own()?;
+        let found = self.find(subject, |r| self.manifest_head(r, subject.as_str()))?;
+        let Some((repository, (media_type, size, _))) = found else {
             return Err(Not::absent(&self.source, subject.to_string()));
         };
+        let own = repository.as_str();
         let referrer = oci::referrer(
             Descriptor {
                 media_type,
@@ -1200,26 +1322,23 @@ impl Store for Registry {
     }
 
     /// Every envelope a referrer of the envelope's type holds for
-    /// `digest`, from the referrers API or, where the registry answers
-    /// none, the referrers tag; another tool's referrers are never
-    /// answered, and bytes, which attach never makes a subject, have none
-    /// (69, design D5, D6).
+    /// `digest` in the repository a read finds it in, from the referrers
+    /// API or, where the registry answers none, the referrers tag;
+    /// another tool's referrers are never answered, and bytes, which
+    /// attach never makes a subject, have none (69, C.1; design D4 to
+    /// D6).
     fn claims_of(&self, digest: &Digest) -> Answer<Vec<Envelope>> {
-        let own = self.own()?;
-        if self.manifest_head(own, digest.as_str())?.is_none() {
-            return match self.blob_size(own, digest)? {
+        let found = self.find(digest, |r| self.manifest_head(r, digest.as_str()))?;
+        let Some((repository, _)) = found else {
+            return match self.find(digest, |r| self.blob_size(r, digest))? {
                 Some(_) => Ok(Vec::new()),
                 None => Err(Not::absent(&self.source, digest.to_string())),
             };
-        }
-        let listed = match self.referrers_api(own, digest)? {
-            Some(listed) => listed,
-            None => self
-                .referrers_tag(own, &tag::referrers(digest.hex()))?
-                .map(|r| r.envelopes())
-                .unwrap_or_default(),
         };
-        listed.iter().map(|r| self.envelope(own, r)).collect()
+        self.referrers(&repository, digest)?
+            .iter()
+            .map(|r| self.envelope(&repository, r))
+            .collect()
     }
 
     /// The name's tag read first and moved only from `expected`, by that
@@ -1243,6 +1362,7 @@ impl Store for Registry {
         self.put_manifest(repository, tag, &media_type, &bytes)?;
         let found = self.shown(repository, tag, at.as_ref(), to)?;
         if found.as_ref() == Some(to) {
+            self.keep(to, repository);
             return Ok(());
         }
         let said =
@@ -1257,29 +1377,29 @@ impl Store for Registry {
         Err(Not::refused(&self.source, Why::NameAt { at: found }, said))
     }
 
-    /// The digest the name's tag names, the bytes' at a cache manifest
-    /// (71, design D14).
+    /// The digest the name's tag names, the bytes' at a cache manifest,
+    /// kept as reached in the name's repository, so a read of it asks
+    /// there first (71, C.1; design D4, D14).
     fn resolve(&self, name: &Name) -> Answer<Digest> {
         let place = self.place(name)?;
-        self.tag_at(&place.repository, &place.tag)?
-            .ok_or_else(|| Not::absent(&self.source, format!("name {name}")))
+        let digest = self
+            .tag_at(&place.repository, &place.tag)?
+            .ok_or_else(|| Not::absent(&self.source, format!("name {name}")))?;
+        self.keep(&digest, &place.repository);
+        Ok(digest)
     }
 
     /// The manifest held under `digest`, read in its form when it is
     /// timber's, an artifact's metadata from its config; any other
-    /// manifest's bytes, or a blob's; asked of the repository's own and,
-    /// where it holds no such digest, the bound build profile's cache
-    /// repository, so bytes a push left there are read (72, 135, rule
-    /// core.20; design D5, D9).
+    /// manifest's bytes, or a blob's; asked of each repository the
+    /// digest was reached in, then the repository's own and, where it
+    /// holds no such digest, the bound build profile's cache repository,
+    /// so bytes a push left there are read (72, 135, 138, rule core.20;
+    /// design D4, D5, D9).
     fn read(&self, digest: &Digest) -> Answer<Held> {
-        let mut repositories = vec![self.own()?.to_string()];
-        repositories.extend(self.cache_repository()?);
-        for repository in &repositories {
-            if let Some(held) = self.read_in(repository, digest)? {
-                return Ok(held);
-            }
-        }
-        Err(Not::absent(&self.source, digest.to_string()))
+        self.find(digest, |r| self.read_in(r, digest))?
+            .map(|(_, held)| held)
+            .ok_or_else(|| Not::absent(&self.source, digest.to_string()))
     }
 
     /// 138: the versions of `name` of `ecosystem`, each tag of the
@@ -1803,6 +1923,106 @@ mod tests {
             }
         }
         assert_eq!(stub.asked().len(), before, "a store bound for none asked");
+    }
+
+    /// An attestation holding `words`.
+    fn claim(words: &str) -> Envelope {
+        Envelope::signed(
+            IN_TOTO,
+            words.as_bytes().to_vec(),
+            Signature {
+                signer: SignerId::new("host"),
+                keyid: String::new(),
+                sig: vec![1],
+            },
+        )
+    }
+
+    /// What `read` answers, and the repositories `stub` was asked of
+    /// while it ran, in order, each once.
+    fn asked_while<T>(stub: &Stub, read: impl FnOnce() -> T) -> (T, Vec<String>) {
+        let before = stub.asked().len();
+        let answer = read();
+        let mut asked: Vec<String> = Vec::new();
+        for a in &stub.asked()[before..] {
+            let repository = a.repository().unwrap_or_default().to_string();
+            if !asked.contains(&repository) {
+                asked.push(repository);
+            }
+        }
+        (answer, asked)
+    }
+
+    #[test]
+    fn a_digest_is_read_where_its_name_was_resolved() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = published(&site, "web", &[("eco", "site")]);
+        site.attach(&version.artifacts[0], &claim("the artifact's claim"))
+            .unwrap();
+        let name = named("eco", "site", "1.3.0");
+        site.name(&name, &version.index, None).unwrap();
+
+        let app = store_for(&stub, "acme", "app");
+        let (answers, asked) = asked_while(&stub, || {
+            let resolved = app.resolve(&name);
+            let read: Vec<Answer<Held>> =
+                [&version.index, &version.artifacts[0], &version.blobs[1]]
+                    .into_iter()
+                    .map(|digest| app.read(digest))
+                    .collect();
+            let claims: Vec<Answer<Vec<Envelope>>> = [&version.index, &version.artifacts[0]]
+                .into_iter()
+                .map(|digest| app.claims_of(digest))
+                .collect();
+            (resolved, read, claims)
+        });
+        let (resolved, read, claims) = answers;
+        assert_eq!(resolved, Ok(version.index.clone()));
+        for (digest, held) in [&version.index, &version.artifacts[0], &version.blobs[1]]
+            .into_iter()
+            .zip(read)
+        {
+            assert_eq!(held, site.read(digest), "{digest}");
+        }
+        for (digest, claims) in [&version.index, &version.artifacts[0]]
+            .into_iter()
+            .zip(claims)
+        {
+            let claims = claims.unwrap();
+            assert_eq!(claims.len(), 1, "{digest}");
+            assert_eq!(claims, site.claims_of(digest).unwrap(), "{digest}");
+        }
+        assert_eq!(asked, ["acme/store/artifact/eco/site"]);
+        assert!(stub.held("acme/store/acme/app").is_none());
+    }
+
+    #[test]
+    fn a_digest_no_name_reached_is_read_from_the_repositorys_own_then_its_cache() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let push = store(&stub).bound_for("moon", true);
+        let cached = push.put_bytes(b"bytes a push left").unwrap().digest;
+        let sync = store(&stub).bound_for("moon", false);
+        let owned = sync
+            .put_bytes(b"bytes of the repository's own")
+            .unwrap()
+            .digest;
+        let (own, cache) = ("acme/store/acme/site", "acme/store/acme/site/cache/moon");
+
+        let (held, asked) = asked_while(&stub, || sync.read(&owned));
+        assert_eq!(
+            held,
+            Ok(Held::Bytes(b"bytes of the repository's own".to_vec()))
+        );
+        assert_eq!(asked, [own]);
+
+        let (held, asked) = asked_while(&stub, || sync.read(&cached));
+        assert_eq!(held, Ok(Held::Bytes(b"bytes a push left".to_vec())));
+        assert_eq!(asked, [own, cache]);
+
+        let (held, asked) = asked_while(&stub, || sync.read(&Digest::of(b"never put")));
+        assert!(matches!(held, Err(Not::Absent(_))), "{held:?}");
+        assert_eq!(asked, [own, cache]);
     }
 
     #[test]

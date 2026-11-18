@@ -61,7 +61,7 @@ changes. A task that cannot be done without one stops short with
 
 ## 2. Reads and claims where a name is
 
-- [ ] 2.1 Read a digest where its name was resolved, in `registry/mod.rs` (design D4; registry-store spec, "A digest is read where its name was resolved").
+- [x] 2.1 Read a digest where its name was resolved, in `registry/mod.rs` (design D4; registry-store spec, "A digest is read where its name was resolved").
   - The store keeps, in a `RefCell` for its life, the repositories each digest was reached in, in the order reached. resolve and name keep the name's repository against the digest. Reading a manifest keeps its repository against each digest the manifest names, read by `oci::named`.
   - read, claims-of, attach's search for its subject, `named_at` and `hold` find a digest in its kept repositories, then the repository's own, then the cache repository, and mount a blob from the repository they found it in. A push's `named_at` still asks the cache repository alone (135).
   - Say so in the comments of `Store for Registry`.
