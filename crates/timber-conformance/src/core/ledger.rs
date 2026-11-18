@@ -1,6 +1,8 @@
 //! The ledger's group: a race lost on a channel's name repaired from the
 //! ledger (109; design D11), and below the marker bolt 4's unit of the
-//! keeper and promotion adds promotion, the ledger and bound channels.
+//! keeper and promotion adds promotion, the ledger and bound channels,
+//! and a version published before a move promoted after it (35, 105,
+//! C.1).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -90,6 +92,12 @@ pub fn scenarios() -> Vec<Scenario<FakeWorld>> {
             plays: None,
             cites: &[32, 33],
             run: an_asker_the_approvers_do_not_name,
+        },
+        Scenario {
+            name: "a version published before a move is promoted after it",
+            plays: None,
+            cites: &[35, 105],
+            run: a_version_published_before_a_move_is_promoted_after_it,
         },
     ]
 }
@@ -853,4 +861,57 @@ fn an_asker_the_approvers_do_not_name(world: &FakeWorld) {
     let chain = chain_of(world, &stable());
     assert_eq!(chain.len(), 1, "stable's chain holds other than the move");
     assert_eq!(chain[0].asked_by, SignerId::new(GATE));
+}
+
+fn a_version_published_before_a_move_is_promoted_after_it(world: &FakeWorld) {
+    let carried = crate::core::publish::carried(world);
+    let (moved, indexes) = (&carried.moved, &carried.indexes);
+    let left_chain = ok(moved.left_keeper.chain(&stable()), "the chain at acme/app").claims;
+
+    let answer = world.promote(&world.promote_ask(STABLE, to("0.2.0")));
+    let Ok(Promoted::Moved {
+        from,
+        predecessor,
+        claim,
+        ..
+    }) = answer
+    else {
+        panic!("0.2.0's promotion after the move answered {answer:?}")
+    };
+    assert_eq!(
+        predecessor,
+        Some(carried.head_left.clone()),
+        "the promotion does not follow the head stable had under acme/app"
+    );
+    assert_eq!(
+        from.map(|m| m.version),
+        Some(Version::new("0.1.0")),
+        "stable did not move from where it was under acme/app"
+    );
+    let chain = ok(moved.keeper.chain(&stable()), "the chain at acme/site").claims;
+    assert_eq!(
+        chain.iter().map(Envelope::digest).collect::<Vec<_>>(),
+        [carried.head_left.clone(), claim],
+        "the chain at acme/site does not go on from the head left"
+    );
+    assert_eq!(
+        ok(
+            moved.store.resolve(&channel_name(&stable())),
+            "stable at acme/site"
+        ),
+        indexes.1
+    );
+    assert_eq!(
+        ok(
+            moved.left.resolve(&channel_name(&stable())),
+            "stable at acme/app"
+        ),
+        indexes.0,
+        "stable moved at the root left"
+    );
+    assert_eq!(
+        ok(moved.left_keeper.chain(&stable()), "the chain at acme/app").claims,
+        left_chain,
+        "the chain at the root left was appended to"
+    );
 }

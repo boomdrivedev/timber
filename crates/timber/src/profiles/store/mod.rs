@@ -111,6 +111,26 @@ pub fn bind_for(
     }
 }
 
+/// C.1: the store `[store]` names bound for `from`, a root the repository
+/// left for `to`: on a registry, the same registry and root bound for
+/// `from` and carrying to `to`, so it reads and writes past a mark naming
+/// `to` and is refused naming any other (design D2, D4); absent naming
+/// the table for a layout, which places no name by repository, and
+/// unreadable naming any other key.
+pub fn left(table: &Table, from: &RepositoryName, to: &RepositoryName) -> Answer<Box<dyn Store>> {
+    match table.key() {
+        "layout" => Err(table.absent(format!(
+            "root left {from}: a layout places no name by repository"
+        ))),
+        "registry" => Ok(Box::new(
+            registry(table)?
+                .for_repository(Ok(from.clone()))
+                .carrying_to(to.clone()),
+        )),
+        _ => Err(table.unknown(&KEYS)),
+    }
+}
+
 /// The store as the host's file names it, which the record keeps (61,
 /// 118): its key, and the layout's path with `~/` expanded or the
 /// registry's host and root; nothing is read or made.

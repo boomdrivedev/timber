@@ -3,7 +3,9 @@
 //! touch a component's paths, a commit's message and the commit as the
 //! version rule's tool reads it, and the tags that carry its prefix, read
 //! from the local history and the shared one (21 to 23, 65, 123, 134;
-//! design D3, D6).
+//! design D3, D6); and the record of the roots the repository published
+//! under, `refs/timber/root` beside the tags, read and written as the
+//! tags are claimed (22, 62, C.1).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -14,7 +16,7 @@ use git_cliff_core::commit::Commit as CliffCommit;
 use glob::Pattern;
 use regex::Regex;
 use semver::Version;
-use timber_seams::{Answer, Branch, Not, Revision, Source};
+use timber_seams::{Answer, Branch, Not, RepositoryName, Revision, Source, Why};
 
 use crate::Landed;
 
@@ -418,6 +420,313 @@ impl History {
             .find(|(n, _)| n == name)
             .map(|(_, oid)| Revision::new(oid.to_string())))
     }
+}
+
+/// C.1, 22, 62: the ref of the record of claimed versions that names
+/// each root the repository published under, beside the version tags in
+/// the shared history (design D1).
+pub const ROOT_REF: &str = "refs/timber/root";
+
+/// The one file of each commit of [`ROOT_REF`]'s chain, naming its root.
+const ROOT_FILE: &str = "root";
+
+/// The record's roots as one read found them: the commit at the chain's
+/// tip, none where nothing holds the ref, and each root from the first.
+struct RootRecord {
+    tip: Option<Oid>,
+    roots: Vec<RepositoryName>,
+}
+
+/// What a push of the record's next commit came to: held, or refused
+/// in git's words.
+enum PushedRoot {
+    Held,
+    Rejected(String),
+}
+
+impl History {
+    /// C.1, 22, 62: the roots the record of claimed versions names, from
+    /// the first, the last being where the repository's history is
+    /// (design D1). Where the landed branch names a remote, its
+    /// [`ROOT_REF`] fetched into the repository's copy, which only moves
+    /// forward: a remote holding less than the copy is unreadable naming
+    /// the commits it lost, and one that cannot be reached is unreadable
+    /// with git's words, never the copy alone (rule core.47). Where it
+    /// names none, the repository's own ref; the empty list where neither
+    /// holds it.
+    pub fn roots(&self, landed: &Landed) -> Answer<Vec<RepositoryName>> {
+        Ok(self.root_record(landed)?.roots)
+    }
+
+    /// C.1: `root`, lowercased, recorded after the record as read: a
+    /// commit naming it on the chain's tip, pushed to the remote without
+    /// force and the copy moved to it after, by the git command, so the
+    /// host's own credential helper answers (rule core.21). A push refused
+    /// is read again: done where the record's last root is now `root`,
+    /// refused with git's words otherwise, and never retried (rule
+    /// core.6). With no remote, the own ref moved from the commit it was
+    /// read at.
+    pub fn record_root(&self, landed: &Landed, root: &RepositoryName) -> Answer<()> {
+        let root = root.lowercased();
+        let read = self.root_record(landed)?;
+        let commit = self.root_commit(landed, &root, read.tip)?;
+        let Some(remote) = self.remote(landed.branch())? else {
+            return match self.move_root(commit, read.tip) {
+                Ok(()) => Ok(()),
+                Err(e) => self.recorded_after_all(landed, &root, local(), e.message().into()),
+            };
+        };
+        match self.push_root(&remote, commit)? {
+            PushedRoot::Held => {
+                // The remote holds it; the copy follows, and a copy moved
+                // meanwhile is brought forward by the next read.
+                let _ = self.move_root(commit, read.tip);
+                Ok(())
+            }
+            PushedRoot::Rejected(words) => {
+                self.recorded_after_all(landed, &root, Source::history(&remote), words)
+            }
+        }
+    }
+
+    /// A write of `root` refused, for `words`, read again: done where the
+    /// record's last root is now `root`, refused with the words otherwise.
+    fn recorded_after_all(
+        &self,
+        landed: &Landed,
+        root: &RepositoryName,
+        source: Source,
+        words: String,
+    ) -> Answer<()> {
+        let again = self.root_record(landed)?;
+        if again.roots.last().map(RepositoryName::lowercased).as_ref() == Some(root) {
+            return Ok(());
+        }
+        Err(Not::refused(&source, Why::Said, Some(words)))
+    }
+
+    /// The record as read now: the remote's where the landed branch names
+    /// one, fetched into the copy, the repository's own ref otherwise.
+    fn root_record(&self, landed: &Landed) -> Answer<RootRecord> {
+        let copy = self.root_copy()?;
+        let Some(remote) = self.remote(landed.branch())? else {
+            return Ok(RootRecord {
+                tip: copy,
+                roots: self.walk_roots(copy, &local())?,
+            });
+        };
+        let at = Source::history(&remote);
+        let what = format!("the record of roots on {remote}");
+        let out = self.git(&remote, &what, &["ls-remote", &remote, ROOT_REF])?;
+        if !out.status.success() {
+            return Err(Not::unreadable(&at, what, said(&out)));
+        }
+        let listed = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find(|(_, name)| *name == ROOT_REF)
+            .map(|(oid, _)| Oid::from_str(oid))
+            .transpose()
+            .map_err(|e| Not::unreadable(&at, what.clone(), words(&e)))?;
+        let Some(theirs) = listed else {
+            return match copy {
+                None => Ok(RootRecord {
+                    tip: None,
+                    roots: Vec::new(),
+                }),
+                Some(copy) => Err(self.lost(&remote, copy, None)),
+            };
+        };
+        let out = self.git(
+            &remote,
+            &what,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--no-write-fetch-head",
+                &remote,
+                ROOT_REF,
+            ],
+        )?;
+        if !out.status.success() {
+            return Err(Not::unreadable(&at, what, said(&out)));
+        }
+        let unreadable = |e: git2::Error| Not::unreadable(&local(), ROOT_REF, words(&e));
+        match copy {
+            Some(copy) if copy == theirs => {}
+            Some(copy) if self.reaches(theirs, copy).map_err(unreadable)? => {
+                self.move_root(theirs, Some(copy)).map_err(unreadable)?
+            }
+            Some(copy) => return Err(self.lost(&remote, copy, Some(theirs))),
+            None => self.move_root(theirs, None).map_err(unreadable)?,
+        }
+        Ok(RootRecord {
+            tip: Some(theirs),
+            roots: self.walk_roots(Some(theirs), &at)?,
+        })
+    }
+
+    /// The commit the repository's copy of [`ROOT_REF`] names, none where
+    /// it holds no such ref.
+    fn root_copy(&self) -> Answer<Option<Oid>> {
+        match self.git.refname_to_id(ROOT_REF) {
+            Ok(oid) => Ok(Some(oid)),
+            Err(e) if e.code() == ErrorCode::NotFound => Ok(None),
+            Err(e) => Err(Not::unreadable(&local(), ROOT_REF, words(&e))),
+        }
+    }
+
+    /// The copy moved to `to` from `from`, or made where `from` is none,
+    /// never over a ref moved meanwhile (rule core.47).
+    fn move_root(&self, to: Oid, from: Option<Oid>) -> Result<(), git2::Error> {
+        let message = "timber: the record of roots";
+        match from {
+            Some(from) => self
+                .git
+                .reference_matching(ROOT_REF, to, true, from, message)
+                .map(|_| ()),
+            None => self.git.reference(ROOT_REF, to, false, message).map(|_| ()),
+        }
+    }
+
+    /// 122, rule core.47: `remote` no longer holds what the copy read
+    /// from it, the commits from `copy` that `theirs` does not reach.
+    fn lost(&self, remote: &str, copy: Oid, theirs: Option<Oid>) -> Not {
+        let mut lost = Vec::new();
+        let walked = self.git.revwalk().and_then(|mut walk| {
+            walk.push(copy)?;
+            if let Some(theirs) = theirs {
+                walk.hide(theirs)?;
+            }
+            walk.collect::<Result<Vec<Oid>, _>>()
+        });
+        match walked {
+            Ok(oids) => lost.extend(oids.into_iter().rev().map(|o| o.to_string())),
+            Err(_) => lost.push(copy.to_string()),
+        }
+        Not::unreadable(
+            &Source::history(remote),
+            format!(
+                "the record of roots on {remote}, which no longer holds {}",
+                lost.join(", ")
+            ),
+            Some(format!(
+                "{remote}'s {ROOT_REF} does not descend from what this repository read"
+            )),
+        )
+    }
+
+    /// 121, design D1: each root the chain at `tip` names, from the first;
+    /// unreadable naming the first commit with two parents, or naming no
+    /// root, never answered in part.
+    fn walk_roots(&self, tip: Option<Oid>, at: &Source) -> Answer<Vec<RepositoryName>> {
+        let mut roots = Vec::new();
+        let mut next = tip;
+        while let Some(oid) = next {
+            let what = format!("the record of roots at {oid}");
+            let unreadable = |e: git2::Error| Not::unreadable(at, what.clone(), words(&e));
+            let commit = self.git.find_commit(oid).map_err(unreadable)?;
+            if commit.parent_count() > 1 {
+                return Err(Not::unreadable(
+                    at,
+                    what,
+                    Some(format!("{oid} has more than one parent")),
+                ));
+            }
+            let named = commit
+                .tree()
+                .map_err(unreadable)?
+                .get_name(ROOT_FILE)
+                .and_then(|entry| entry.to_object(&self.git).ok())
+                .and_then(|object| object.into_blob().ok())
+                .and_then(|blob| root_named(blob.content()));
+            let Some(root) = named else {
+                return Err(Not::unreadable(
+                    at,
+                    what,
+                    Some(format!("{oid} holds no {ROOT_FILE} naming a root")),
+                ));
+            };
+            roots.push(root);
+            next = commit.parent_ids().next();
+        }
+        roots.reverse();
+        Ok(roots)
+    }
+
+    /// Design D1: the commit naming `root` on `parent`, its tree the one
+    /// file [`ROOT_FILE`], written by timber at the landed revision's
+    /// time, so no index or working tree is touched and the clock is not
+    /// read.
+    fn root_commit(
+        &self,
+        landed: &Landed,
+        root: &RepositoryName,
+        parent: Option<Oid>,
+    ) -> Answer<Oid> {
+        let what = format!("the record of roots, naming {root}");
+        let unreadable = |e: git2::Error| Not::unreadable(&local(), what.clone(), words(&e));
+        let text = format!("{root}\n");
+        let blob = self.git.blob(text.as_bytes()).map_err(unreadable)?;
+        let mut tree = self.git.treebuilder(None).map_err(unreadable)?;
+        tree.insert(ROOT_FILE, blob, 0o100644).map_err(unreadable)?;
+        let tree = self
+            .git
+            .find_tree(tree.write().map_err(unreadable)?)
+            .map_err(unreadable)?;
+        let when = self.commit(landed.revision())?.committer().when();
+        let timber =
+            git2::Signature::new("timber", "timber@localhost", &when).map_err(unreadable)?;
+        let parent = parent
+            .map(|p| self.git.find_commit(p))
+            .transpose()
+            .map_err(unreadable)?;
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        self.git
+            .commit(None, &timber, &timber, &text, &tree, &parents)
+            .map_err(unreadable)
+    }
+
+    /// The record's next commit pushed to `remote` without force, by the
+    /// git command (rule core.21).
+    fn push_root(&self, remote: &str, commit: Oid) -> Answer<PushedRoot> {
+        let what = format!("{remote}, pushing {ROOT_REF}");
+        let refspec = format!("{commit}:{ROOT_REF}");
+        let out = self.git(remote, &what, &["push", "--porcelain", remote, &refspec])?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        // Each ref's line is its flag, the refspec and git's summary.
+        let flag = stdout.lines().find_map(|line| {
+            let mut fields = line.split('\t');
+            let flag = fields.next()?;
+            fields
+                .next()?
+                .ends_with(&format!(":{ROOT_REF}"))
+                .then_some(flag)
+        });
+        match flag {
+            Some(" " | "*" | "=") if out.status.success() => Ok(PushedRoot::Held),
+            Some("!") => Ok(PushedRoot::Rejected(format!(
+                "{stdout}{}",
+                String::from_utf8_lossy(&out.stderr)
+            ))),
+            _ => Err(Not::unreadable(&Source::history(remote), what, said(&out))),
+        }
+    }
+}
+
+/// The root a commit's [`ROOT_FILE`] names: `<owner>/<name>` and a
+/// newline, neither empty; `None` for anything else.
+fn root_named(bytes: &[u8]) -> Option<RepositoryName> {
+    let text = std::str::from_utf8(bytes).ok()?.strip_suffix('\n')?;
+    let (owner, name) = text.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return None;
+    }
+    Some(RepositoryName {
+        owner: owner.into(),
+        name: name.into(),
+    })
 }
 
 /// The commit a tag's object names, through any annotated tags; none

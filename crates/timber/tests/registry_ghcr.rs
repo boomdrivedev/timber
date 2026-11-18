@@ -13,7 +13,15 @@
 //! and finds each in the package C.1 places it in, the version's and the
 //! entry's under `<root>/timber-checks/store/` and the name's under
 //! `<root>/artifact/`, and the index's claims read from the name's
-//! package by a store bound for another repository. It refuses to run,
+//! package by a store bound for another repository. A fifth carries a
+//! moved repository's history from `timber-checks/carried-from` to
+//! `timber-checks/carried-to` under the root, every version and channel
+//! under the run's prefix: the version and its claims and the channel
+//! found under the new root, and the old root's package answering where
+//! it went, a later run finding the mark naming the same root and
+//! carrying again (C.1; the change
+//! a-moved-repository-keeps-its-history-in-the-store's design D8). It
+//! refuses to run,
 //! naming the setting, on a host that names no root of `ghcr.io`, rather
 //! than pass without running (93, C.1, rule core.38).
 
@@ -345,4 +353,20 @@ fn anonymous(repository: &str, digest: &Digest) -> (bool, String) {
              answered {status}: {body}"
         ),
     )
+}
+
+/// C.1 on GitHub's registry (the change
+/// a-moved-repository-keeps-its-history-in-the-store's design D8): a
+/// moved repository's history carried from `timber-checks/carried-from`
+/// to `timber-checks/carried-to` under the root the host names, every
+/// version and channel under the run's prefix, as the tools layer
+/// carries it on zot and the reference distribution.
+#[test]
+fn ghcr_carries_a_moved_repositorys_history_to_its_new_root() {
+    registry::carried_between(
+        &repository(),
+        ("timber-checks", "carried-from"),
+        ("timber-checks", "carried-to"),
+        &format!("{}-", run_prefix()),
+    );
 }

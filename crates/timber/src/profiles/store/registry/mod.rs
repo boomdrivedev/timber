@@ -22,6 +22,19 @@
 //! as its binding answered the repository, and reads the artifact space
 //! as any store does.
 //!
+//! A root the repository left holds the mark `moved` in its own, at
+//! bytes naming the root its history moved to (C.1 as amended at
+//! `boomdrivedev/blueprints` e8700c8; record 0042). The store reads the
+//! mark once in its life, at its first operation reaching the
+//! repository's own, its components' or its cache repositories, and where
+//! it names another root every such operation is refused naming the
+//! repository the store is bound for and where it moved, with nothing
+//! written; the artifact space is read as before. A store carrying a
+//! history to a root reads past a mark naming that root alone. A push's
+//! store reads no mark and writes its cache entries at a root left as at
+//! any root: the mark guards history, and cache entries are none (135,
+//! rule core.62; record 0042).
+//!
 //! The store never makes a repository. A loopback host is spoken to over
 //! plain HTTP, as Docker speaks to one, and every other over HTTPS
 //! (design D3). A digest or name the registry does not hold is absent; a
@@ -42,8 +55,8 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use timber_seams::{
-    Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put,
-    RepositoryName, Seam, Source, Store, Version, Why, REPOSITORY_COMPONENT,
+    moved_name, Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, MovedTo, Name,
+    Not, Put, RepositoryName, Seam, Source, Store, Version, Why, REPOSITORY_COMPONENT,
 };
 use ureq::http::{Method, StatusCode};
 
@@ -88,6 +101,9 @@ pub struct Registry {
     push: bool,
     mounts: RefCell<Vec<(String, bool)>>,
     reached: RefCell<Vec<(Digest, String)>>,
+    named_for: Option<RepositoryName>,
+    carrying: Option<RepositoryName>,
+    mark: RefCell<Option<Answer<()>>>,
 }
 
 /// The space of repositories under the root an artifact's names are held
@@ -181,6 +197,9 @@ impl Registry {
             push: false,
             mounts: RefCell::new(Vec::new()),
             reached: RefCell::new(Vec::new()),
+            named_for: None,
+            carrying: None,
+            mark: RefCell::new(None),
         })
     }
 
@@ -194,6 +213,7 @@ impl Registry {
     /// repository would share, so nothing is written (114, 138, C.1;
     /// design D2, D3).
     pub fn for_repository(mut self, repository: Answer<RepositoryName>) -> Registry {
+        self.named_for = repository.as_ref().ok().map(RepositoryName::lowercased);
         self.own = repository.and_then(|named| {
             if tag::component(&named.owner) == ARTIFACT_SPACE {
                 return Err(Not::refused(
@@ -212,6 +232,15 @@ impl Registry {
                 &format!("the repository {named}"),
             )
         });
+        self
+    }
+
+    /// The store carrying a history to `to`: it reads and writes its
+    /// repository's own spaces past a mark naming `to`, and is refused
+    /// there as any store is where the mark names another root (C.1;
+    /// design D4).
+    pub fn carrying_to(mut self, to: RepositoryName) -> Registry {
+        self.carrying = Some(to.lowercased());
         self
     }
 
@@ -707,7 +736,67 @@ impl Registry {
     /// and every name of the repository's own spaces answers it and
     /// nothing is written (C.1; design D2, D3).
     fn own(&self) -> Answer<&str> {
-        self.own.as_deref().map_err(Clone::clone)
+        let own = self.own.as_deref().map_err(Clone::clone)?;
+        // A push's store asks nothing of the repository's own, which its
+        // credential may not read (135, rule core.62; record 0040), and
+        // reads no mark: a root left refuses history, and a push's cache
+        // entries are none (record 0042).
+        if !self.push {
+            self.unmarked(own)?;
+        }
+        Ok(own)
+    }
+
+    /// C.1, design D4: whether the repository's own holds no mark of a
+    /// root left, or one naming the root this store carries to, read once
+    /// in the store's life and answered the same after; refused naming
+    /// the repository and where it moved where the mark names another
+    /// root.
+    fn unmarked(&self, own: &str) -> Answer<()> {
+        if let Some(answer) = &*self.mark.borrow() {
+            return answer.clone();
+        }
+        let answer = self.read_mark(own);
+        *self.mark.borrow_mut() = Some(answer.clone());
+        answer
+    }
+
+    /// The mark `moved` in `own` read: no tag there is no mark; bytes
+    /// that name no root, or a tag or bytes that cannot be read, are
+    /// unreadable naming the mark (58, 59).
+    fn read_mark(&self, own: &str) -> Answer<()> {
+        let tag = self.tag(&moved_name())?;
+        let what = format!("the mark {tag} of {}/{own}", self.host);
+        let unreadable = |not: Not| match not {
+            Not::Unreadable(u) => Not::unreadable(&self.source, what.clone(), u.said),
+            other => other,
+        };
+        let Some(at) = self.tag_at(own, &tag).map_err(unreadable)? else {
+            return Ok(());
+        };
+        let bytes = self.blob(own, &at).map_err(unreadable)?;
+        let Some(mark) = bytes.as_deref().and_then(MovedTo::of_bytes) else {
+            return Err(Not::unreadable(
+                &self.source,
+                what,
+                Some(format!(
+                    "{tag} names {at}, which holds no mark naming a root"
+                )),
+            ));
+        };
+        let to = mark.to.lowercased();
+        if self.carrying.as_ref() == Some(&to) {
+            return Ok(());
+        }
+        let from = self
+            .named_for
+            .clone()
+            .expect("a store with a repository's own is bound for that repository");
+        Err(Not::refused(
+            &self.source,
+            Why::RootMoved { from, to },
+            None,
+        ))
     }
 
     /// The repository path `parts` make under the repository's own, as
@@ -1288,6 +1377,14 @@ fn next(link: &str) -> Option<String> {
     })
 }
 
+/// Every operation below that reaches the repository's own, its
+/// components' or its cache repositories reads the mark of a root left
+/// first, once in the store's life, and is refused naming where the
+/// repository moved where the mark names a root this store does not carry
+/// to, with nothing written; an artifact's name, and the digests it
+/// reaches, are read as before. A push's store reads no mark, and writes
+/// its cache entries at a root left as at any root (C.1 as amended at
+/// `boomdrivedev/blueprints` e8700c8; design D4; record 0042).
 impl Store for Registry {
     /// The blob asked after first, and uploaded only when it is not held,
     /// in the repository's own, or, for a store bound for a push, its
@@ -1668,6 +1765,243 @@ mod tests {
             &EcosystemName::new(name),
             &Version::new(version),
         )
+    }
+
+    fn repository(owner: &str, name: &str) -> RepositoryName {
+        RepositoryName {
+            owner: owner.into(),
+            name: name.into(),
+        }
+    }
+
+    /// The root `from` of `stub` marked moved to `to`, as a carry writes
+    /// the mark: the bytes put and `moved` named at them from nothing.
+    fn marked(stub: &Stub, from: (&str, &str), to: (&str, &str)) -> Digest {
+        let to = repository(to.0, to.1);
+        let carrying = store_for(stub, from.0, from.1).carrying_to(to.clone());
+        let bytes = carrying
+            .put_bytes(&MovedTo { to }.to_bytes())
+            .unwrap()
+            .digest;
+        carrying.name(&moved_name(), &bytes, None).unwrap();
+        bytes
+    }
+
+    /// What `acme/app` published before it moved: `web`'s version named
+    /// by its artifact, its version's name and `beta` at its index, and
+    /// a cache entry.
+    struct Before {
+        index: Digest,
+        artifact: Name,
+        version: Name,
+        channel: Name,
+        entry: Name,
+    }
+
+    fn published_before(stub: &Stub) -> Before {
+        let app = store_for(stub, "acme", "app").bound_for("moon", false);
+        let version = published(&app, "web", &[("eco", "site")]);
+        let before = Before {
+            index: version.index.clone(),
+            artifact: named("eco", "site", "1.3.0"),
+            version: Name::new("web:web-v1.3.0"),
+            channel: Name::new("channel/web/beta"),
+            entry: Name::new("cache/b7e1"),
+        };
+        for name in [&before.artifact, &before.version, &before.channel] {
+            app.name(name, &version.index, None).unwrap();
+        }
+        let bytes = app.put_bytes(b"a cache entry").unwrap().digest;
+        app.name(&before.entry, &bytes, None).unwrap();
+        before
+    }
+
+    fn root_moved(answer: Answer<()>, from: (&str, &str), to: (&str, &str)) {
+        match answer {
+            Err(Not::Refused(r)) => assert_eq!(
+                r.why,
+                Why::RootMoved {
+                    from: repository(from.0, from.1),
+                    to: repository(to.0, to.1),
+                }
+            ),
+            other => panic!("a root marked moved answered {other:?}"),
+        }
+    }
+
+    /// Every operation of the repository's own spaces `store` is asked.
+    fn own_operations(store: &Registry, before: &Before) -> Vec<Answer<()>> {
+        vec![
+            store.resolve(&before.channel).map(drop),
+            store.resolve(&before.version).map(drop),
+            store.resolve(&before.entry).map(drop),
+            store.claims_of(&before.index).map(drop),
+            store.read(&before.index).map(drop),
+            store.put_bytes(b"after the move").map(drop),
+            store
+                .put_artifact(&Manifest::Artifact {
+                    meta: meta("eco", "site"),
+                    layers: vec![],
+                })
+                .map(drop),
+            store
+                .attach(&before.index, &claim("after the move"))
+                .map(drop),
+            store.name(&Name::new("channel/web/stable"), &before.index, None),
+        ]
+    }
+
+    #[test]
+    fn a_root_marked_moved_refuses_every_operation_of_its_own_spaces_naming_where_it_went() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let before = published_before(&stub);
+        marked(&stub, ("acme", "app"), ("Acme", "Site"));
+        let app = store_for(&stub, "Acme", "App").bound_for("moon", false);
+        for answer in own_operations(&app, &before) {
+            root_moved(answer, ("acme", "app"), ("acme", "site"));
+        }
+    }
+
+    #[test]
+    fn a_root_marked_moved_still_reads_an_artifacts_name_and_its_claims() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let before = published_before(&stub);
+        marked(&stub, ("acme", "app"), ("acme", "site"));
+        let app = store_for(&stub, "acme", "app");
+        let (read, asked) = asked_while(&stub, || {
+            let index = app.resolve(&before.artifact).unwrap();
+            assert_eq!(index, before.index);
+            assert!(matches!(
+                app.read(&index),
+                Ok(Held::Manifest(Manifest::Index(_)))
+            ));
+            assert_eq!(app.claims_of(&index).unwrap().len(), 1);
+            app.versions(&Ecosystem::new("eco"), &EcosystemName::new("site"))
+        });
+        assert_eq!(read, Ok(vec![Version::new("1.3.0")]));
+        assert_eq!(asked, ["acme/store/artifact/eco/site"]);
+    }
+
+    #[test]
+    fn a_root_marked_moved_writes_nothing() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let before = published_before(&stub);
+        marked(&stub, ("acme", "app"), ("acme", "site"));
+        let app = store_for(&stub, "acme", "app").bound_for("moon", false);
+        let since = stub.asked().len();
+        own_operations(&app, &before);
+        assert_eq!(writes(&stub, since), Vec::<String>::new());
+        assert!(stub.asked()[since..]
+            .iter()
+            .all(|a| a.method == "GET" || a.method == "HEAD"));
+    }
+
+    #[test]
+    fn the_mark_is_read_once_in_a_stores_life() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        site.put_bytes(b"one").unwrap();
+        site.put_bytes(b"two").unwrap();
+        assert!(site.resolve(&Name::new("channel/beta")).is_err());
+        let marks = stub
+            .asked()
+            .iter()
+            .filter(|a| a.path.ends_with("/manifests/moved"))
+            .map(|a| format!("{} {}", a.method, a.path))
+            .collect::<Vec<_>>();
+        assert_eq!(marks, ["GET /v2/acme/store/acme/site/manifests/moved"]);
+    }
+
+    #[test]
+    fn a_store_carrying_to_the_root_a_mark_names_reads_and_writes_past_it() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let before = published_before(&stub);
+        marked(&stub, ("acme", "app"), ("acme", "site"));
+        let carrying = store_for(&stub, "acme", "app")
+            .bound_for("moon", false)
+            .carrying_to(repository("Acme", "Site"));
+        assert_eq!(carrying.resolve(&before.channel), Ok(before.index.clone()));
+        assert_eq!(carrying.resolve(&before.version), Ok(before.index.clone()));
+        assert_eq!(carrying.claims_of(&before.index).unwrap().len(), 1);
+        assert!(carrying.put_bytes(b"read past the mark").is_ok());
+        assert!(carrying.resolve(&before.entry).is_ok());
+    }
+
+    #[test]
+    fn a_store_carrying_elsewhere_than_the_mark_names_is_refused() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let before = published_before(&stub);
+        marked(&stub, ("acme", "app"), ("acme", "site"));
+        let carrying = store_for(&stub, "acme", "app").carrying_to(repository("acme", "web"));
+        root_moved(
+            carrying.resolve(&before.channel).map(drop),
+            ("acme", "app"),
+            ("acme", "site"),
+        );
+    }
+
+    #[test]
+    fn the_mark_written_is_a_tag_of_the_repositorys_own_through_a_cache_manifest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = marked(&stub, ("acme", "app"), ("acme", "site"));
+        assert_eq!(
+            bytes,
+            Digest::of(br#"{"moved_to":"acme/site"}"#),
+            "the mark's bytes"
+        );
+        let own = stub.held("acme/store/acme/app").unwrap();
+        let at = own.tags.get("moved").expect("no tag moved").clone();
+        assert_eq!(oci::cached(&own.manifests[&at].1), Ok(Some(bytes.clone())));
+        assert!(own.blobs.contains_key(&bytes));
+        assert_eq!(stub.repositories(), ["acme/store/acme/app"]);
+        let carrying = store_for(&stub, "acme", "app").carrying_to(repository("acme", "site"));
+        assert_eq!(carrying.resolve(&moved_name()), Ok(bytes));
+    }
+
+    #[test]
+    fn a_pushs_store_at_a_root_marked_moved_writes_its_cache_and_reads_no_mark() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        marked(&stub, ("acme", "app"), ("acme", "site"));
+        let since = stub.asked().len();
+        let push = store_for(&stub, "acme", "app").bound_for("moon", true);
+        let bytes = push.put_bytes(b"a pre-move build's entry").unwrap().digest;
+        let entry = Name::new("cache/b7e1");
+        push.name(&entry, &bytes, None).unwrap();
+        assert_eq!(push.resolve(&entry), Ok(bytes.clone()));
+        let asked = &stub.asked()[since..];
+        assert!(
+            asked
+                .iter()
+                .all(|a| a.repository() == Some("acme/store/acme/app/cache/moon")),
+            "{asked:#?}"
+        );
+        assert!(!asked.iter().any(|a| a.path.ends_with("/manifests/moved")));
+        let cache = stub.held("acme/store/acme/app/cache/moon").unwrap();
+        assert!(cache.blobs.contains_key(&bytes));
+        assert!(cache.tags.contains_key("b7e1"));
+    }
+
+    #[test]
+    fn a_mark_that_cannot_be_read_is_unreadable_naming_it() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let writer = store_for(&stub, "acme", "app").carrying_to(repository("acme", "site"));
+        let bytes = writer.put_bytes(b"no mark at all").unwrap().digest;
+        writer.name(&moved_name(), &bytes, None).unwrap();
+        let app = store_for(&stub, "acme", "app");
+        match app.resolve(&Name::new("channel/beta")) {
+            Err(Not::Unreadable(u)) => {
+                assert_eq!(u.source, *app.source());
+                assert!(u.what.contains("the mark moved"), "{}", u.what);
+                assert!(
+                    u.said
+                        .as_deref()
+                        .is_some_and(|s| s.contains("holds no mark naming a root")),
+                    "{:?}",
+                    u.said
+                );
+            }
+            other => panic!("a mark that is no mark answered {other:?}"),
+        }
     }
 
     #[test]

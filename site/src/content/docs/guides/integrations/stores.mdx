@@ -60,7 +60,7 @@ its bytes and its digest (13).
 | member | profile | how | status |
 |---|---|---|---|
 | Amazon ECR | C.1, an OCI registry | over the distribution protocol, under one root the host names; the credential from ECR's helper; proven by hand, outside the gate, by a push on 2026-10-25 | built |
-| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; proven by hand, outside the gate, on 2026-11-17, and under a root per repository on 2026-11-18 | built |
+| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; proven by hand, outside the gate, on 2026-11-17, under a root per repository on 2026-11-18, and carrying a moved repository's history on 2026-11-18 | built |
 | Harbor | C.1 | the same, in a project of the operator's | designed |
 | zot | C.1 | the same, on a host or on object storage, attestations listed by its referrers API; proven in the gate | built |
 | the reference distribution | C.1 | the same, the smallest registry, with no referrers API, so attestations are listed by the referrers tag; proven in the gate | built |
@@ -108,6 +108,28 @@ written into each repository holding its subject: the repository's own,
 each repository the subject was reached in, and, for an index, its
 component's repository and each of its artifacts' names' repositories,
 each where the attestation is missing.
+
+A repository renamed or moved to another owner keeps one history in the
+store (C.1 as amended at `boomdrivedev/blueprints` e8700c8; records
+0040, 0041 and 0042). Its record of claimed versions names each root it
+published under, `refs/timber/root` beside the version tags in the
+shared history, so a move is read from git alone (22, 62). The first
+publish after a move, before it builds or claims anything, marks the old
+root with where it went, the tag `moved` in its own at bytes naming the
+new root; copies there every version the record claims, with every
+claim on its digests (103); makes each channel's name at its chain's
+head, so the chain goes on from it (105); and records the new root last.
+A carry that stops partway is carried again by the next publish, which
+writes only what is missing. The old root then answers every read and
+write of its own, its components' and its cache repositories with where
+its history went, and an artifact's name there still reads as before;
+a pool's push still writes its cache entries there, since they are no
+history and serve the builds of the revisions they came from. Cache
+entries are not carried: the pool's next run fills the new root.
+A root left is never written again: a publish whose store is bound for
+it, another repository's at the old address, a checkout's whose remote
+still names it, or a repository's moved back to it, is refused naming
+where it went.
 
 Each part of a repository's path is lowercased and escaped into one path
 component the distribution protocol allows, `@acme/site` written
@@ -161,7 +183,11 @@ proven under a root per repository by one run on 2026-11-18, each
 repository's components and cache in packages under its own
 `<root>/<owner>/<name>/` and each artifact's name in a package under
 `<root>/artifact/`, the index's claims read there by a store bound for
-another repository; record 0041 records the run.
+another repository; record 0041 records the run. It was proven carrying
+a moved repository's history by one run on 2026-11-18, a version, its
+claims and a channel carried from one root to another under the root it
+names, the old root answering where its history went; record 0042
+records the run.
 
 The layout is bound for a host by its bindings file, `[store] layout =
 "<path>"`, and a registry by `[store] registry = "<host>/<root>"`

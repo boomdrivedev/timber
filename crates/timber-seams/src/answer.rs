@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ArtifactMeta, Branch, BuildId, ChannelId, Check, ClaimKind, ComponentName, Digest,
-    EnvironmentName, Moved, Outcome, OutputName, RequiredClaim, Revision, SignerId,
+    EnvironmentName, Moved, Outcome, OutputName, RepositoryName, RequiredClaim, Revision, SignerId,
 };
 
 /// What every seam operation answers: what was asked, or [`Not`].
@@ -344,6 +344,13 @@ pub enum Why {
         head: Digest,
         desired: Digest,
     },
+    /// C.1: the repository's history, once under the root `from`, moved
+    /// to the root `to`, which the mark at `from` names, so nothing of the
+    /// repository's own is read or written at `from`.
+    RootMoved {
+        from: RepositoryName,
+        to: RepositoryName,
+    },
     /// A refusal that names nothing beyond the source's own words.
     Said,
 }
@@ -576,6 +583,7 @@ impl fmt::Display for Why {
                 f,
                 "the target answers {desired} for {channel}, whose chain's head is at {head}"
             ),
+            Why::RootMoved { from, to } => write!(f, "{from}'s history moved to {to}"),
             Why::Said => write!(f, "it refused"),
         }
     }
@@ -1221,5 +1229,40 @@ mod tests {
         assert_eq!(text, names);
         let not = Not::refused(&Source::new(Seam::Target, "fake"), why, None);
         assert_eq!(round_trip(&not), not);
+    }
+
+    fn moved() -> Why {
+        Why::RootMoved {
+            from: RepositoryName {
+                owner: "acme".into(),
+                name: "app".into(),
+            },
+            to: RepositoryName {
+                owner: "acme".into(),
+                name: "site".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn a_root_moved_reads_where_the_history_went() {
+        assert_eq!(moved().to_string(), "acme/app's history moved to acme/site");
+        let not = Not::refused(&store(), moved(), None);
+        assert_eq!(
+            not.to_string(),
+            "the store (fake) refused: acme/app's history moved to acme/site"
+        );
+    }
+
+    #[test]
+    fn a_root_moved_round_trips_through_json() {
+        let not = Not::refused(&store(), moved(), Some(WORDS.into()));
+        assert_eq!(round_trip(&not), not);
+        let json = serde_json::to_value(&not).unwrap();
+        let why = &json["refused"]["why"]["root_moved"];
+        assert_eq!(why["from"]["owner"], "acme", "{json}");
+        assert_eq!(why["from"]["name"], "app", "{json}");
+        assert_eq!(why["to"]["name"], "site", "{json}");
+        crate::round_trip(moved());
     }
 }

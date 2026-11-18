@@ -84,6 +84,20 @@ impl FakeKeeper {
         }
     }
 
+    /// A keeper of its own holding every chain this one holds now, with
+    /// its own record and nothing answered yet, as the ledger over a root
+    /// a repository moved to reads the chains it moved with (C.1).
+    pub fn chains_copied(&self) -> FakeKeeper {
+        let chains = self.state().chains.clone();
+        Fake::with(
+            Seam::Keeper,
+            KeeperState {
+                chains,
+                ..KeeperState::default()
+            },
+        )
+    }
+
     /// The source holding the ledger no longer answers, for `words`, its
     /// own: a chain answered before is answered as then, [`Read::Kept`]
     /// with the time of that answer and the words, one answered holding
