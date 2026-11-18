@@ -126,7 +126,7 @@ its history went, and an artifact's name there still reads as before;
 a pool's push still writes its cache entries there, since they are no
 history and serve the builds of the revisions they came from. Cache
 entries are not carried: the pool's next run fills the new root.
-A root left is never written again: a publish whose store is bound for
+A root left takes no history again: a publish whose store is bound for
 it, another repository's at the old address, a checkout's whose remote
 still names it, or a repository's moved back to it, is refused naming
 where it went.
