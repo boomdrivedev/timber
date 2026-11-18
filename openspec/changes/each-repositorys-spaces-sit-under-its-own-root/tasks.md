@@ -93,7 +93,7 @@ changes. A task that cannot be done without one stops short with
   - Rewrite `artifact_names_are_tags_of_their_own_repositories`, `a_declared_components_versions_and_channels_are_tags_of_its_own_repository` and `cache_entries_are_tags_of_the_build_profiles_cache_repository` for D3's places.
   - Add `a_pins_claims_are_read_from_its_artifacts_repository_by_a_store_of_another_repository` to `on_both!`. One store publishes and attaches an acceptance after naming. A store for another repository resolves the artifact's name and reads every claim on the index and the artifact.
   - Verify with `devenv shell -- cargo test -p timber --features tools --test registry_store`, where every test passes on zot and on the reference distribution.
-- [ ] 3.2 Bind the live rigs, and add the GHCR check's test of the places (design D7; registry-store spec, "Each repository's packages under its own root").
+- [x] 3.2 Bind the live rigs, and add the GHCR check's test of the places (design D7; registry-store spec, "Each repository's packages under its own root").
   - `LiveRig` binds the repository `timber-checks/store` under the root the host names, and keeps each run's names apart by its prefix, as before.
   - Add `ghcr_keeps_each_repositorys_packages_under_its_own_root` to `crates/timber/tests/registry_ghcr.rs`. It makes a declared component's version and a cache entry for that repository, and an artifact's name at the version's index, each under the run's prefix. It asserts that each tag is held where D3 says, and that a store for `timber-checks/reader` reads the index's claims from the name's package.
   - Update both files' module comments.

@@ -8,8 +8,10 @@
 //! alters a response body when told to; the cache manifest's scenarios a
 //! registry plays through the store alone; and the one live rig the runs
 //! by hand against a hosted registry, ECR's and GitHub's, share: a run's
-//! prefix, a store whose every name carries it, and the store group run
-//! over a repository the host names (design D4).
+//! prefix, a store whose every name carries it, bound for the repository
+//! `timber-checks/store` under the root the host names, and the store
+//! group run there (design D4; the change
+//! each-repositorys-spaces-sit-under-its-own-root's design D7).
 
 #![allow(dead_code)]
 
@@ -328,6 +330,16 @@ impl StoreRig for RegistryRig {
     }
 }
 
+/// The repository a live rig's stores are bound for under the root the
+/// host names, `<root>/timber-checks/store` its own (C.1).
+pub const LIVE: (&str, &str) = ("timber-checks", "store");
+
+/// A registry store under the root `root` the host names, bound for the
+/// live rig's repository, [`LIVE`].
+pub fn live(root: &str) -> Registry {
+    store_under(root, LIVE.0, LIVE.1)
+}
+
 /// A prefix no earlier run's names carry.
 pub fn run_prefix() -> String {
     let started = SystemTime::now()
@@ -393,10 +405,10 @@ impl Store for Prefixed {
     }
 }
 
-/// The store group's rig over a repository of a hosted registry the host
-/// names, a scenario's names apart from every other's, and a store at a
-/// loopback port nothing listens on, which [`StoreRig::unreachable`]
-/// makes the rig's.
+/// The store group's rig under the root of a hosted registry the host
+/// names, bound for the repository [`LIVE`], a scenario's names apart from
+/// every other's by the run's prefix, and a store at a loopback port
+/// nothing listens on, which [`StoreRig::unreachable`] makes the rig's.
 pub struct LiveRig {
     live: Prefixed,
     dead: Registry,
@@ -407,10 +419,10 @@ impl LiveRig {
     pub fn new(repository: &str, run: &str, scenario: usize) -> LiveRig {
         LiveRig {
             live: Prefixed {
-                registry: Registry::new(repository).expect("the repository the host names"),
+                registry: live(repository),
                 prefix: format!("{run}-{scenario}-"),
             },
-            dead: Registry::new(&format!("127.0.0.1:{}/store", unanswered())).unwrap(),
+            dead: live(&format!("127.0.0.1:{}/store", unanswered())),
             down: Cell::new(false),
         }
     }
@@ -452,9 +464,9 @@ impl StoreRig for LiveRig {
     }
 }
 
-/// The store group run over `repository`, a fresh [`LiveRig`] for each
-/// scenario under one run's prefix: every scenario passes and ran, the
-/// report names the repository, and only the refusal of a name moved
+/// The store group run under the root `repository`, a fresh [`LiveRig`]
+/// for each scenario under one run's prefix: every scenario passes and
+/// ran, the report names the registry and the root, and only the refusal of a name moved
 /// from where it is not is not applicable, since no registry the profile
 /// binds takes a conditional tag put (C.1, ADR 0015).
 pub fn store_group_against(repository: &str) {
