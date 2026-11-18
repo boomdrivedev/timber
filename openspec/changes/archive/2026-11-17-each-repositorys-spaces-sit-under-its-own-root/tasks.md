@@ -103,4 +103,4 @@ changes. A task that cannot be done without one stops short with
 
 ## 4. The archive
 
-- [ ] 4.1 Archive the change once groups 1 to 3 are done: `devenv shell -- openspec archive each-repositorys-spaces-sit-under-its-own-root --yes`. Then commit the archived change and the two specs it writes. Verify with `devenv shell -- moon run root:specs root:changes`, where `root:specs` passes every spec and `root:changes` finds no open change.
+- [x] 4.1 Archive the change once groups 1 to 3 are done: `devenv shell -- openspec archive each-repositorys-spaces-sit-under-its-own-root --yes`. Then commit the archived change and the two specs it writes. Verify with `devenv shell -- moon run root:specs root:changes`, where `root:specs` passes every spec and `root:changes` finds no open change.
