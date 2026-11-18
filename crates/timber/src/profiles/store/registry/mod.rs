@@ -4,15 +4,31 @@
 //! writes, an attestation as a referrer of its subject, and a name as a
 //! tag, at bytes through a cache manifest (design D2 to D8, D14).
 //!
-//! Everything the store holds is held in the one repository the host
-//! names, `<host>[:<port>]/<path>`, addressed by digest, on every
-//! registry (design D2); the store never makes a repository. A loopback
-//! host is spoken to over plain HTTP, as Docker speaks to one, and every
-//! other over HTTPS (design D3). A digest or name the repository does not
-//! hold is absent; a registry that refuses is refused in its own words;
-//! one that cannot be reached, or answers what cannot be read, or fails
-//! with a 5xx, is unreadable in the client's or the registry's words
-//! (58, 59, rule core.19).
+//! The host names a registry and a root, `<host>[:<port>]/<root>`, and
+//! every name of the store is a tag of a repository under the root (C.1
+//! as amended at `boomdrivedev/blueprints` f412008; record 0040). The
+//! store is bound for one repository, the checkout's, whose own
+//! repository is `<root>/<owner>/<name>`, the owner and name its
+//! landing's remote gives, lowercased (114, 138). Three spaces hang under
+//! the root: a declared component's versions and channels, tags of the
+//! component's repository under the repository's own; each cache entry,
+//! a tag of its build profile's cache repository, `cache/<build>` under
+//! the repository's own; and each artifact's name, a tag of
+//! `<root>/artifact/<ecosystem>/<name>`, one space for the whole store
+//! and under no repository's own. The repository's own holds the
+//! undeclared component's versions and channels, and what a publish
+//! writes before any name reaches it. A store bound for no repository
+//! answers every write, and every name of the repository's own spaces,
+//! as its binding answered the repository, and reads the artifact space
+//! as any store does.
+//!
+//! The store never makes a repository. A loopback host is spoken to over
+//! plain HTTP, as Docker speaks to one, and every other over HTTPS
+//! (design D3). A digest or name the registry does not hold is absent; a
+//! registry that refuses is refused in its own words; one that cannot be
+//! reached, or answers what cannot be read, or fails with a 5xx, is
+//! unreadable in the client's or the registry's words (58, 59, rule
+//! core.19).
 
 mod client;
 mod tag;
@@ -26,8 +42,8 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use timber_seams::{
-    Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put, Seam,
-    Source, Store, Version, Why, REPOSITORY_COMPONENT,
+    Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put,
+    RepositoryName, Seam, Source, Store, Version, Why, REPOSITORY_COMPONENT,
 };
 use ureq::http::{Method, StatusCode};
 
@@ -37,8 +53,8 @@ use super::oci::{
 use client::{encoded, Answered, Client};
 
 /// What a cache entry's name begins with, and the space of repositories
-/// under the declared one its entries are held in, one per build profile
-/// (52, C.1; design D9).
+/// under the repository's own its entries are held in, one per build
+/// profile (52, C.1; design D9).
 const CACHE_SPACE: &str = "cache";
 
 /// What a manifest request accepts: timber's two manifest types.
@@ -54,12 +70,14 @@ const BOUND: Duration = Duration::from_secs(30);
 /// is twice the one before.
 const FIRST_WAIT: Duration = Duration::from_millis(250);
 
-/// A store held in one repository of an OCI registry. Every answer names
-/// the store seam and the repository.
+/// A store held under one root of an OCI registry, bound for one
+/// repository. Every answer names the store seam and the registry and
+/// root.
 pub struct Registry {
     repository: String,
     host: String,
-    path: String,
+    root: String,
+    own: Answer<String>,
     origin: String,
     base: String,
     source: Source,
@@ -69,10 +87,12 @@ pub struct Registry {
     build: Option<String>,
     push: bool,
     mounts: RefCell<Vec<(String, bool)>>,
+    reached: RefCell<Vec<(Digest, String)>>,
 }
 
-/// The space of repositories under the declared one an artifact's names
-/// are held in, one per ecosystem and name (138, C.1; design D8).
+/// The space of repositories under the root an artifact's names are held
+/// in, one per ecosystem and name, under no repository's own (138, C.1;
+/// design D8).
 const ARTIFACT_SPACE: &str = "artifact";
 
 /// Where a name is held: the repository path it is a tag of, the tag,
@@ -86,7 +106,7 @@ struct Place {
 /// The spaces of the store's names on a registry (C.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Space {
-    Declared,
+    Own,
     Artifact,
     Cache,
     Component,
@@ -115,8 +135,12 @@ fn loopback(host: &str) -> bool {
 }
 
 impl Registry {
-    /// The repository `repository` names, `<host>[:<port>]/<path>`;
-    /// refused naming the text when it names no host or no path.
+    /// The registry and the root `repository` names,
+    /// `<host>[:<port>]/<root>`, bound for no repository, so every write
+    /// and every name of the repository's own spaces is absent naming the
+    /// repository it is bound for until [`Registry::for_repository`]
+    /// gives one; refused naming the text when it names no host or no
+    /// root (C.1; design D1).
     pub fn new(repository: &str) -> Answer<Registry> {
         let source = Source::new(Seam::Store, format!("OCI registry {repository}"));
         let refused = |why: &str| {
@@ -124,29 +148,30 @@ impl Registry {
                 &source,
                 Why::Said,
                 Some(format!(
-                    "{repository:?} is not a registry host followed by a repository path: {why}"
+                    "{repository:?} is not a registry host followed by a root's path: {why}"
                 )),
             )
         };
-        let Some((host, path)) = repository.split_once('/') else {
+        let Some((host, root)) = repository.split_once('/') else {
             return Err(refused("it holds no /"));
         };
-        if host.is_empty() || path.is_empty() {
-            return Err(refused("its host or its path is empty"));
+        if host.is_empty() || root.is_empty() {
+            return Err(refused("its host or its root is empty"));
         }
         if host.contains("://") || repository.contains(char::is_whitespace) {
             return Err(refused("it names a scheme or holds a space"));
         }
-        if path.split('/').any(str::is_empty) {
-            return Err(refused("its path holds an empty part"));
+        if root.split('/').any(str::is_empty) {
+            return Err(refused("its root holds an empty part"));
         }
         let scheme = if loopback(host) { "http" } else { "https" };
         let origin = format!("{scheme}://{host}");
         Ok(Registry {
             repository: repository.to_string(),
             host: host.to_string(),
-            path: path.to_string(),
-            base: format!("{origin}/v2/{path}/"),
+            root: root.to_string(),
+            own: Err(Not::absent(&source, "repository this store is bound for")),
+            base: format!("{origin}/v2/{root}/"),
             origin,
             client: Client::new(host, &source),
             source,
@@ -155,11 +180,43 @@ impl Registry {
             build: None,
             push: false,
             mounts: RefCell::new(Vec::new()),
+            reached: RefCell::new(Vec::new()),
         })
     }
 
+    /// The registry bound for `repository`, the checkout's, as its
+    /// binding answered it: its own repository `<root>/<owner>/<name>`,
+    /// the owner and the name each written as one path component,
+    /// lowercased; and where the answer is absent or unreadable, that
+    /// answer kept, every write and every name of the repository's own
+    /// spaces answering it. An owner written `artifact` is refused naming
+    /// it and the artifact space, `<root>/artifact/`, which its own
+    /// repository would share, so nothing is written (114, 138, C.1;
+    /// design D2, D3).
+    pub fn for_repository(mut self, repository: Answer<RepositoryName>) -> Registry {
+        self.own = repository.and_then(|named| {
+            if tag::component(&named.owner) == ARTIFACT_SPACE {
+                return Err(Not::refused(
+                    &self.source,
+                    Why::Said,
+                    Some(format!(
+                        "the owner {} of the repository {named} is written {ARTIFACT_SPACE}, \
+                         and {}/{}/{ARTIFACT_SPACE}/ is the artifact space, which the \
+                         repository's own would share",
+                        named.owner, self.host, self.root
+                    )),
+                ));
+            }
+            self.under(
+                &[named.owner.as_str(), named.name.as_str()],
+                &format!("the repository {named}"),
+            )
+        });
+        self
+    }
+
     /// The registry bound for the build profile `build`, whose cache
-    /// repository, `cache/<build>` under the declared one, holds each
+    /// repository, `cache/<build>` under the repository's own, holds each
     /// cache entry; and, where `push`, putting bytes there too, since a
     /// push writes cache entries and nothing more, so a credential that
     /// writes `cache/` alone pushes them (52, 135, C.1; design D9).
@@ -174,12 +231,13 @@ impl Registry {
         &self.source
     }
 
-    /// The repository, as the host names it.
+    /// The registry and the root, as the host names them.
     pub fn repository(&self) -> &str {
         &self.repository
     }
 
-    /// Where the repository's API is: `<scheme>://<host>/v2/<path>/`.
+    /// Where the API of the repositories under the root is:
+    /// `<scheme>://<host>/v2/<root>/`.
     pub fn base(&self) -> &str {
         &self.base
     }
@@ -222,10 +280,6 @@ impl Registry {
     #[doc(hidden)]
     pub fn read_again_within(&mut self, bound: Duration) {
         self.bound = bound;
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base)
     }
 
     /// Where `path` of `repository`'s API is: `<scheme>://<host>/v2/<repository>/<path>`.
@@ -492,8 +546,10 @@ impl Registry {
         }
     }
 
-    /// The bytes of the manifest `digest` and the media type they name,
-    /// once they are found to be its; none when it is not held.
+    /// The bytes of the manifest `digest` of `repository` and the media
+    /// type they name, once they are found to be its; none when it is not
+    /// held. Each digest the manifest names is kept as reached in
+    /// `repository` (design D4).
     fn manifest(&self, repository: &str, digest: &Digest) -> Answer<Option<(Vec<u8>, Typed)>> {
         let url = self.url_in(repository, &format!("manifests/{digest}"));
         let answered = self.send(
@@ -512,6 +568,9 @@ impl Registry {
                     typed.media_type = answered
                         .header("content-type")
                         .map(|t| t.split(';').next().unwrap_or(t).trim().to_string());
+                }
+                for (_, named) in oci::named(&answered.body).unwrap_or_default() {
+                    self.keep(&named, repository);
                 }
                 Ok(Some((answered.body, typed)))
             }
@@ -585,28 +644,94 @@ impl Registry {
         })
     }
 
-    /// The repository path `parts` make under the declared one, each
-    /// written as one path component, for what `held` names as written;
-    /// refused naming it, the path and its length where the path runs
-    /// past 255 characters (design D12).
+    /// `digest` kept as reached in `repository`, after every repository
+    /// it was reached in before, for the store's life alone: the next
+    /// process keeps it again from the names it resolves, so it is no
+    /// record (rule core.20; design D4).
+    fn keep(&self, digest: &Digest, repository: &str) {
+        let mut reached = self.reached.borrow_mut();
+        if !reached.iter().any(|(d, r)| d == digest && r == repository) {
+            reached.push((digest.clone(), repository.to_string()));
+        }
+    }
+
+    /// The repositories `digest` was reached in, in the order reached.
+    fn reached_in(&self, digest: &Digest) -> Vec<String> {
+        self.reached
+            .borrow()
+            .iter()
+            .filter(|(d, _)| d == digest)
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
+    /// The first repository `ask` finds `digest` in, with what it found:
+    /// each repository the digest was reached in first, in the order
+    /// reached, then the repository's own, then the bound build
+    /// profile's cache repository, each asked once; none where none
+    /// holds it, and the binding's answer where the store is bound for no
+    /// repository and no repository the digest was reached in holds it
+    /// (72, 138, C.1; design D4).
+    fn find<T>(
+        &self,
+        digest: &Digest,
+        ask: impl Fn(&str) -> Answer<Option<T>>,
+    ) -> Answer<Option<(String, T)>> {
+        let reached = self.reached_in(digest);
+        for repository in &reached {
+            if let Some(found) = ask(repository)? {
+                return Ok(Some((repository.clone(), found)));
+            }
+        }
+        let mut rest = vec![self.own()?.to_string()];
+        rest.extend(self.cache_repository()?);
+        for repository in rest.into_iter().filter(|r| !reached.contains(r)) {
+            if let Some(found) = ask(&repository)? {
+                return Ok(Some((repository, found)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The repository path `parts` make under the root, each written as
+    /// one path component, for what `held` names as written; refused
+    /// naming it, the path and its length where the path runs past 255
+    /// characters (design D12).
     fn under(&self, parts: &[&str], held: &str) -> Answer<String> {
-        tag::repository(&self.host, &self.path, parts, held)
+        tag::repository(&self.host, &self.root, parts, held)
             .map_err(|words| Not::refused(&self.source, Why::Said, Some(words)))
     }
 
-    /// Where `name` is held (design D8 to D10): the repository it is a
-    /// tag of, and the tag, read as an artifact's name first, then a
-    /// cache entry's, a channel's and a version's, so a `:` in a build
-    /// identity or a version is never read as a component's. An
-    /// artifact's name is the tag of its version in
-    /// `artifact/<ecosystem>/<name>` under the declared repository; a
-    /// cache entry's the tag of its build identity in the bound build
-    /// profile's cache repository, refused naming the entry where the
-    /// store is bound for none; a declared component's channel and
-    /// version the tags of the channel's name and the version's tag in
-    /// the component's own repository; every other name, the undeclared
-    /// component's versions and channels among them, a tag of the
-    /// declared repository (125).
+    /// The repository's own, `<root>/<owner>/<name>`; what the binding
+    /// answered for the repository where it gave none, so every write
+    /// and every name of the repository's own spaces answers it and
+    /// nothing is written (C.1; design D2, D3).
+    fn own(&self) -> Answer<&str> {
+        self.own.as_deref().map_err(Clone::clone)
+    }
+
+    /// The repository path `parts` make under the repository's own, as
+    /// [`Registry::under`] makes one under the root.
+    fn under_own(&self, parts: &[&str], held: &str) -> Answer<String> {
+        tag::repository(&self.host, self.own()?, parts, held)
+            .map_err(|words| Not::refused(&self.source, Why::Said, Some(words)))
+    }
+
+    /// Where `name` is held (design D3): the repository it is a tag of,
+    /// and the tag, read as an artifact's name first, then a cache
+    /// entry's, a channel's and a version's, so a `:` in a build identity
+    /// or a version is never read as a component's. An artifact's name is
+    /// the tag of its version in `artifact/<ecosystem>/<name>` under the
+    /// root, under no repository's own; a cache entry's the tag of its
+    /// build identity in the bound build profile's cache repository under
+    /// the repository's own, refused naming the entry where the store is
+    /// bound for none; a declared component's channel and version the
+    /// tags of the channel's name and the version's tag in the
+    /// component's repository under the repository's own; every other
+    /// name, the undeclared component's versions and channels among them,
+    /// a tag of the repository's own (125, 138, C.1). A name outside the
+    /// artifact space answers the binding's answer where the store is
+    /// bound for no repository.
     fn place(&self, name: &Name) -> Answer<Place> {
         if let Some((ecosystem, artifact, version)) = name.as_artifact() {
             return Ok(Place {
@@ -648,26 +773,26 @@ impl Registry {
         };
         if let Some((component, tag)) = component {
             return Ok(Place {
-                repository: self.under(&[component.as_str()], &format!("the name {name}"))?,
+                repository: self.under_own(&[component.as_str()], &format!("the name {name}"))?,
                 tag: self.tag(&Name::new(tag))?,
                 space: Space::Component,
             });
         }
         Ok(Place {
-            repository: self.path.clone(),
+            repository: self.own()?.to_string(),
             tag: self.tag(name)?,
-            space: Space::Declared,
+            space: Space::Own,
         })
     }
 
     /// The bound build profile's cache repository, `cache/<build>` under
-    /// the declared one; none where the store is bound for none (design
-    /// D9).
+    /// the repository's own; none where the store is bound for none
+    /// (design D3, D9).
     fn cache_repository(&self) -> Answer<Option<String>> {
         self.build
             .as_deref()
             .map(|build| {
-                self.under(
+                self.under_own(
                     &[CACHE_SPACE, build],
                     &format!("the cache of the build profile {build}"),
                 )
@@ -676,25 +801,25 @@ impl Registry {
     }
 
     /// The manifest `digest` held in `repository` with everything it
-    /// names, each asked after by a `HEAD` first and only what the
-    /// repository lacks written: each blob mounted from the declared
-    /// repository, each manifest an index names held the same way, then
-    /// the manifest put by its digest in its own bytes read from the
-    /// declared repository, since a registry takes a manifest only where
-    /// what it names is held. Attestations are not held there: the seam
-    /// reads a digest's claims in the declared repository (8, rule
-    /// core.5; design D8).
+    /// names and timber's attestations on each, each asked after by a
+    /// `HEAD` first and only what the repository lacks written: the
+    /// manifest found as a read finds it, each manifest an index names
+    /// held the same way, each blob mounted from the repository the
+    /// manifest was found in, then the manifest put by its digest in its
+    /// own bytes, since a registry takes a manifest only where what it
+    /// names is held, and then its attestations carried from there (8,
+    /// C.1, rule core.5; design D4, D5).
     fn hold(&self, repository: &str, digest: &Digest) -> Answer<()> {
-        if repository == self.path || self.manifest_head(repository, digest.as_str())?.is_some() {
+        if self.manifest_head(repository, digest.as_str())?.is_some() {
             return Ok(());
         }
-        let Some((bytes, typed)) = self.manifest(&self.path, digest)? else {
+        let Some((from, (bytes, typed))) = self.find(digest, |r| self.manifest(r, digest))? else {
             return Err(Not::absent(&self.source, digest.to_string()));
         };
         let unreadable = |words: String| {
             Not::unreadable(
                 &self.source,
-                self.url(&format!("manifests/{digest}")),
+                self.url_in(&from, &format!("manifests/{digest}")),
                 Some(words),
             )
         };
@@ -702,11 +827,54 @@ impl Registry {
             if manifest {
                 self.hold(repository, &named)?;
             } else {
-                self.mount(repository, &named, &self.path)?;
+                self.mount(repository, &named, &from)?;
             }
         }
         let media_type = typed.media_type.unwrap_or_else(|| IMAGE_MANIFEST.into());
         self.put_manifest(repository, digest.as_str(), &media_type, &bytes)?;
+        self.carry(&from, repository, digest)
+    }
+
+    /// Each of timber's attestations on `subject` that `from` holds, held
+    /// in `repository` too: the referrer's config and layer mounted from
+    /// `from`, the referrer put by its digest unless it is held, and
+    /// listed in the subject's referrers tag where the put answers no
+    /// `OCI-Subject`, or where it was held and the registry answers no
+    /// referrers API. Another tool's referrers stay where they are (8,
+    /// C.1, rule core.27; design D5).
+    fn carry(&self, from: &str, repository: &str, subject: &Digest) -> Answer<()> {
+        for referrer in self.referrers(from, subject)? {
+            let at = referrer.digest.as_str();
+            if self.manifest_head(repository, at)?.is_none() {
+                let Some((bytes, _)) = self.manifest(from, &referrer.digest)? else {
+                    return Err(Not::unreadable(
+                        &self.source,
+                        self.url_in(from, &format!("manifests/{at}")),
+                        Some(format!(
+                            "the referrers of {subject} name {at}, which the registry does not \
+                             hold"
+                        )),
+                    ));
+                };
+                let named = oci::named(&bytes).map_err(|words| {
+                    Not::unreadable(
+                        &self.source,
+                        self.url_in(from, &format!("manifests/{at}")),
+                        Some(words),
+                    )
+                })?;
+                for (_, blob) in named {
+                    self.mount(repository, &blob, from)?;
+                }
+                let put = self.put_manifest(repository, at, IMAGE_MANIFEST, &bytes)?;
+                if put.header("oci-subject").is_some() {
+                    continue;
+                }
+            } else if self.referrers_api(repository, subject)?.is_some() {
+                continue;
+            }
+            self.tag_referrer(repository, subject, &referrer)?;
+        }
         Ok(())
     }
 
@@ -758,17 +926,24 @@ impl Registry {
     /// held in `place`'s repository: `to`'s own where `to` is a manifest,
     /// held as [`Registry::hold`] holds it; and where `to` is bytes, the
     /// cache manifest of them, the bytes held as [`Registry::mount`]
-    /// holds them (design D8, D14). `to` is asked of the declared
-    /// repository and then the cache repository, as a read is, and of the
-    /// cache repository alone by a push's store, which asks nothing of the
-    /// declared one its credential may not read (135; design D9). Absent
-    /// where `to` is neither.
+    /// holds them (design D8, D14). `to` is asked of each repository it
+    /// was reached in, the repository's own and then the cache
+    /// repository, as a read is, and of the cache repository alone by a
+    /// push's store, which asks nothing of the repository's own its
+    /// credential may not read (135; design D4, D9). Absent where `to` is
+    /// neither.
     fn named_at(&self, place: &Place, to: &Digest) -> Answer<(String, Vec<u8>)> {
         let asked = if self.push && place.space == Space::Cache {
             vec![place.repository.clone()]
         } else {
-            let mut asked = vec![self.path.clone()];
-            asked.extend(self.cache_repository()?);
+            let mut asked = self.reached_in(to);
+            for repository in
+                std::iter::once(self.own()?.to_string()).chain(self.cache_repository()?)
+            {
+                if !asked.contains(&repository) {
+                    asked.push(repository);
+                }
+            }
             asked
         };
         for repository in &asked {
@@ -799,6 +974,82 @@ impl Registry {
             }
         }
         Err(Not::absent(&self.source, to.to_string()))
+    }
+
+    /// The repositories timber's index `index`, read from `repository`,
+    /// may be held in beside the repository's own: its component's
+    /// repository, the repository's own for the undeclared component,
+    /// and each of its artifacts' names' repositories, read from the
+    /// index's own annotations (C.1; design D5). A name whose repository
+    /// would run past 255 characters is held nowhere, and is left out.
+    fn holders_of_index(&self, repository: &str, index: &Digest) -> Answer<Vec<String>> {
+        let Some((bytes, typed)) = self.manifest(repository, index)? else {
+            return Ok(Vec::new());
+        };
+        if !typed.artifact_type.as_deref().is_some_and(oci::is_timbers) {
+            return Ok(Vec::new());
+        }
+        let media_type = typed.media_type.unwrap_or_default();
+        let oci::Read::Index(meta) = oci::read(&media_type, &bytes).map_err(|words| {
+            Not::unreadable(
+                &self.source,
+                self.url_in(repository, &format!("manifests/{index}")),
+                Some(words),
+            )
+        })?
+        else {
+            return Ok(Vec::new());
+        };
+        let mut holders = Vec::new();
+        if meta.component().as_str() == REPOSITORY_COMPONENT {
+            holders.push(self.own()?.to_string());
+        } else if let Ok(component) = self.under_own(&[meta.component().as_str()], "") {
+            holders.push(component);
+        }
+        for artifact in meta.artifacts() {
+            let (ecosystem, name) = (artifact.meta.ecosystem(), artifact.meta.name());
+            if let Ok(named) = self.under(&[ARTIFACT_SPACE, ecosystem.as_str(), name.as_str()], "")
+            {
+                holders.push(named);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// The attestation `referrer` of `subject` held in `repository`,
+    /// which holds the subject: its config and layer put, the referrer
+    /// put by its digest, and listed in the subject's referrers tag where
+    /// the put answers no `OCI-Subject`; where the referrer is held
+    /// already, listed in the tag where the registry answers no referrers
+    /// API. True where it was held already (8, 68; design D5, D6).
+    fn attach_in(
+        &self,
+        repository: &str,
+        subject: &Digest,
+        referrer: &oci::Referrer,
+    ) -> Answer<bool> {
+        let descriptor = referrer.descriptor();
+        if self
+            .manifest_head(repository, descriptor.digest.as_str())?
+            .is_some()
+        {
+            return Ok(match self.referrers_api(repository, subject)? {
+                Some(_) => true,
+                None => !self.tag_referrer(repository, subject, &descriptor)?,
+            });
+        }
+        self.put_bytes_in(repository, &referrer.config)?;
+        self.put_bytes_in(repository, &referrer.layer)?;
+        let put = self.put_manifest(
+            repository,
+            descriptor.digest.as_str(),
+            IMAGE_MANIFEST,
+            &referrer.bytes,
+        )?;
+        if put.header("oci-subject").is_none() {
+            self.tag_referrer(repository, subject, &descriptor)?;
+        }
+        Ok(false)
     }
 
     /// What `digest` holds in `repository`, read as [`Store::read`]
@@ -866,13 +1117,26 @@ impl Registry {
         }
     }
 
-    /// The referrers index the referrers tag `tag` holds; none when the
-    /// tag names nothing, and refused naming it when it names no image
-    /// index (design D6).
-    fn referrers_tag(&self, tag: &str) -> Answer<Option<Referrers>> {
-        let url = self.url(&format!("manifests/{tag}"));
+    /// timber's referrers of `subject` in `repository`, from the
+    /// referrers API or, where the registry answers none, the referrers
+    /// tag; another tool's referrers are never answered (design D5, D6).
+    fn referrers(&self, repository: &str, subject: &Digest) -> Answer<Vec<Descriptor>> {
+        Ok(match self.referrers_api(repository, subject)? {
+            Some(listed) => listed,
+            None => self
+                .referrers_tag(repository, &tag::referrers(subject.hex()))?
+                .map(|r| r.envelopes())
+                .unwrap_or_default(),
+        })
+    }
+
+    /// The referrers index the referrers tag `tag` of `repository` holds;
+    /// none when the tag names nothing, and refused naming it when it
+    /// names no image index (design D6).
+    fn referrers_tag(&self, repository: &str, tag: &str) -> Answer<Option<Referrers>> {
+        let url = self.url_in(repository, &format!("manifests/{tag}"));
         let answered = self.send(
-            &self.path,
+            repository,
             Method::GET,
             &url,
             &[("accept", IMAGE_INDEX)],
@@ -893,19 +1157,19 @@ impl Registry {
         }
     }
 
-    /// The referrers of `subject` of the envelope's type, as the
-    /// referrers API answers them, every page of it; none where the
+    /// The referrers of `subject` in `repository` of the envelope's type,
+    /// as the referrers API answers them, every page of it; none where the
     /// registry answers no referrers API (design D5, D6).
-    fn referrers_api(&self, subject: &Digest) -> Answer<Option<Vec<Descriptor>>> {
-        let mut url = self.url(&format!(
-            "referrers/{subject}?artifactType={}",
-            encoded(ENVELOPE)
-        ));
+    fn referrers_api(&self, repository: &str, subject: &Digest) -> Answer<Option<Vec<Descriptor>>> {
+        let mut url = self.url_in(
+            repository,
+            &format!("referrers/{subject}?artifactType={}", encoded(ENVELOPE)),
+        );
         let mut listed: Vec<Descriptor> = Vec::new();
         let mut first = true;
         loop {
             let answered = self.send(
-                &self.path,
+                repository,
                 Method::GET,
                 &url,
                 &[("accept", IMAGE_INDEX)],
@@ -931,20 +1195,28 @@ impl Registry {
         }
     }
 
-    /// `referrer` listed in `subject`'s referrers tag, once, every entry
-    /// already there kept, and the tag read back: true when it was added
-    /// now. An entry missing on the read back is another writer's push
-    /// over it, answered unreadable naming the tag and the referrer, and
-    /// nothing is pushed again (design D6, rule core.6).
-    fn tag_referrer(&self, subject: &Digest, referrer: &Descriptor) -> Answer<bool> {
+    /// `referrer` listed in `subject`'s referrers tag of `repository`,
+    /// once, every entry already there kept, and the tag read back: true
+    /// when it was added now. An entry missing on the read back is
+    /// another writer's push over it, answered unreadable naming the tag
+    /// and the referrer, and nothing is pushed again (design D6, rule
+    /// core.6).
+    fn tag_referrer(
+        &self,
+        repository: &str,
+        subject: &Digest,
+        referrer: &Descriptor,
+    ) -> Answer<bool> {
         let tag = tag::referrers(subject.hex());
-        let mut referrers = self.referrers_tag(&tag)?.unwrap_or_else(Referrers::empty);
+        let mut referrers = self
+            .referrers_tag(repository, &tag)?
+            .unwrap_or_else(Referrers::empty);
         if !referrers.add(referrer) {
             return Ok(false);
         }
-        self.put_manifest(&self.path, &tag, IMAGE_INDEX, &referrers.bytes())?;
+        self.put_manifest(repository, &tag, IMAGE_INDEX, &referrers.bytes())?;
         self.read_back(&tag);
-        let back = self.referrers_tag(&tag)?;
+        let back = self.referrers_tag(repository, &tag)?;
         if !back.is_some_and(|r| r.lists(&referrer.digest)) {
             return Err(Not::unreadable(
                 &self.source,
@@ -959,16 +1231,17 @@ impl Registry {
         Ok(true)
     }
 
-    /// The envelope the referrer `referrer` holds, byte for byte (69).
-    fn envelope(&self, referrer: &Descriptor) -> Answer<Envelope> {
+    /// The envelope the referrer `referrer` of `repository` holds, byte
+    /// for byte (69).
+    fn envelope(&self, repository: &str, referrer: &Descriptor) -> Answer<Envelope> {
         let at = |digest: &Digest, words: String| {
             Not::unreadable(
                 &self.source,
-                self.url(&format!("manifests/{digest}")),
+                self.url_in(repository, &format!("manifests/{digest}")),
                 Some(words),
             )
         };
-        let Some((bytes, _)) = self.manifest(&self.path, &referrer.digest)? else {
+        let Some((bytes, _)) = self.manifest(repository, &referrer.digest)? else {
             return Err(at(
                 &referrer.digest,
                 format!(
@@ -978,10 +1251,10 @@ impl Registry {
             ));
         };
         let layer = oci::referred(&bytes).map_err(|words| at(&referrer.digest, words))?;
-        let Some(bytes) = self.blob(&self.path, &layer.digest)? else {
+        let Some(bytes) = self.blob(repository, &layer.digest)? else {
             return Err(Not::unreadable(
                 &self.source,
-                self.url(&format!("blobs/{}", layer.digest)),
+                self.url_in(repository, &format!("blobs/{}", layer.digest)),
                 Some(format!(
                     "the referrer {} names {}, which the registry does not hold",
                     referrer.digest, layer.digest
@@ -991,7 +1264,7 @@ impl Registry {
         serde_json::from_slice(&bytes).map_err(|e| {
             Not::unreadable(
                 &self.source,
-                self.url(&format!("blobs/{}", layer.digest)),
+                self.url_in(repository, &format!("blobs/{}", layer.digest)),
                 Some(e.to_string()),
             )
         })
@@ -1017,47 +1290,47 @@ fn next(link: &str) -> Option<String> {
 
 impl Store for Registry {
     /// The blob asked after first, and uploaded only when it is not held,
-    /// in the declared repository, or, for a store bound for a push, its
-    /// cache repository (5, 66, 135, design D5, D9).
+    /// in the repository's own, or, for a store bound for a push, its
+    /// cache repository; the binding's answer where the store is bound
+    /// for no repository, with nothing written (5, 66, 135, C.1; design
+    /// D2, D3, D9).
     fn put_bytes(&self, bytes: &[u8]) -> Answer<Put> {
+        let own = self.own()?;
         match self.cache_repository()? {
             Some(cache) if self.push => self.put_bytes_in(&cache, bytes),
-            _ => self.put_bytes_in(&self.path, bytes),
+            _ => self.put_bytes_in(own, bytes),
         }
     }
 
-    /// The manifest the layout writes, each digest it names asked after
-    /// first, absent naming the first not held; the config put, and the
-    /// manifest put by its digest alone unless it is held (1, 5, 67).
+    /// The manifest the layout writes, in the repository's own, each
+    /// digest it names asked after first, absent naming the first not
+    /// held; the config put, and the manifest put by its digest alone
+    /// unless it is held; the binding's answer where the store is bound
+    /// for no repository (1, 5, 67, C.1).
     fn put_artifact(&self, manifest: &Manifest) -> Answer<Put> {
+        let own = self.own()?;
         let size = |digest: &Digest| -> Answer<u64> {
             let held = match manifest {
-                Manifest::Artifact { .. } => self.blob_size(&self.path, digest)?,
-                Manifest::Index(_) => self
-                    .manifest_head(&self.path, digest.as_str())?
-                    .map(|(_, s, _)| s),
+                Manifest::Artifact { .. } => self.blob_size(own, digest)?,
+                Manifest::Index(_) => self.manifest_head(own, digest.as_str())?.map(|(_, s, _)| s),
             };
             held.ok_or_else(|| Not::absent(&self.source, digest.to_string()))
         };
         let written = oci::write(manifest, &self.source, &size)?;
         let digest = Digest::of(&written.bytes);
-        let held_already = self.manifest_head(&self.path, digest.as_str())?.is_some();
+        let held_already = self.manifest_head(own, digest.as_str())?.is_some();
         if !held_already {
             if let Some(config) = &written.config {
-                self.put_bytes_in(&self.path, config)?;
+                self.put_bytes_in(own, config)?;
             }
-            self.put_manifest(
-                &self.path,
-                digest.as_str(),
-                written.media_type,
-                &written.bytes,
-            )?;
+            self.put_manifest(own, digest.as_str(), written.media_type, &written.bytes)?;
         }
         // C.1: a declared component's index is held in its own
-        // repository too, from the publish that puts it (design D10).
+        // repository under the repository's own too, from the publish
+        // that puts it (design D3).
         if let Manifest::Index(index) = manifest {
             if index.component().as_str() != REPOSITORY_COMPONENT {
-                let repository = self.under(
+                let repository = self.under_own(
                     &[index.component().as_str()],
                     &format!("the index of the component {}", index.component()),
                 )?;
@@ -1070,14 +1343,32 @@ impl Store for Registry {
         })
     }
 
-    /// The envelope pushed as a referrer of `subject`, and listed in its
+    /// The envelope pushed as a referrer of `subject` into each
+    /// repository that holds the subject, by a `HEAD` of it: the
+    /// repository's own, each repository the subject was reached in, and,
+    /// for timber's index, its component's repository and each of its
+    /// artifacts' names' repositories, read from the index's own
+    /// annotations; and the one a read found it in. Each is written only
+    /// where the attestation is missing, and listed in the subject's
     /// referrers tag where the registry answers the push with no
-    /// `OCI-Subject`; absent when `subject` is no manifest held, with
-    /// nothing written (8, 68, design D5, D6).
+    /// `OCI-Subject`. Held already only where every holder held it, so an
+    /// attach again after one that failed partway writes what the first
+    /// left out. The subject is found as a read finds it: absent where it
+    /// is no manifest held, and the binding's answer where the store is
+    /// bound for no repository, with nothing written (8, 68, C.1, rule
+    /// core.27; design D4 to D6).
     fn attach(&self, subject: &Digest, attestation: &Envelope) -> Answer<Put> {
-        let Some((media_type, size, _)) = self.manifest_head(&self.path, subject.as_str())? else {
+        let own = self.own()?.to_string();
+        let found = self.find(subject, |r| self.manifest_head(r, subject.as_str()))?;
+        let Some((found_in, (media_type, size, _))) = found else {
             return Err(Not::absent(&self.source, subject.to_string()));
         };
+        let mut holders = vec![own];
+        holders.extend(self.reached_in(subject));
+        if media_type == IMAGE_INDEX {
+            holders.extend(self.holders_of_index(&found_in, subject)?);
+        }
+        holders.push(found_in.clone());
         let referrer = oci::referrer(
             Descriptor {
                 media_type,
@@ -1088,58 +1379,44 @@ impl Store for Registry {
             },
             attestation,
         );
-        let descriptor = referrer.descriptor();
-        let digest = attestation.digest();
-        if self
-            .manifest_head(&self.path, descriptor.digest.as_str())?
-            .is_some()
-        {
-            let held_already = match self.referrers_api(subject)? {
-                Some(_) => true,
-                None => !self.tag_referrer(subject, &descriptor)?,
-            };
-            return Ok(Put {
-                digest,
-                held_already,
-            });
-        }
-        self.put_bytes(&referrer.config)?;
-        self.put_bytes(&referrer.layer)?;
-        let put = self.put_manifest(
-            &self.path,
-            descriptor.digest.as_str(),
-            IMAGE_MANIFEST,
-            &referrer.bytes,
-        )?;
-        if put.header("oci-subject").is_none() {
-            self.tag_referrer(subject, &descriptor)?;
+        let mut held_already = true;
+        let mut asked: Vec<&String> = Vec::new();
+        for repository in &holders {
+            if asked.contains(&repository) {
+                continue;
+            }
+            asked.push(repository);
+            if *repository != found_in
+                && self.manifest_head(repository, subject.as_str())?.is_none()
+            {
+                continue;
+            }
+            held_already &= self.attach_in(repository, subject, &referrer)?;
         }
         Ok(Put {
-            digest,
-            held_already: false,
+            digest: attestation.digest(),
+            held_already,
         })
     }
 
     /// Every envelope a referrer of the envelope's type holds for
-    /// `digest`, from the referrers API or, where the registry answers
-    /// none, the referrers tag; another tool's referrers are never
-    /// answered, and bytes, which attach never makes a subject, have none
-    /// (69, design D5, D6).
+    /// `digest` in the repository a read finds it in, from the referrers
+    /// API or, where the registry answers none, the referrers tag;
+    /// another tool's referrers are never answered, and bytes, which
+    /// attach never makes a subject, have none (69, C.1; design D4 to
+    /// D6).
     fn claims_of(&self, digest: &Digest) -> Answer<Vec<Envelope>> {
-        if self.manifest_head(&self.path, digest.as_str())?.is_none() {
-            return match self.blob_size(&self.path, digest)? {
+        let found = self.find(digest, |r| self.manifest_head(r, digest.as_str()))?;
+        let Some((repository, _)) = found else {
+            return match self.find(digest, |r| self.blob_size(r, digest))? {
                 Some(_) => Ok(Vec::new()),
                 None => Err(Not::absent(&self.source, digest.to_string())),
             };
-        }
-        let listed = match self.referrers_api(digest)? {
-            Some(listed) => listed,
-            None => self
-                .referrers_tag(&tag::referrers(digest.hex()))?
-                .map(|r| r.envelopes())
-                .unwrap_or_default(),
         };
-        listed.iter().map(|r| self.envelope(r)).collect()
+        self.referrers(&repository, digest)?
+            .iter()
+            .map(|r| self.envelope(&repository, r))
+            .collect()
     }
 
     /// The name's tag read first and moved only from `expected`, by that
@@ -1148,8 +1425,11 @@ impl Store for Registry {
     /// the registry shows the put: refused naming where it is otherwise,
     /// before the put or after it, the place it was moved from once the
     /// bound has passed, and nothing is retried (70, 109, C.1, design D7,
-    /// D14, ADR 0015, rule core.6).
+    /// D14, ADR 0015, rule core.6). A make is a write: the binding's
+    /// answer where the store is bound for no repository, an artifact's
+    /// name among them, with nothing written (C.1; design D2).
     fn name(&self, name: &Name, to: &Digest, expected: Option<&Digest>) -> Answer<()> {
+        self.own()?;
         let place = self.place(name)?;
         let (repository, tag) = (&place.repository, &place.tag);
         let at = self.tag_at(repository, tag)?;
@@ -1160,6 +1440,7 @@ impl Store for Registry {
         self.put_manifest(repository, tag, &media_type, &bytes)?;
         let found = self.shown(repository, tag, at.as_ref(), to)?;
         if found.as_ref() == Some(to) {
+            self.keep(to, repository);
             return Ok(());
         }
         let said =
@@ -1174,33 +1455,34 @@ impl Store for Registry {
         Err(Not::refused(&self.source, Why::NameAt { at: found }, said))
     }
 
-    /// The digest the name's tag names, the bytes' at a cache manifest
-    /// (71, design D14).
+    /// The digest the name's tag names, the bytes' at a cache manifest,
+    /// kept as reached in the name's repository, so a read of it asks
+    /// there first (71, C.1; design D4, D14).
     fn resolve(&self, name: &Name) -> Answer<Digest> {
         let place = self.place(name)?;
-        self.tag_at(&place.repository, &place.tag)?
-            .ok_or_else(|| Not::absent(&self.source, format!("name {name}")))
+        let digest = self
+            .tag_at(&place.repository, &place.tag)?
+            .ok_or_else(|| Not::absent(&self.source, format!("name {name}")))?;
+        self.keep(&digest, &place.repository);
+        Ok(digest)
     }
 
     /// The manifest held under `digest`, read in its form when it is
     /// timber's, an artifact's metadata from its config; any other
-    /// manifest's bytes, or a blob's; asked of the declared repository and,
-    /// where it holds no such digest, the bound build profile's cache
-    /// repository, so bytes a push left there are read with no map of
-    /// digests kept (72, 135, rule core.20; design D5, D9).
+    /// manifest's bytes, or a blob's; asked of each repository the
+    /// digest was reached in, then the repository's own and, where it
+    /// holds no such digest, the bound build profile's cache repository,
+    /// so bytes a push left there are read (72, 135, 138, rule core.20;
+    /// design D4, D5, D9).
     fn read(&self, digest: &Digest) -> Answer<Held> {
-        let mut repositories = vec![self.path.clone()];
-        repositories.extend(self.cache_repository()?);
-        for repository in &repositories {
-            if let Some(held) = self.read_in(repository, digest)? {
-                return Ok(held);
-            }
-        }
-        Err(Not::absent(&self.source, digest.to_string()))
+        self.find(digest, |r| self.read_in(r, digest))?
+            .map(|(_, held)| held)
+            .ok_or_else(|| Not::absent(&self.source, digest.to_string()))
     }
 
     /// 138: the versions of `name` of `ecosystem`, each tag of the
-    /// name's repository read back, every page of its tag list followed;
+    /// name's repository read back but its index's referrers tag, which
+    /// `tag::of` gives no name, every page of its tag list followed;
     /// the empty list where the registry holds no such repository or it
     /// holds no tag, and unreadable naming the repository and a tag that
     /// does not read back as one the store wrote, never leaving it out,
@@ -1241,6 +1523,9 @@ impl Store for Registry {
             let page: Tags = serde_json::from_slice(&answered.body)
                 .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
             for written in page.tags.unwrap_or_default() {
+                if tag::is_referrers(&written) {
+                    continue;
+                }
                 let Some(version) = tag::read(&written) else {
                     return Err(Not::unreadable(
                         &self.source,
@@ -1293,6 +1578,25 @@ mod tests {
     /// A version of `component` with an artifact of each `(ecosystem,
     /// name)`, put into `store` with an attestation on its index.
     fn published(store: &Registry, component: &str, names: &[(&str, &str)]) -> Offered {
+        offered(store, component, names, false)
+    }
+
+    /// A version as a publish puts it: each artifact put with an
+    /// attestation on it, then the index with one on it.
+    fn attested(store: &Registry, component: &str, names: &[(&str, &str)]) -> Offered {
+        offered(store, component, names, true)
+    }
+
+    /// A version of `component` with an artifact of each `(ecosystem,
+    /// name)`, put into `store` with an attestation on its index, and,
+    /// where `on_artifacts`, one on each artifact before the index is
+    /// put.
+    fn offered(
+        store: &Registry,
+        component: &str,
+        names: &[(&str, &str)],
+        on_artifacts: bool,
+    ) -> Offered {
         let mut artifacts = Vec::new();
         let mut blobs = Vec::new();
         for (ecosystem, name) in names {
@@ -1305,6 +1609,11 @@ mod tests {
                 layers: vec![layer.clone()],
             };
             let digest = store.put_artifact(&manifest).unwrap().digest;
+            if on_artifacts {
+                store
+                    .attach(&digest, &claim(&format!("a claim on {ecosystem} {name}")))
+                    .unwrap();
+            }
             blobs.push(Digest::of(&timber_seams::canonical(&meta(ecosystem, name))));
             blobs.push(layer);
             artifacts.push(Artifact {
@@ -1336,6 +1645,23 @@ mod tests {
         }
     }
 
+    /// A store under the root `acme/store` of `stub`, bound for the
+    /// repository `owner/name`.
+    fn store_for(stub: &Stub, owner: &str, name: &str) -> Registry {
+        Registry::new(&stub.repository("acme/store"))
+            .unwrap()
+            .for_repository(Ok(RepositoryName {
+                owner: owner.into(),
+                name: name.into(),
+            }))
+    }
+
+    /// A store under the root `acme/store` of `stub`, bound for the
+    /// repository `acme/site`, whose own is `acme/store/acme/site`.
+    fn store(stub: &Stub) -> Registry {
+        store_for(stub, "acme", "site")
+    }
+
     fn named(ecosystem: &str, name: &str, version: &str) -> Name {
         artifact_name(
             &Ecosystem::new(ecosystem),
@@ -1347,7 +1673,7 @@ mod tests {
     #[test]
     fn an_artifacts_name_is_a_tag_of_its_own_repository_holding_its_index() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, "web", &[("eco", "site"), ("eco", "cli")]);
         let name = named("eco", "site", "1.3.0");
         store.name(&name, &version.index, None).unwrap();
@@ -1364,22 +1690,25 @@ mod tests {
         assert_eq!(
             stub.repositories(),
             [
-                "acme/store",
-                "acme/store/artifact/eco/site",
-                "acme/store/web"
+                "acme/store/acme/site",
+                "acme/store/acme/site/web",
+                "acme/store/artifact/eco/site"
             ]
         );
-        let declared = stub.held("acme/store").unwrap();
+        let own = stub.held("acme/store/acme/site").unwrap();
         assert!(
-            declared.tags.keys().all(|t| t.starts_with("sha256-")),
+            own.tags.keys().all(|t| t.starts_with("sha256-")),
             "{:?}",
-            declared.tags
+            own.tags
         );
-        assert_eq!(
-            held.manifests.len(),
-            3,
-            "an attestation was held in the artifact's repository"
+        assert!(
+            held.tags.contains_key(&tag::referrers(version.index.hex())),
+            "the attestation on the index was not held in the artifact's repository: {:?}",
+            held.tags
         );
+        // The index, its two artifacts, the attestation and its subject's
+        // referrers tag.
+        assert_eq!(held.manifests.len(), 5, "{:?}", held.manifests.keys());
         assert_eq!(store.claims_of(&version.index).unwrap().len(), 1);
     }
 
@@ -1394,7 +1723,7 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_named_from_bytes_the_declared_repository_holds_is_held_in_the_cache_repository() {
+    fn an_entry_named_from_bytes_the_repositorys_own_holds_is_held_in_its_cache_repository() {
         for declines_mounts in [false, true] {
             let stub = Stub::start(
                 Behaviour {
@@ -1403,16 +1732,14 @@ mod tests {
                 },
                 &[],
             );
-            let store = Registry::new(&stub.repository("acme/store"))
-                .unwrap()
-                .bound_for("moon", false);
+            let store = store(&stub).bound_for("moon", false);
             let bytes = store.put_bytes(b"a cache entry").unwrap().digest;
             let before = stub.asked().len();
             let entry = Name::new("cache/b7e1");
             store.name(&entry, &bytes, None).unwrap();
             assert_eq!(store.resolve(&entry), Ok(bytes.clone()));
 
-            let cache = "/v2/acme/store/cache/moon";
+            let cache = "/v2/acme/store/acme/site/cache/moon";
             let written = writes(&stub, before);
             assert!(
                 written.iter().all(|w| w.contains(cache)),
@@ -1431,7 +1758,7 @@ mod tests {
                 .position(|w| w.contains("/blobs/uploads/"))
                 .unwrap();
             assert!(blob < manifest && manifest < tag, "{written:#?}");
-            let held = stub.held("acme/store/cache/moon").unwrap();
+            let held = stub.held("acme/store/acme/site/cache/moon").unwrap();
             assert_eq!(
                 held.blobs.get(&bytes).map(|b| Digest::of(b)),
                 Some(bytes.clone())
@@ -1443,9 +1770,7 @@ mod tests {
     #[test]
     fn a_pushs_cache_entry_is_held_in_the_cache_repository_alone() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let push = Registry::new(&stub.repository("acme/store"))
-            .unwrap()
-            .bound_for("moon", true);
+        let push = store(&stub).bound_for("moon", true);
         let bytes = push.put_bytes(b"a cache entry").unwrap().digest;
         let entry = Name::new("cache/b7e1");
         push.name(&entry, &bytes, None).unwrap();
@@ -1453,19 +1778,17 @@ mod tests {
         assert!(
             stub.asked()
                 .iter()
-                .all(|a| a.repository() == Some("acme/store/cache/moon")),
-            "the declared repository was asked: {:#?}",
+                .all(|a| a.repository() == Some("acme/store/acme/site/cache/moon")),
+            "the repository's own was asked: {:#?}",
             stub.asked()
         );
-        assert_eq!(stub.repositories(), ["acme/store/cache/moon"]);
-        let held = stub.held("acme/store/cache/moon").unwrap();
+        assert_eq!(stub.repositories(), ["acme/store/acme/site/cache/moon"]);
+        let held = stub.held("acme/store/acme/site/cache/moon").unwrap();
         assert!(held.blobs.contains_key(&bytes));
         let at = held.tags["b7e1"].clone();
         assert_eq!(oci::cached(&held.manifests[&at].1), Ok(Some(bytes.clone())));
 
-        let sync = Registry::new(&stub.repository("acme/store"))
-            .unwrap()
-            .bound_for("moon", false);
+        let sync = store(&stub).bound_for("moon", false);
         let resolved = sync.resolve(&entry).unwrap();
         assert_eq!(
             sync.read(&resolved),
@@ -1476,7 +1799,7 @@ mod tests {
     #[test]
     fn a_store_bound_for_no_build_profile_refuses_a_cache_entrys_name() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let bytes = store.put_bytes(b"a cache entry").unwrap().digest;
         let before = stub.asked().len();
         match store.name(&Name::new("cache/b7e1"), &bytes, None) {
@@ -1491,22 +1814,22 @@ mod tests {
     #[test]
     fn a_declared_components_version_is_a_tag_of_its_own_repository() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, "lib", &[("eco", "lib")]);
         let name = Name::new("lib:lib-v1.2.0");
         store.name(&name, &version.index, None).unwrap();
         assert_eq!(store.resolve(&name), Ok(version.index.clone()));
-        let held = stub.held("acme/store/lib").unwrap();
+        let held = stub.held("acme/store/acme/site/lib").unwrap();
         assert_eq!(held.tags.get("lib-v1.2.0"), Some(&version.index));
-        let declared = stub.held("acme/store").unwrap();
-        assert!(!declared.tags.contains_key("lib-v1.2.0"));
-        assert!(!declared.tags.contains_key("lib_3alib-v1.2.0"));
+        let own = stub.held("acme/store/acme/site").unwrap();
+        assert!(!own.tags.contains_key("lib-v1.2.0"));
+        assert!(!own.tags.contains_key("lib_3alib-v1.2.0"));
     }
 
     #[test]
     fn two_components_channels_of_one_name_are_tags_of_their_own_repositories() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let lib = published(&store, "lib", &[("eco", "lib")]);
         let app = published(&store, "app", &[("eco", "app")]);
         let (libs, apps) = (Name::new("channel/lib/beta"), Name::new("channel/app/beta"));
@@ -1515,39 +1838,507 @@ mod tests {
         assert_eq!(store.resolve(&libs), Ok(lib.index.clone()));
         assert_eq!(store.resolve(&apps), Ok(app.index.clone()));
         assert_eq!(
-            stub.held("acme/store/lib").unwrap().tags.get("beta"),
+            stub.held("acme/store/acme/site/lib")
+                .unwrap()
+                .tags
+                .get("beta"),
             Some(&lib.index)
         );
         assert_eq!(
-            stub.held("acme/store/app").unwrap().tags.get("beta"),
+            stub.held("acme/store/acme/site/app")
+                .unwrap()
+                .tags
+                .get("beta"),
             Some(&app.index)
         );
-        let declared = stub.held("acme/store").unwrap();
+        let own = stub.held("acme/store/acme/site").unwrap();
         assert!(
-            declared.tags.keys().all(|t| t.starts_with("sha256-")),
+            own.tags.keys().all(|t| t.starts_with("sha256-")),
             "{:?}",
-            declared.tags
+            own.tags
         );
     }
 
     #[test]
-    fn a_repository_declaring_no_component_keeps_its_version_and_channel_in_the_declared_one() {
+    fn a_repository_declaring_no_component_keeps_its_version_and_channel_in_its_own() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "site")]);
         for name in ["v1.2.0", "channel/stable"] {
             store.name(&Name::new(name), &version.index, None).unwrap();
         }
-        let declared = stub.held("acme/store").unwrap();
-        assert_eq!(declared.tags.get("v1.2.0"), Some(&version.index));
-        assert_eq!(declared.tags.get("channel_2fstable"), Some(&version.index));
-        assert_eq!(stub.repositories(), ["acme/store"]);
+        let own = stub.held("acme/store/acme/site").unwrap();
+        assert_eq!(own.tags.get("v1.2.0"), Some(&version.index));
+        assert_eq!(own.tags.get("channel_2fstable"), Some(&version.index));
+        assert_eq!(stub.repositories(), ["acme/store/acme/site"]);
+    }
+
+    #[test]
+    fn a_repositorys_components_and_cache_hang_under_its_lowercased_owner_and_name() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let store = store_for(&stub, "Acme", "Site").bound_for("moon", false);
+        let version = published(&store, "lib", &[("eco", "site")]);
+        store
+            .name(&Name::new("lib:lib-v1.2.0"), &version.index, None)
+            .unwrap();
+        let bytes = store.put_bytes(b"a cache entry").unwrap().digest;
+        store.name(&Name::new("cache/b7e1"), &bytes, None).unwrap();
+        store
+            .name(&named("eco", "site", "1.3.0"), &version.index, None)
+            .unwrap();
+        let tag = |repository: &str, tag: &str| {
+            stub.held(repository)
+                .and_then(|held| held.tags.get(tag).cloned())
+        };
+        assert_eq!(
+            tag("acme/store/acme/site/lib", "lib-v1.2.0"),
+            Some(version.index.clone())
+        );
+        assert!(tag("acme/store/acme/site/cache/moon", "b7e1").is_some());
+        assert_eq!(
+            tag("acme/store/artifact/eco/site", "1.3.0"),
+            Some(version.index.clone())
+        );
+        assert!(stub
+            .held("acme/store/acme/site")
+            .unwrap()
+            .manifests
+            .contains_key(&version.index));
+        assert_eq!(
+            stub.repositories(),
+            [
+                "acme/store/acme/site",
+                "acme/store/acme/site/cache/moon",
+                "acme/store/acme/site/lib",
+                "acme/store/artifact/eco/site"
+            ]
+        );
+    }
+
+    #[test]
+    fn two_repositories_components_of_one_name_are_held_apart() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (site, app) = (
+            store_for(&stub, "acme", "site"),
+            store_for(&stub, "acme", "app"),
+        );
+        let ours = published(&site, "lib", &[("eco", "site-lib")]);
+        let theirs = published(&app, "lib", &[("eco", "app-lib")]);
+        assert_ne!(ours.index, theirs.index);
+        let name = Name::new("lib:lib-v1.0.0");
+        site.name(&name, &ours.index, None).unwrap();
+        app.name(&name, &theirs.index, None).unwrap();
+        assert_eq!(site.resolve(&name), Ok(ours.index.clone()));
+        assert_eq!(app.resolve(&name), Ok(theirs.index.clone()));
+        assert_eq!(
+            stub.held("acme/store/acme/site/lib")
+                .unwrap()
+                .tags
+                .get("lib-v1.0.0"),
+            Some(&ours.index)
+        );
+        assert_eq!(
+            stub.held("acme/store/acme/app/lib")
+                .unwrap()
+                .tags
+                .get("lib-v1.0.0"),
+            Some(&theirs.index)
+        );
+    }
+
+    #[test]
+    fn an_owner_named_artifact_is_refused_naming_it_and_nothing_written() {
+        for owner in ["artifact", "Artifact"] {
+            let stub = Stub::start(Behaviour::default(), &[]);
+            let store = store_for(&stub, owner, "npm");
+            for answer in [
+                store.put_bytes(b"site").map(drop),
+                store.name(&Name::new("v1.2.0"), &Digest::of(b"an index"), None),
+                store.name(
+                    &named("npm", "site", "1.3.0"),
+                    &Digest::of(b"an index"),
+                    None,
+                ),
+            ] {
+                match answer {
+                    Err(Not::Refused(r)) => {
+                        assert_eq!(r.why, Why::Said);
+                        let said = r.said.unwrap();
+                        assert!(said.contains(&format!("the owner {owner} ")), "{said}");
+                        assert!(
+                            said.contains(&format!("{}/artifact/ ", stub.repository("acme/store"))),
+                            "{said}"
+                        );
+                    }
+                    other => panic!("the owner {owner} answered {other:?}"),
+                }
+            }
+            assert_eq!(writes(&stub, 0), Vec::<String>::new());
+            assert_eq!(stub.repositories(), Vec::<String>::new());
+        }
+    }
+
+    #[test]
+    fn a_store_bound_for_no_repository_refuses_its_writes_and_resolves_an_artifacts_name() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = published(&site, "web", &[("eco", "site")]);
+        let name = named("eco", "site", "1.3.0");
+        site.name(&name, &version.index, None).unwrap();
+
+        let unbound = Registry::new(&stub.repository("acme/store")).unwrap();
+        let before = stub.asked().len();
+        assert_eq!(unbound.resolve(&name), Ok(version.index.clone()));
+        assert_eq!(
+            unbound.versions(&Ecosystem::new("eco"), &EcosystemName::new("site")),
+            Ok(vec![Version::new("1.3.0")])
+        );
+        assert!(
+            stub.asked()[before..]
+                .iter()
+                .all(|a| a.repository() == Some("acme/store/artifact/eco/site")),
+            "{:#?}",
+            &stub.asked()[before..]
+        );
+        let envelope = Envelope::signed(
+            IN_TOTO,
+            b"another claim".to_vec(),
+            Signature {
+                signer: SignerId::new("host"),
+                keyid: String::new(),
+                sig: vec![2],
+            },
+        );
+        let before = stub.asked().len();
+        for answer in [
+            unbound.put_bytes(b"bytes").map(drop),
+            unbound
+                .put_artifact(&Manifest::Artifact {
+                    meta: meta("eco", "site"),
+                    layers: vec![],
+                })
+                .map(drop),
+            unbound.attach(&version.index, &envelope).map(drop),
+            unbound.name(&Name::new("v1.2.0"), &version.index, None),
+            unbound.name(&named("eco", "site", "1.4.0"), &version.index, None),
+            unbound.resolve(&Name::new("v1.2.0")).map(drop),
+        ] {
+            match answer {
+                Err(Not::Absent(a)) => {
+                    assert_eq!(a.source, *unbound.source());
+                    assert_eq!(a.what, "repository this store is bound for");
+                }
+                other => panic!("a store bound for no repository answered {other:?}"),
+            }
+        }
+        assert_eq!(stub.asked().len(), before, "a store bound for none asked");
+    }
+
+    /// An attestation holding `words`.
+    fn claim(words: &str) -> Envelope {
+        Envelope::signed(
+            IN_TOTO,
+            words.as_bytes().to_vec(),
+            Signature {
+                signer: SignerId::new("host"),
+                keyid: String::new(),
+                sig: vec![1],
+            },
+        )
+    }
+
+    /// What `read` answers, and the repositories `stub` was asked of
+    /// while it ran, in order, each once.
+    fn asked_while<T>(stub: &Stub, read: impl FnOnce() -> T) -> (T, Vec<String>) {
+        let before = stub.asked().len();
+        let answer = read();
+        let mut asked: Vec<String> = Vec::new();
+        for a in &stub.asked()[before..] {
+            let repository = a.repository().unwrap_or_default().to_string();
+            if !asked.contains(&repository) {
+                asked.push(repository);
+            }
+        }
+        (answer, asked)
+    }
+
+    #[test]
+    fn a_digest_is_read_where_its_name_was_resolved() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = published(&site, "web", &[("eco", "site")]);
+        site.attach(&version.artifacts[0], &claim("the artifact's claim"))
+            .unwrap();
+        let name = named("eco", "site", "1.3.0");
+        site.name(&name, &version.index, None).unwrap();
+
+        let app = store_for(&stub, "acme", "app");
+        let (answers, asked) = asked_while(&stub, || {
+            let resolved = app.resolve(&name);
+            let read: Vec<Answer<Held>> =
+                [&version.index, &version.artifacts[0], &version.blobs[1]]
+                    .into_iter()
+                    .map(|digest| app.read(digest))
+                    .collect();
+            let claims: Vec<Answer<Vec<Envelope>>> = [&version.index, &version.artifacts[0]]
+                .into_iter()
+                .map(|digest| app.claims_of(digest))
+                .collect();
+            (resolved, read, claims)
+        });
+        let (resolved, read, claims) = answers;
+        assert_eq!(resolved, Ok(version.index.clone()));
+        for (digest, held) in [&version.index, &version.artifacts[0], &version.blobs[1]]
+            .into_iter()
+            .zip(read)
+        {
+            assert_eq!(held, site.read(digest), "{digest}");
+        }
+        for (digest, claims) in [&version.index, &version.artifacts[0]]
+            .into_iter()
+            .zip(claims)
+        {
+            let claims = claims.unwrap();
+            assert_eq!(claims.len(), 1, "{digest}");
+            assert_eq!(claims, site.claims_of(digest).unwrap(), "{digest}");
+        }
+        assert_eq!(asked, ["acme/store/artifact/eco/site"]);
+        assert!(stub.held("acme/store/acme/app").is_none());
+    }
+
+    /// The referrers tag `subject` has in `repository` of `stub`.
+    fn referrers_in(stub: &Stub, repository: &str, subject: &Digest) -> Option<Referrers> {
+        let held = stub.held(repository)?;
+        let at = held.tags.get(&tag::referrers(subject.hex()))?;
+        Some(Referrers::parse(&held.manifests[at].1).unwrap())
+    }
+
+    #[test]
+    fn an_artifacts_name_holds_the_claims_on_its_index_and_artifacts() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "web", &[("eco", "site"), ("eco", "cli")]);
+        let names = [
+            (named("eco", "site", "1.3.0"), &version.artifacts[0], "site"),
+            (named("eco", "cli", "1.3.0"), &version.artifacts[1], "cli"),
+        ];
+        for (name, _, _) in &names {
+            site.name(name, &version.index, None).unwrap();
+        }
+        for (name, artifact, of) in names {
+            let repository = format!("acme/store/artifact/eco/{of}");
+            for subject in [&version.index, artifact] {
+                let listed = referrers_in(&stub, &repository, subject)
+                    .unwrap_or_else(|| panic!("{repository} lists nothing on {subject}"));
+                assert_eq!(listed.envelopes().len(), 1, "{repository}: {subject}");
+            }
+            let reader = store_for(&stub, "acme", "app");
+            let (claims, asked) = asked_while(&stub, || {
+                reader.resolve(&name).unwrap();
+                reader.read(&version.index).unwrap();
+                [&version.index, artifact].map(|subject| reader.claims_of(subject))
+            });
+            assert_eq!(asked, [repository.as_str()]);
+            for (subject, claims) in [&version.index, artifact].into_iter().zip(claims) {
+                assert_eq!(claims, site.claims_of(subject), "{subject}");
+                assert_eq!(claims.unwrap().len(), 1, "{subject}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_components_repository_holds_the_claims_on_the_artifacts_its_index_names() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "lib", &[("eco", "lib"), ("eco", "lib-docs")]);
+        let lib = "acme/store/acme/site/lib";
+        let held = stub.held(lib).unwrap();
+        assert!(held.manifests.contains_key(&version.index));
+        for artifact in &version.artifacts {
+            assert!(held.manifests.contains_key(artifact), "{artifact}");
+            let listed = referrers_in(&stub, lib, artifact).unwrap();
+            assert_eq!(listed.envelopes().len(), 1, "{artifact}");
+            let claims: Vec<Envelope> = site
+                .referrers(lib, artifact)
+                .unwrap()
+                .iter()
+                .map(|r| site.envelope(lib, r).unwrap())
+                .collect();
+            assert_eq!(Ok(claims), site.claims_of(artifact), "{artifact}");
+        }
+    }
+
+    #[test]
+    fn another_tools_referrer_is_not_carried_into_a_names_repository() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "web", &[("eco", "site")]);
+        let (own, artifact) = ("acme/store/acme/site", &version.artifacts[0]);
+        let signature = site.put_bytes_in(own, b"another tool's signature").unwrap();
+        site.put_bytes_in(own, EMPTY_JSON).unwrap();
+        let (_, size, _) = site.manifest_head(own, artifact.as_str()).unwrap().unwrap();
+        let other = "application/vnd.example.signature.v1";
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": IMAGE_MANIFEST,
+            "artifactType": other,
+            "config": {
+                "mediaType": oci::EMPTY,
+                "digest": Digest::of(EMPTY_JSON),
+                "size": EMPTY_JSON.len(),
+            },
+            "layers": [{
+                "mediaType": OCTETS,
+                "digest": signature.digest,
+                "size": b"another tool's signature".len(),
+            }],
+            "subject": { "mediaType": IMAGE_MANIFEST, "digest": artifact, "size": size },
+        }))
+        .unwrap();
+        let theirs = Digest::of(&bytes);
+        site.put_manifest(own, theirs.as_str(), IMAGE_MANIFEST, &bytes)
+            .unwrap();
+        let descriptor = Descriptor {
+            media_type: IMAGE_MANIFEST.into(),
+            digest: theirs.clone(),
+            size: bytes.len() as u64,
+            artifact_type: Some(other.into()),
+            annotations: Default::default(),
+        };
+        assert!(site.tag_referrer(own, artifact, &descriptor).unwrap());
+
+        site.name(&named("eco", "site", "1.3.0"), &version.index, None)
+            .unwrap();
+        let repository = "acme/store/artifact/eco/site";
+        let listed = referrers_in(&stub, repository, artifact).unwrap();
+        assert_eq!(listed.envelopes().len(), 1);
+        assert!(!listed.lists(&theirs), "another tool's referrer was listed");
+        assert!(!stub
+            .held(repository)
+            .unwrap()
+            .manifests
+            .contains_key(&theirs));
+        assert!(referrers_in(&stub, own, artifact).unwrap().lists(&theirs));
+    }
+
+    #[test]
+    fn a_claim_attached_after_the_names_is_held_in_each_repository_holding_its_subject() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = attested(&site, "lib", &[("eco", "lib"), ("eco", "lib-docs")]);
+        site.name(&Name::new("lib:lib-v1.3.0"), &version.index, None)
+            .unwrap();
+        for of in ["lib", "lib-docs"] {
+            site.name(&named("eco", of, "1.3.0"), &version.index, None)
+                .unwrap();
+        }
+        let gate = store(&stub);
+        let acceptance = claim("the gate accepted it");
+        let put = gate.attach(&version.index, &acceptance).unwrap();
+        assert!(!put.held_already);
+        let holders = [
+            "acme/store/acme/site",
+            "acme/store/acme/site/lib",
+            "acme/store/artifact/eco/lib",
+            "acme/store/artifact/eco/lib-docs",
+        ];
+        for repository in holders {
+            let claims: Vec<Envelope> = site
+                .referrers(repository, &version.index)
+                .unwrap()
+                .iter()
+                .map(|r| site.envelope(repository, r).unwrap())
+                .collect();
+            assert!(claims.contains(&acceptance), "{repository}: {claims:?}");
+            assert_eq!(claims.len(), 2, "{repository}");
+        }
+        assert!(
+            gate.attach(&version.index, &acceptance)
+                .unwrap()
+                .held_already
+        );
+    }
+
+    #[test]
+    fn an_attestation_held_in_part_is_written_where_it_is_missing() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub);
+        let version = published(&site, "web", &[("eco", "site")]);
+        site.name(&named("eco", "site", "1.3.0"), &version.index, None)
+            .unwrap();
+        let (own, named_in) = ("acme/store/acme/site", "acme/store/artifact/eco/site");
+        let acceptance = claim("the gate accepted it");
+        let (media_type, size, _) = site
+            .manifest_head(own, version.index.as_str())
+            .unwrap()
+            .unwrap();
+        let referrer = oci::referrer(
+            Descriptor {
+                media_type,
+                digest: version.index.clone(),
+                size,
+                artifact_type: None,
+                annotations: Default::default(),
+            },
+            &acceptance,
+        );
+        assert!(!site.attach_in(own, &version.index, &referrer).unwrap());
+        let listed = |repository: &str| {
+            referrers_in(&stub, repository, &version.index)
+                .unwrap()
+                .lists(&referrer.descriptor().digest)
+        };
+        assert!(listed(own) && !listed(named_in));
+
+        let before = stub.asked().len();
+        let put = store(&stub).attach(&version.index, &acceptance).unwrap();
+        assert!(!put.held_already, "held in part answered held already");
+        assert!(listed(named_in) && listed("acme/store/acme/site/web"));
+        assert_eq!(
+            writes_of(&stub, before, own),
+            0,
+            "the repository's own, which held it, was written"
+        );
+        assert!(
+            store(&stub)
+                .attach(&version.index, &acceptance)
+                .unwrap()
+                .held_already
+        );
+    }
+
+    #[test]
+    fn a_digest_no_name_reached_is_read_from_the_repositorys_own_then_its_cache() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let push = store(&stub).bound_for("moon", true);
+        let cached = push.put_bytes(b"bytes a push left").unwrap().digest;
+        let sync = store(&stub).bound_for("moon", false);
+        let owned = sync
+            .put_bytes(b"bytes of the repository's own")
+            .unwrap()
+            .digest;
+        let (own, cache) = ("acme/store/acme/site", "acme/store/acme/site/cache/moon");
+
+        let (held, asked) = asked_while(&stub, || sync.read(&owned));
+        assert_eq!(
+            held,
+            Ok(Held::Bytes(b"bytes of the repository's own".to_vec()))
+        );
+        assert_eq!(asked, [own]);
+
+        let (held, asked) = asked_while(&stub, || sync.read(&cached));
+        assert_eq!(held, Ok(Held::Bytes(b"bytes a push left".to_vec())));
+        assert_eq!(asked, [own, cache]);
+
+        let (held, asked) = asked_while(&stub, || sync.read(&Digest::of(b"never put")));
+        assert!(matches!(held, Err(Not::Absent(_))), "{held:?}");
+        assert_eq!(asked, [own, cache]);
     }
 
     #[test]
     fn a_channel_moved_from_where_it_is_not_is_refused_naming_where_it_is_in_its_repository() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let [one, two, three] =
             ["one", "two", "three"].map(|n| published(&store, "lib", &[("eco", n)]));
         let beta = Name::new("channel/lib/beta");
@@ -1567,30 +2358,41 @@ mod tests {
     #[test]
     fn a_declared_components_index_is_held_in_its_repository_untagged_from_the_put() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, "lib", &[("eco", "lib"), ("eco", "lib-docs")]);
-        let held = stub.held("acme/store/lib").unwrap();
+        let held = stub.held("acme/store/acme/site/lib").unwrap();
         for digest in std::iter::once(&version.index).chain(&version.artifacts) {
             assert!(held.manifests.contains_key(digest), "{digest} not held");
         }
         for blob in &version.blobs {
             assert!(held.blobs.contains_key(blob), "{blob} not held");
         }
-        assert!(held.tags.is_empty(), "{:?}", held.tags);
-        assert_eq!(held.manifests.len(), 3, "an attestation was held in lib");
-        let declared = stub.held("acme/store").unwrap();
-        assert!(declared.manifests.contains_key(&version.index));
+        // The index is untagged; the attestation attached to it after the
+        // put is held beside it, listed in its referrers tag.
+        assert_eq!(
+            held.tags.keys().collect::<Vec<_>>(),
+            [&tag::referrers(version.index.hex())],
+            "{:?}",
+            held.tags
+        );
+        assert_eq!(held.manifests.len(), 5, "{:?}", held.manifests.keys());
+        let own = stub.held("acme/store/acme/site").unwrap();
+        assert!(own.manifests.contains_key(&version.index));
         assert_eq!(store.claims_of(&version.index).unwrap().len(), 1);
     }
 
     #[test]
     fn an_index_its_components_repository_lacks_is_held_there_before_a_channels_tag() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         // An index the component's repository does not hold, as one put
         // before indexes were held there is.
         let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "lib")]);
-        assert_eq!(stub.held("acme/store/lib").map(|h| h.manifests.len()), None);
+        assert_eq!(
+            stub.held("acme/store/acme/site/lib")
+                .map(|h| h.manifests.len()),
+            None
+        );
         let before = stub.asked().len();
         store
             .name(&Name::new("channel/lib/beta"), &version.index, None)
@@ -1598,14 +2400,19 @@ mod tests {
         let written = writes(&stub, before);
         let tag = written
             .iter()
-            .position(|w| w.ends_with("/v2/acme/store/lib/manifests/beta"))
+            .position(|w| w.ends_with("/v2/acme/store/acme/site/lib/manifests/beta"))
             .unwrap();
         let index = written
             .iter()
-            .position(|w| w.ends_with(&format!("/v2/acme/store/lib/manifests/{}", version.index)))
+            .position(|w| {
+                w.ends_with(&format!(
+                    "/v2/acme/store/acme/site/lib/manifests/{}",
+                    version.index
+                ))
+            })
             .unwrap();
         assert!(index < tag, "{written:#?}");
-        let held = stub.held("acme/store/lib").unwrap();
+        let held = stub.held("acme/store/acme/site/lib").unwrap();
         assert!(held.manifests.contains_key(&version.artifacts[0]));
     }
 
@@ -1634,7 +2441,7 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_repository_that_is_not_there_is_refused_naming_it() {
+    fn a_repositorys_own_that_is_not_there_is_refused_naming_it() {
         let stub = Stub::start(
             Behaviour {
                 makes_on_push: false,
@@ -1642,8 +2449,12 @@ mod tests {
             },
             &[],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
-        refused_naming(&stub, store.put_bytes(b"site").map(drop), "acme/store");
+        let store = store(&stub);
+        refused_naming(
+            &stub,
+            store.put_bytes(b"site").map(drop),
+            "acme/store/acme/site",
+        );
         assert_eq!(stub.repositories(), Vec::<String>::new());
     }
 
@@ -1654,9 +2465,9 @@ mod tests {
                 makes_on_push: false,
                 ..Behaviour::default()
             },
-            &["acme/store"],
+            &["acme/store/acme/site"],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "site")]);
         let before = stub.asked().len();
         let repository = "acme/store/artifact/eco/site";
@@ -1679,17 +2490,21 @@ mod tests {
                 makes_on_push: false,
                 ..Behaviour::default()
             },
-            &["acme/store"],
+            &["acme/store/acme/site"],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "lib")]);
         let before = stub.asked().len();
         refused_naming(
             &stub,
             store.name(&Name::new("lib:lib-v1.2.0"), &version.index, None),
-            "acme/store/lib",
+            "acme/store/acme/site/lib",
         );
-        assert_eq!(writes_of(&stub, before, "acme/store/lib"), 1, "asked again");
+        assert_eq!(
+            writes_of(&stub, before, "acme/store/acme/site/lib"),
+            1,
+            "asked again"
+        );
         assert!(!stub
             .asked()
             .iter()
@@ -1697,31 +2512,29 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_repository_missing_is_refused_naming_it_and_the_declared_one_is_not_written() {
+    fn a_cache_repository_missing_is_refused_naming_it_and_the_repositorys_own_is_not_written() {
         let stub = Stub::start(
             Behaviour {
                 makes_on_push: false,
                 ..Behaviour::default()
             },
-            &["acme/store"],
+            &["acme/store/acme/site"],
         );
-        let push = Registry::new(&stub.repository("acme/store"))
-            .unwrap()
-            .bound_for("moon", true);
+        let push = store(&stub).bound_for("moon", true);
         refused_naming(
             &stub,
             push.put_bytes(b"a cache entry").map(drop),
-            "acme/store/cache/moon",
+            "acme/store/acme/site/cache/moon",
         );
         assert!(
             stub.asked()
                 .iter()
-                .all(|a| a.repository() == Some("acme/store/cache/moon")),
+                .all(|a| a.repository() == Some("acme/store/acme/site/cache/moon")),
             "{:#?}",
             stub.asked()
         );
         assert_eq!(
-            writes_of(&stub, 0, "acme/store/cache/moon"),
+            writes_of(&stub, 0, "acme/store/acme/site/cache/moon"),
             1,
             "asked again"
         );
@@ -1736,7 +2549,7 @@ mod tests {
             },
             &[],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, REPOSITORY_COMPONENT, &[("npm", "@acme/site")]);
         for v in ["1.0.0", "1.1.0+b.1", "2.0.0-rc.1"] {
             store
@@ -1768,6 +2581,29 @@ mod tests {
     }
 
     #[test]
+    fn a_names_versions_leave_out_its_referrers_tags() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let store = store(&stub);
+        let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "site")]);
+        for v in ["1.3.0", "1.4.0"] {
+            store
+                .name(&named("eco", "site", v), &version.index, None)
+                .unwrap();
+        }
+        let tags = stub.held("acme/store/artifact/eco/site").unwrap().tags;
+        assert!(
+            tags.contains_key(&tag::referrers(version.index.hex())),
+            "{tags:?}"
+        );
+        assert_eq!(tags.len(), 3, "{tags:?}");
+        let mut listed = store
+            .versions(&Ecosystem::new("eco"), &EcosystemName::new("site"))
+            .unwrap();
+        listed.sort();
+        assert_eq!(listed, [Version::new("1.3.0"), Version::new("1.4.0")]);
+    }
+
+    #[test]
     fn a_tag_list_page_after_the_first_not_found_is_unreadable_never_a_part_of_the_list() {
         let stub = Stub::start(
             Behaviour {
@@ -1777,7 +2613,7 @@ mod tests {
             },
             &[],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "site")]);
         for v in ["1.0.0", "1.1.0", "1.2.0"] {
             store
@@ -1813,18 +2649,18 @@ mod tests {
                 },
                 &[],
             );
-            let store = Registry::new(&stub.repository("acme/store")).unwrap();
-            let version = published(&store, REPOSITORY_COMPONENT, &[("npm", word)]);
+            let named_in = store(&stub);
+            let version = published(&named_in, REPOSITORY_COMPONENT, &[("npm", word)]);
             let repository = format!("acme/store/artifact/npm/{word}");
             for v in ["1.0.0", "1.1.0"] {
                 let name = named("npm", word, v);
-                store.name(&name, &version.index, None).unwrap();
-                assert_eq!(store.resolve(&name), Ok(version.index.clone()), "{word}");
+                named_in.name(&name, &version.index, None).unwrap();
+                assert_eq!(named_in.resolve(&name), Ok(version.index.clone()), "{word}");
             }
             let held = stub.held(&repository).unwrap();
             assert_eq!(held.tags.get("1.0.0"), Some(&version.index), "{word}");
             assert!(held.manifests.contains_key(&version.index), "{word}");
-            let mut listed = store
+            let mut listed = named_in
                 .versions(&Ecosystem::new("npm"), &EcosystemName::new(word))
                 .unwrap();
             listed.sort();
@@ -1839,13 +2675,13 @@ mod tests {
                     makes_on_push: false,
                     ..Behaviour::default()
                 },
-                &["acme/store"],
+                &["acme/store/acme/site"],
             );
-            let store = Registry::new(&refusing.repository("acme/store")).unwrap();
-            let version = published(&store, REPOSITORY_COMPONENT, &[("npm", word)]);
+            let refuser = store(&refusing);
+            let version = published(&refuser, REPOSITORY_COMPONENT, &[("npm", word)]);
             refused_naming(
                 &refusing,
-                store.name(&named("npm", word, "1.0.0"), &version.index, None),
+                refuser.name(&named("npm", word, "1.0.0"), &version.index, None),
                 &repository,
             );
         }
@@ -1854,7 +2690,7 @@ mod tests {
     #[test]
     fn a_tag_that_reads_back_as_no_version_is_unreadable_naming_it() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         stub.tag("acme/store/artifact/eco/site", "_zz", &Digest::of(b"x"));
         match store.versions(&Ecosystem::new("eco"), &EcosystemName::new("site")) {
             Err(Not::Unreadable(u)) => {
@@ -1878,14 +2714,14 @@ mod tests {
             },
             &[],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let bytes = b"bytes in a repository that holds no manifest";
         let digest = store.put_bytes(bytes).unwrap().digest;
         assert!(store.put_bytes(bytes).unwrap().held_already);
         match store.read(&digest) {
             Err(Not::Unreadable(u)) => {
                 assert_eq!(u.source, *store.source());
-                assert_eq!(u.what, format!("{}blobs/{digest}", store.base()));
+                assert_eq!(u.what, format!("{}acme/site/blobs/{digest}", store.base()));
                 let said = u.said.unwrap();
                 assert!(
                     said.ends_with(&format!("404: {}", super::stub::GHCR_BLOB_UNKNOWN)),
@@ -1910,7 +2746,7 @@ mod tests {
     #[test]
     fn a_scoped_packages_name_is_escaped_into_one_path_component() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let first = published(&store, "web", &[("npm", "@acme/site")]);
         let second = published(&store, "other", &[("npm", "acme-site")]);
         let (scoped, plain) = (
@@ -1941,7 +2777,7 @@ mod tests {
             },
             &[],
         );
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, "web", &[("eco", "site")]);
         let before = stub.asked().len();
         let name = named("eco", "site", "1.3.0");
@@ -1955,9 +2791,11 @@ mod tests {
             .filter(|(r, _)| r == repository)
             .map(|(_, taken)| taken)
             .collect();
+        // The version's blobs, and the empty config and the envelope of
+        // the attestation on its index.
         assert_eq!(
             into,
-            vec![false; version.blobs.len()],
+            vec![false; version.blobs.len() + 2],
             "a declined mount was taken"
         );
         let writes: Vec<String> = stub.asked()[before..]
@@ -1968,25 +2806,38 @@ mod tests {
             .map(|a| format!("{} {}", a.method, a.path.split('?').next().unwrap()))
             .collect();
         let mounts = writes.iter().filter(|w| w.starts_with("POST")).count();
-        assert_eq!(mounts, version.blobs.len(), "{writes:#?}");
+        assert_eq!(mounts, version.blobs.len() + 2, "{writes:#?}");
         let first_manifest = writes
             .iter()
             .position(|w| w.contains("/manifests/"))
             .unwrap();
+        assert_eq!(first_manifest, 2 * version.blobs.len(), "{writes:#?}");
         assert!(
             writes[..first_manifest]
                 .iter()
                 .all(|w| w.contains("/blobs/uploads/")),
             "{writes:#?}"
         );
+        let manifests: Vec<&String> = writes
+            .iter()
+            .filter(|w| w.contains("/manifests/"))
+            .collect();
+        let referrers = tag::referrers(version.index.hex());
+        assert_eq!(manifests.len(), 5, "{writes:#?}");
         assert_eq!(
-            writes[first_manifest..],
+            [manifests[0], manifests[1], manifests[3], manifests[4]],
             [
-                format!("PUT /v2/{repository}/manifests/{}", version.artifacts[0]),
-                format!("PUT /v2/{repository}/manifests/{}", version.index),
-                format!("PUT /v2/{repository}/manifests/1.3.0"),
+                &format!("PUT /v2/{repository}/manifests/{}", version.artifacts[0]),
+                &format!("PUT /v2/{repository}/manifests/{}", version.index),
+                &format!("PUT /v2/{repository}/manifests/{referrers}"),
+                &format!("PUT /v2/{repository}/manifests/1.3.0"),
             ]
         );
+        assert!(
+            manifests[2].starts_with(&format!("PUT /v2/{repository}/manifests/sha256:")),
+            "{writes:#?}"
+        );
+        assert_eq!(writes.last(), Some(manifests[4]), "{writes:#?}");
         let held = stub.held(repository).unwrap();
         for blob in &version.blobs {
             assert_eq!(
@@ -2000,7 +2851,7 @@ mod tests {
     #[test]
     fn a_second_name_in_a_repository_holding_the_index_writes_the_tag_alone() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, "web", &[("eco", "site")]);
         store
             .name(&named("eco", "site", "1.3.0"), &version.index, None)
@@ -2023,7 +2874,7 @@ mod tests {
     #[test]
     fn a_name_made_again_from_nothing_in_its_repository_is_refused_naming_where_it_is() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let first = published(&store, "web", &[("eco", "site")]);
         let second = published(&store, "other", &[("eco", "site")]);
         let name = named("eco", "site", "1.3.0");
@@ -2043,7 +2894,7 @@ mod tests {
     #[test]
     fn a_name_whose_repository_runs_past_255_characters_is_refused_and_nothing_written() {
         let stub = Stub::start(Behaviour::default(), &[]);
-        let store = Registry::new(&stub.repository("acme/store")).unwrap();
+        let store = store(&stub);
         let version = published(&store, "web", &[("eco", "site")]);
         let before = stub.asked().len();
         let written = format!("@acme/{}", "n".repeat(230));

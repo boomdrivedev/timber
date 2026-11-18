@@ -132,7 +132,7 @@ in
           unset
             (table {
               layout = unset types.str "An OCI layout's path, absolute or under `~/`, made by the first publish or push where it is missing (C.2).";
-              registry = unset types.str "One repository of a registry, `<host>/<repository>`, such as `localhost:5000/timber`, the declared repository the store's spaces hang under. The credential is never the file's: it is the host's Docker configuration and the credential helper it names for the registry, reached when the registry asks and kept nowhere (C.1, 64).";
+              registry = unset types.str "A registry's host and the root every repository of the store is under, `<host>/<root>`, such as `ghcr.io/<owner>/timber` or `localhost:5000/timber`. Each repository's components and cache hang under the root at the owner and name its landing's remote gives, `<root>/<owner>/<name>/`, and artifacts' names under `<root>/artifact/` (C.1). The credential is never the file's: it is the host's Docker configuration and the credential helper it names for the registry, reached when the registry asks and kept nowhere (C.1, 64).";
             })
             "`[store]`: the store timber writes into and reads from, named by its one key, `layout` or `registry`. Where unset, an OCI layout at `timber/layout` under the user's data directory (118, C.2).";
         landing =

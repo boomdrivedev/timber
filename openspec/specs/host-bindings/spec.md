@@ -31,8 +31,8 @@ with a file reader and with no timber process running (118, 62).
 
 The file SHALL bind the store, the landing and the signer for the host,
 and nothing the repository's authors bind (92): `[store]` naming a
-layout by its path (C.2) or a registry by its repository (C.1);
-`[landing]` naming sluice or a plain branch,
+layout by its path (C.2) or a registry by its host and root,
+`<host>/<root>` (C.1); `[landing]` naming sluice or a plain branch,
 each with an optional remote (C.5, C.6); and `[signing]` naming the
 signer, as "`[signing]` names a host key or a key service's key" says.
 A path SHALL be absolute or begin with `~/`.
@@ -54,12 +54,12 @@ A path SHALL be absolute or begin with `~/`.
 
 #### Scenario: A registry
 
-- **WHEN** the file names `[store] registry` with a repository such as `localhost:5000/timber`
-- **THEN** publish writes into that repository and verify reads from it, neither makes a repository, and the file names no credential
+- **WHEN** the file names `[store] registry` with a host and a root such as `localhost:5000/timber`
+- **THEN** publish writes under that root and verify reads from under it, neither makes a repository, and the file names no credential
 
 #### Scenario: A registry named by something that is not a repository
 
-- **WHEN** `[store] registry` names a value that is not a registry host followed by a repository path
+- **WHEN** `[store] registry` names a value that is not a registry host followed by a root's path
 - **THEN** publish and verify answer unreadable, naming the file, `[store] registry` and the value, and nothing is read or written
 
 #### Scenario: A plain branch
@@ -593,14 +593,16 @@ provenance (S1, 80, 95, 108, 118, C.10).
 
 `timber push --left` SHALL bind from the host's file with `[store]`
 alone: a file naming no `[landing]` and no `[signing]` SHALL bind, the
-landing answering absent naming its binding for every operation; it
-SHALL make the layout the file names as push does. Every other command
-SHALL still answer absent naming `[landing]` where the file names none.
+landing answering absent naming its binding for every operation, and a
+registry store bound for the repository the given landing remote
+names; it SHALL make the layout the file names as push does. Every
+other command SHALL still answer absent naming `[landing]` where the
+file names none.
 
 #### Scenario: A check job's file
 
 - **WHEN** the file names `[store] registry` and nothing else, and `timber push --left` runs
-- **THEN** the push binds and writes the checkout's entries into that repository, and the file names no credential
+- **THEN** the push binds and writes the checkout's entries into the cache repository under the root and the owner and name of the checkout's `origin`, and the file names no credential
 
 #### Scenario: The same file for a publish
 
@@ -797,3 +799,33 @@ Where the file leaves out `[store]`, the store SHALL be the layout at
 
 - **WHEN** `XDG_DATA_HOME` is unset and the file names no `[store]`
 - **THEN** the store is the layout at `~/.local/share/timber/layout`
+
+### Requirement: A registry store is bound for the checkout's repository
+
+Every command SHALL bind a registry store for the repository the
+checkout is of, by the owner and name the address of its landing's
+remote ends in, the landing as the file names it or as given, as the
+serving process names the repository (114, 118, C.1). Where that
+answer is absent or unreadable, the store SHALL be bound all the same
+and SHALL answer it for every write and every name of the repository's
+own spaces.
+
+#### Scenario: A checkout of a forge's repository
+
+- **WHEN** the file names `[store] registry = "<host>/store"` and `[landing] branch = { remote = "origin" }`, the checkout's `origin` is `https://github.com/Acme/Site.git`, and publish puts bytes
+- **THEN** they are put into the repository `store/acme/site`
+
+#### Scenario: A push's cache entries
+
+- **WHEN** `timber push` puts a cache entry's bytes in the same checkout, with the moon build profile bound
+- **THEN** they are put into the repository `store/acme/site/cache/moon`
+
+#### Scenario: A check job's file with no landing table
+
+- **WHEN** `timber push --left` binds a file naming `[store]` alone in a checkout whose `origin` is `https://github.com/acme/site`
+- **THEN** its entries are put into the repository `store/acme/site/cache/moon`
+
+#### Scenario: A checkout whose landing names no remote
+
+- **WHEN** the file names `[store] registry` and `[landing] branch = {}`, and sync resolves an artifact's name and publish puts bytes
+- **THEN** sync reads the name from `store/artifact/…`, and the put answers absent naming the landing's remote, with nothing written

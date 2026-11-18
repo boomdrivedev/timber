@@ -59,34 +59,55 @@ its bytes and its digest (13).
 
 | member | profile | how | status |
 |---|---|---|---|
-| Amazon ECR | C.1, an OCI registry | over the distribution protocol, under one declared repository; the credential from ECR's helper; proven by hand, outside the gate, by a push on 2026-10-25 | built |
-| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; proven by hand, outside the gate, on 2026-11-17 | built |
+| Amazon ECR | C.1, an OCI registry | over the distribution protocol, under one root the host names; the credential from ECR's helper; proven by hand, outside the gate, by a push on 2026-10-25 | built |
+| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; proven by hand, outside the gate, on 2026-11-17, and under a root per repository on 2026-11-18 | built |
 | Harbor | C.1 | the same, in a project of the operator's | designed |
 | zot | C.1 | the same, on a host or on object storage, attestations listed by its referrers API; proven in the gate | built |
 | the reference distribution | C.1 | the same, the smallest registry, with no referrers API, so attestations are listed by the referrers tag; proven in the gate | built |
 | an OCI layout on disk | C.2, an OCI image layout | a directory, every operation a file write under the digest's path; an artifact is an OCI manifest, an attestation an entry of `index.json` annotated with its subject, and a name an entry with a ref name, moved only from where it is | built |
 
-A registry holds the store under the one repository the host names, such
-as `<account>.dkr.ecr.<region>.amazonaws.com/timber` or
-`localhost:5000/timber`, and the store never makes a repository. The
-declared repository holds every blob, artifact, index and attestation,
-addressed by digest, and the tags of a repository that declares no
-component; under it, three spaces a credential can be scoped to apart
-(C.1, 135; ADR 0023):
+A registry holds the store under one root the host names, such as
+`<account>.dkr.ecr.<region>.amazonaws.com/timber` or
+`localhost:5000/timber`, and the store never makes a repository. Every
+name of the store is a tag of a repository under the root, in three
+spaces a credential, or a package's visibility, can be scoped to apart
+(C.1 as amended at `boomdrivedev/blueprints` f412008, 135; ADR 0023,
+record 0040):
 
-- **A declared component's own repository**, `<declared>/<component>`:
+- **The repository's own**, `<root>/<owner>/<name>`, for the repository
+  the store is bound for, the owner and name its landing's remote gives,
+  lowercased (114, 138). It holds the tags of a repository that declares
+  no component, and every blob, artifact, index and attestation a
+  publish writes before any name reaches it. A store bound for no
+  repository, as a checkout with no remote's is, answers every write
+  and every name of these spaces absent naming the landing's remote, and
+  reads the artifact space as any store does.
+- **A declared component's repository**, `<root>/<owner>/<name>/<component>`:
   its versions' tags, `lib-v1.2.0` for `lib:lib-v1.2.0`, and its
   channels' names, `beta` for `channel/lib/beta`, are its tags, and each
   of its indexes is held there from the publish that puts it.
-- **An artifact's name**, `<declared>/artifact/<ecosystem>/<name>`: the
-  version is its tag, so a name's versions are its tag list; the index
-  and everything it names are mounted into it from the declared
-  repository before the tag is put, or uploaded under their own digests
-  where a registry declines the mount.
-- **Cache entries**, `<declared>/cache/<build>`, one per build profile:
-  the build identity is the tag. A push puts its bytes there and asks
-  nothing of the declared repository, and a read by digest asks the
-  declared repository and then the cache repository.
+- **Cache entries**, `<root>/<owner>/<name>/cache/<build>`, one per build
+  profile: the build identity is the tag. A push puts its bytes there
+  and asks nothing of the repository's own.
+- **An artifact's name**, `<root>/artifact/<ecosystem>/<name>`, one
+  space for the whole store and under no repository's own: the version
+  is its tag, so a name's versions are its tag list, its index's
+  referrers tag left out. A consumer finds a pin by ecosystem, name and
+  version alone, and reads the version's claims beside its index there.
+
+A name's repository holds what its tag reaches and the claims beside
+it: before a tag is put, the index or manifest it names, everything that
+names, and timber's attestations on each are held there, mounted from
+the repository the store found them in, or uploaded under their own
+digests where a registry declines the mount. A digest is read where its
+name was resolved: the store keeps, for its life alone, the repository
+each name it resolved or made is in and the digests a manifest read
+there names, and a read, claims-of, attach or name asks those first,
+then the repository's own, then the cache repository. A claim is
+written into each repository holding its subject: the repository's own,
+each repository the subject was reached in, and, for an index, its
+component's repository and each of its artifacts' names' repositories,
+each where the attestation is missing.
 
 Each part of a repository's path is lowercased and escaped into one path
 component the distribution protocol allows, `@acme/site` written
@@ -135,10 +156,15 @@ records what ECR answered. GitHub's registry needs a person's token as
 well, so its run is the GHCR check, outside the gate beside ECR's, run
 by hand with `moon run ':#check-ghcr'` against a repository the host
 names. GitHub's registry was proven by three runs of it in a row on
-2026-11-17; record 0039 records what GitHub's registry answered.
+2026-11-17; record 0039 records what GitHub's registry answered. It was
+proven under a root per repository by one run on 2026-11-18, each
+repository's components and cache in packages under its own
+`<root>/<owner>/<name>/` and each artifact's name in a package under
+`<root>/artifact/`, the index's claims read there by a store bound for
+another repository; record 0041 records the run.
 
 The layout is bound for a host by its bindings file, `[store] layout =
-"<path>"`, and a registry by `[store] registry = "<host>/<repository>"`
+"<path>"`, and a registry by `[store] registry = "<host>/<root>"`
 (see [self-hosting](/timber/guides/self-hosting/)). A host with no
 file, or a file with no `[store]`, binds the layout at
 `~/.local/share/timber/layout`, under `$XDG_DATA_HOME` where it is
