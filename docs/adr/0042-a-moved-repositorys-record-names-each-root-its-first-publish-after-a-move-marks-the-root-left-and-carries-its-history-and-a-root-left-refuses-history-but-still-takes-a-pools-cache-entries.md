@@ -1,19 +1,20 @@
 ---
 number: 42
-title: A moved repository's record names each root, its first publish after a move marks the root left and carries its history, and a root left is never written again
-status: proposed
+title: A moved repository's record names each root, its first publish after a move marks the root left and carries its history, and a root left refuses history but still takes a pool's cache entries
+status: accepted
 date: 2026-11-18
 decision-makers:
-- the construct stage of the change a-moved-repository-keeps-its-history-in-the-store, by its design D1 to D5 and D7
-- boomdrive-design, by its ruling on the code stage's question of a pool's push at a root left, relayed by boomdrive-planner on 2026-11-18
-- the code stage of the same change, by the answers its design left open, under "What the code stage chose"
+- the construct of the change a-moved-repository-keeps-its-history-in-the-store, by its design D1 to D5 and D7 and by its code stage's answers under "What the code stage chose"
+- boomdrive-design, by its ruling on the code stage's question of a pool's push at a root left, relayed by boomdrive-planner on 2026-11-18, and by its review of 2026-11-18
 ---
 
-# A moved repository's record names each root, its first publish after a move marks the root left and carries its history, and a root left is never written again
+# A moved repository's record names each root, its first publish after a move marks the root left and carries its history, and a root left refuses history but still takes a pool's cache entries
 
-Status: proposed. Every choice here but what a pool's push does at a root left is the construct stage's own, made on statement C.1 as amended at `boomdrivedev/blueprints` e8700c8, on the branch `design/timber-a-moved-repository-keeps-its-history`, and on record 0040 as amended on 2026-11-18 (b0956f3a), and each is cheap to change: no form the registry profile writes, no layout store and no digest changes, and a store keeps every byte it held, a root left gaining one tag.; what a pool's push does there is boomdrive-design's ruling, on the code stage's question.
+Status: accepted on 2026-11-18, on boomdrive-design's review. Every choice here but what a pool's push does at a root left is the construct's own, made on statement C.1 as amended at `boomdrivedev/blueprints` e8700c8, on the branch `design/timber-a-moved-repository-keeps-its-history`, and on record 0040 as amended on 2026-11-18 (b0956f3a), and each is cheap to change: no form the registry profile writes, no layout store and no digest changes, and a store keeps every byte it held, a root left gaining one tag. What a pool's push does there is boomdrive-design's ruling, on the code stage's question.
 
-Deciders: the construct stage of the change `a-moved-repository-keeps-its-history-in-the-store`, carrying out record 0040's amendment of 2026-11-18, boomdrive-design's, on batch 35's review: a repository that is renamed or moves owner keeps one history in the store, carried to its new root by its first publish after the move.
+A root left refuses history, a publish, a claim or a channel's move, and answers a reader of its own spaces with where it went; a pool's push of cache entries, which are no history, still writes there (D4).
+
+Deciders: the construct of the change `a-moved-repository-keeps-its-history-in-the-store`, its design and its code stage, carrying out record 0040's amendment of 2026-11-18, boomdrive-design's, on batch 35's review: a repository that is renamed or moves owner keeps one history in the store, carried to its new root by its first publish after the move; and boomdrive-design, whose ruling settles a pool's push at a root left.
 
 Sources: statement clauses 22, 62, 92, 103, 105, 121 and C.1 as amended at `boomdrivedev/blueprints` e8700c8; records 0040 as amended on 2026-11-18 and 0041; rules core.6, core.30, core.47, core.48, core.50; the change's design D1 to D5 and D7.
 

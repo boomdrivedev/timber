@@ -74,7 +74,7 @@ part exists.
 - **[core.72]** A channel an `after` makes is moved only to the index every environment it names last reported, read from counted reports across each one's chain, and by no asking but the gate's own.
 - **[core.73]** A push to a Nix machine runs only the root its version's closure names, checked against the revision's evaluation and realised from substituters alone before the fleet's tool runs, and builds nothing.
 - **[core.75]** A target removes from where it applies only what its own marker there names as applied by timber and the version applied does not hold, and its marker names each thing before it is applied.
-- **[core.78]** A move is read from the record of claimed versions and the root the store is bound for alone; a publish that finds them apart marks the root left with where it went before it carries anything, and records the new root last; a root marked left answers every read and write of its own spaces with where it went, and only a carry reads past it.
+- **[core.78]** A move is read from the record of claimed versions and the root the store is bound for alone; a publish that finds them apart marks the root left with where it went before it carries anything, and records the new root last; a root marked left refuses every write of history, a publish, a claim or a channel's move, and answers every read of its own spaces with where it went; only a carry reads past it, and a pool's push, which reads no mark, still writes its cache entries there.
 
 ### Consumers
 
