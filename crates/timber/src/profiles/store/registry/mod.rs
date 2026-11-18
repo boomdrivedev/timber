@@ -2581,6 +2581,29 @@ mod tests {
     }
 
     #[test]
+    fn a_names_versions_leave_out_its_referrers_tags() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let store = store(&stub);
+        let version = published(&store, REPOSITORY_COMPONENT, &[("eco", "site")]);
+        for v in ["1.3.0", "1.4.0"] {
+            store
+                .name(&named("eco", "site", v), &version.index, None)
+                .unwrap();
+        }
+        let tags = stub.held("acme/store/artifact/eco/site").unwrap().tags;
+        assert!(
+            tags.contains_key(&tag::referrers(version.index.hex())),
+            "{tags:?}"
+        );
+        assert_eq!(tags.len(), 3, "{tags:?}");
+        let mut listed = store
+            .versions(&Ecosystem::new("eco"), &EcosystemName::new("site"))
+            .unwrap();
+        listed.sort();
+        assert_eq!(listed, [Version::new("1.3.0"), Version::new("1.4.0")]);
+    }
+
+    #[test]
     fn a_tag_list_page_after_the_first_not_found_is_unreadable_never_a_part_of_the_list() {
         let stub = Stub::start(
             Behaviour {
