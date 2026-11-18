@@ -1,7 +1,10 @@
 //! `timber publish`: one landed revision turned into a version of each
 //! component it publishes, in the statement's order: landed, declared,
-//! ensured, judged, claimed, packed, put, attested, indexed, named,
-//! recorded, answered (14 to 22, rules core.10 to core.13; design D1).
+//! rooted, ensured, judged, claimed, packed, put, attested, indexed,
+//! named, recorded, answered (14 to 22, C.1, rules core.10 to core.13;
+//! design D1). Rooted is the record's root read against the store's, a
+//! first root recorded and a moved repository's history carried to the
+//! root bound before anything is built (C.1).
 //! Where the repository's file writes a policy for layouts at the landed
 //! revision, the index carries it as the publisher's layout-policy claim,
 //! attached before anything is named (113, 8); the given is never
@@ -31,6 +34,7 @@ use timber_seams::{
 };
 
 use crate::cache::{cache_name, fill};
+use crate::carry::{self, Rooted};
 use crate::notes::{self, Rendered};
 use crate::{
     claim, derive, layout_policy_body, paths_hold, policy_at, touched, Carried, Declared, Derived,
@@ -53,11 +57,14 @@ pub struct Ask {
     pub tree: String,
 }
 
-/// A publish's answer: per component, in the order the policy file
-/// declares them, what it published or why it did not; one component's
-/// answer does not stop the next (124).
+/// A publish's answer: the root it recorded or the history it carried,
+/// none where it wrote nothing of a root (C.1; design D6); then per
+/// component, in the order the policy file declares them, what it
+/// published or why it did not; one component's answer does not stop the
+/// next (124).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Publish {
+    pub rooted: Option<Rooted>,
     pub components: Vec<(ComponentName, Answer<Published>)>,
 }
 
@@ -151,7 +158,11 @@ impl Serialize for Publish {
                 value
             })
             .collect();
-        json!({ "components": components }).serialize(serializer)
+        let mut value = json!({ "components": components });
+        if let Some(rooted) = &self.rooted {
+            value["rooted"] = json!(rooted);
+        }
+        value.serialize(serializer)
     }
 }
 
@@ -161,11 +172,15 @@ fn bound(seam: Seam) -> Source {
 
 /// 14 to 22: publishes `ask.revision`. The landing is asked first and
 /// its no ends the publish before anything else is read (rule core.11);
-/// then each component the ask names, or the landing touched, is
-/// published in the order the policy file declares them (D1).
+/// then, once the policy file's declaration is read, the root: a move
+/// read and a moved repository's history carried before any component is
+/// derived, built, claimed or offered, its refusal the publish's (C.1;
+/// design D3); then each component the ask names, or the landing touched,
+/// is published in the order the policy file declares them (D1).
 pub fn publish(seams: &Seams, history: &History, kept: &Kept, ask: &Ask) -> Answer<Publish> {
     let landed = Landed::check(seams.landing.as_ref(), &ask.branch, &ask.revision)?;
     let declared = Declared::read(history, &landed)?;
+    let rooted = carry::root(seams, history, &landed, &declared)?;
     let versions: Vec<Derived> = match &ask.component {
         Some(name) => {
             let component = declared
@@ -214,7 +229,7 @@ pub fn publish(seams: &Seams, history: &History, kept: &Kept, ask: &Ask) -> Answ
             }
         })
         .collect();
-    Ok(Publish { components })
+    Ok(Publish { rooted, components })
 }
 
 /// One publish's state across its components: the landing's verdicts,
