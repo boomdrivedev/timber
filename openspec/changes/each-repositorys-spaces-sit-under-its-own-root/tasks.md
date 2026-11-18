@@ -41,7 +41,7 @@ changes. A task that cannot be done without one stops short with
   - Add `an_owner_named_artifact_is_refused_naming_it_and_nothing_written`, checked by the stub's writes.
   - Add `a_store_bound_for_no_repository_refuses_its_writes_and_resolves_an_artifacts_name`.
   - Verify with `devenv shell -- cargo test -p timber --lib profiles::store::registry::tests`, where the new tests and every other test of the module pass.
-- [ ] 1.2 Bind a registry store for the checkout's repository, in `crates/timber/src/profiles/store/mod.rs` and `crates/timber/src/bindings/mod.rs` (design D2; host-bindings spec, "A registry store is bound for the checkout's repository" and the two modified requirements).
+- [x] 1.2 Bind a registry store for the checkout's repository, in `crates/timber/src/profiles/store/mod.rs` and `crates/timber/src/bindings/mod.rs` (design D2; host-bindings spec, "A registry store is bound for the checkout's repository" and the two modified requirements).
   - `profiles::store::bind` and `bind_for` take the repository as an `Answer<RepositoryName>`, handed to `Registry::for_repository` and ignored by the layout.
   - `bindings::bind` computes it once as `repository_named(repository, remote)`. `remote` is the remote `[landing]` names, or the given landing remote where the file names no `[landing]`, `push --left` among them, as `landing_remote` answers. It passes the answer to every store it binds, the targets' among them.
   - Say so in both modules' comments, and say in the bindings file's example comment that `registry` names `<host>/<root>`.
