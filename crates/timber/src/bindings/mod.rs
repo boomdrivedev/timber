@@ -370,6 +370,15 @@ impl Table {
         unreadable(&self.file, Some(&self.at()), said)
     }
 
+    /// `what` is not there for this table's profile: absent naming the
+    /// file and the table.
+    pub fn absent(&self, what: impl std::fmt::Display) -> Not {
+        Not::absent(
+            &source(&self.file),
+            format!("{what}, as {} binds", self.at()),
+        )
+    }
+
     /// What a seam's profile family answers for a key that names none of
     /// its profiles, `known` the keys it reads.
     pub fn unknown(&self, known: &[&str]) -> Not {
