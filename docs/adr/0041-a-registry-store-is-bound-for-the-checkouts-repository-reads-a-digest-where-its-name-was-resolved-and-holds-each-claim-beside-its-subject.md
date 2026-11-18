@@ -73,6 +73,14 @@ Option 1 for each, as the change's design D1 to D6 and D8 say.
 - A digest of another repository's that no name in the process reached is absent, which is what 138 asks: a consumer reaches another's versions through their names.
 - The forms the profile writes and how name reads a tag are unchanged, so ECR's check asks for no new run (core.38); its next run checks the new places.
 
+## The run on GitHub's registry
+
+The GHCR check, `moon run ':#check-ghcr' --force`, ran by hand against the root `ghcr.io/boomdrivedev/timber-tools-check`, the repository the user approved for timber's GHCR runs (card `req_8897c0801d834cab9f78`), with the host's Docker login for `ghcr.io`, a classic token with `write:packages`, on 2026-11-18, at the change's commit 2ea5f1d5. Its live rig's stores are bound for the repository `timber-checks/store`, so its own is the package `timber-tools-check/timber-checks/store`, which no earlier run had written.
+
+- **The first run**, from 01:58:13 to 01:59:20 UTC, passed three of its four tests, the places test among them, and failed one scenario of the store group, `the same bytes put twice`: its read was answered unreadable, `the registry answers a HEAD of the blob that it holds it, and its GET 404: {"errors":[{"code":"BLOB_UNKNOWN","message":"blob unknown to registry"}]}`. That is the window record 0039 recorded, of a package GitHub's registry made on push and that holds no manifest yet, answered as 0039 decided, and the scenario was the first write into the new package. Nothing in the profile changed.
+- **The passing run**, from 01:59:48 to 02:01:05 UTC, passed all four tests, the store group, the cache manifest's scenarios, an artifact's repository made on push and kept private, and the places test. It is the proof the change's acceptance on GitHub's registry rests on.
+- **The places test's words**, from a run of it alone with its output shown, from 02:01:22 to 02:02:05 UTC: it wrote into `boomdrivedev/timber-tools-check/artifact/file/run1794967285-22366-lib`, `boomdrivedev/timber-tools-check/timber-checks/store/cache/moon` and `boomdrivedev/timber-tools-check/timber-checks/store/run1794967285-22366-lib`; a store of `timber-checks/reader` resolving the component's version and the cache entry was answered absent, `name run1794967285-22366-lib:run1794967285-22366-lib-v1.0.0` and `name cache/run1794967285-22366-b7e1`; and that store read the index's and the artifact's claims from the name's package. GitHub's registry took each nested package path, four deep under the owner, on push.
+
 ## What the code stage chose
 
 Two answers the design left open, the code stage's own, each cheap to change:
