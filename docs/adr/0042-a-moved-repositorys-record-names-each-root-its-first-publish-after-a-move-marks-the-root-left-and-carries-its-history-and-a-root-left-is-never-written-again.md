@@ -81,6 +81,14 @@ Option 1 for each, as the change's design D1 to D5 and D7 say, D4 as boomdrive-d
 - On GitHub's registry the carry makes the new root's packages private, and a job's repository has no write on its new cache package, until an administrator sets each as the self-hosting guide says (record 0040).
 - A repository that moved before its first publish under this record starts its record at the new root, with nothing carried; a store written before each repository kept its own root is not carried (record 0041's D8).
 
+## The run on GitHub's registry
+
+The GHCR check, `devenv shell -- moon run ':#check-ghcr' --force`, ran by hand once, by boomdrive/ops, in the change's place at its commit 6f9e46ed, on 2026-11-18 from 16:47:30 to 16:49:23 UTC (moon's run report), against the root `ghcr.io/boomdrivedev/timber-tools-check`, the repository the user approved for timber's GHCR runs (card `req_8897c0801d834cab9f78`), named by the place's `devenv.local.nix`, with the host's Docker sign-in for `ghcr.io` writing boomdrivedev's packages.
+
+- **It passed:** `cli:tools-ghcr`, hash e618e8b7, its five tests passing in 88.77 s: the store group, the cache manifest's scenarios, an artifact's repository made on push and kept private, each repository's packages under its own root, and the carry.
+- **The carry:** `ghcr_carries_a_moved_repositorys_history_to_its_new_root` carried a version of the run's component, its acceptance and its promotion, and its channel, from `timber-checks/carried-from` to `timber-checks/carried-to` under the root, every name under the run's prefix. Under the new root the version resolved with both claims, the channel's name was at its head, and the store ledger walked the chain to it; a store bound for the old root was refused naming where its history went for the channel, and still read the artifact's name and its claims. It is the proof the change's acceptance on GitHub's registry rests on (design D8).
+- **What it leaves:** private packages under `timber-checks/carried-from/` and `timber-checks/carried-to/` for each run's component, and the mark `moved` in `timber-checks/carried-from`, which each later run finds naming the same root and carries past.
+
 ## What the code stage chose
 
 Answers the design left open, the code stage's own, each cheap to change:
