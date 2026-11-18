@@ -57,7 +57,7 @@ changes. A task that cannot be done without one stops short with
   - Rewrite "On GitHub's registry" with D9's setup, and drop "The declared repository holds everything".
   - Replace the upgrade notes on the declared repository with D8's: what a store from before still holds, what is read by nothing now, and what a host does before following anything there.
   - Verify with `devenv shell -- moon run site:build`.
-- [ ] 1.5 In `docs/architecture/core.md`, add to core.62's details a Not ruled out: on GitHub's registry, where no token is scoped to some of an owner's packages, the job's own token given write on its repository's cache packages and nothing else. That token may still make a package of its own, which holds no name the gate accepted. Cite C.1, 95, 96 and 135 as amended at `boomdrivedev/blueprints` f412008, and record 0040 (design D10). Verify with `devenv shell -- treefmt --ci docs/architecture`.
+- [x] 1.5 In `docs/architecture/core.md`, add to core.62's details a Not ruled out: on GitHub's registry, where no token is scoped to some of an owner's packages, the job's own token given write on its repository's cache packages and nothing else. That token may still make a package of its own, which holds no name the gate accepted. Cite C.1, 95, 96 and 135 as amended at `boomdrivedev/blueprints` f412008, and record 0040 (design D10). Verify with `devenv shell -- treefmt --ci docs/architecture`.
 
 ## 2. Reads and claims where a name is
 
