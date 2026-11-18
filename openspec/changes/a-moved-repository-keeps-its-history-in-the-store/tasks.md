@@ -41,7 +41,7 @@ one stops short with `flume needs`.
   - `Seams` gains `pub roots: Box<dyn Roots>`, its comment citing 92 and C.1.
   - Every place that builds a `Seams` hands it `Box::new(NoRoots)`: `crates/timber-seams/src/lib.rs`, `crates/timber-fakes/src/lib.rs`, `crates/timber/src/bindings/mod.rs`, `crates/timber/tests/moon_cache.rs`, `crates/timber/tests/landings_end_to_end.rs`, `crates/timber-core/tests/gate.rs`, and `crates/timber-conformance/src/fakes.rs`, `world.rs` and `core/after.rs`. Tasks 1.3 and 3.3 replace the fakes' and the host's.
   - Verify with `devenv shell -- cargo check --workspace --all-targets --all-features`, which builds every place that builds a `Seams`.
-- [ ] 1.3 Add `FakeRoots` to `crates/timber-fakes` (design D2; seam-fakes spec, "The fake roots bind a store and a keeper per root").
+- [x] 1.3 Add `FakeRoots` to `crates/timber-fakes` (design D2; seam-fakes spec, "The fake roots bind a store and a keeper per root").
   - It holds the root it answers bound, none by default, and a fake store and a fake keeper per root left a test binds, handed out as clones so the test's handles see every asking. `left` answers absent for a root it binds none for. Every call is recorded, as the other fakes record theirs.
   - `Fakes` holds one, and `Fakes::seams()` hands a clone of it.
   - Tests in its module: `fake_roots_answer_the_root_a_test_binds`, `a_root_left_is_read_through_the_store_the_test_holds`, `a_root_left_never_bound_is_absent`.

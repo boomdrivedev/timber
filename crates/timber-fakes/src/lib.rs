@@ -14,6 +14,9 @@
 //! | a target | [`FakeTarget`] | per environment, what it runs or why it cannot be read; whether it holds a marker, and the settings keys it reads |
 //! | the keeper | [`FakeKeeper`] | per channel and its component, a chain of promotion claims |
 //!
+//! Beside them, [`FakeRoots`] answers the binding's roots (C.1): the root
+//! a test binds, none by default, and a store and a keeper per root left.
+//!
 //! Each fake is a [`Fake`] over its state and the one [`Script`] every
 //! fake shares: every clone is a view of the same state, so a test keeps
 //! one handle and binds another; a test sets what the fake holds with its
@@ -27,13 +30,14 @@
 
 use std::collections::BTreeMap;
 
-use timber_seams::{Ecosystem, NoRoots, Seams, TargetProfile};
+use timber_seams::{Ecosystem, Seams, TargetProfile};
 
 pub mod build;
 pub mod keeper;
 pub mod landing;
 pub mod policy;
 pub mod projection;
+pub mod roots;
 pub mod script;
 pub mod signer;
 pub mod store;
@@ -44,6 +48,7 @@ pub use keeper::*;
 pub use landing::*;
 pub use policy::*;
 pub use projection::*;
+pub use roots::*;
 pub use script::*;
 pub use signer::*;
 pub use store::*;
@@ -59,6 +64,7 @@ pub struct Fakes {
     pub keeper: FakeKeeper,
     pub projections: BTreeMap<Ecosystem, FakeProjection>,
     pub targets: BTreeMap<TargetProfile, FakeTarget>,
+    pub roots: FakeRoots,
 }
 
 impl Default for Fakes {
@@ -68,8 +74,8 @@ impl Default for Fakes {
 }
 
 impl Fakes {
-    /// One fake of each seam holding nothing, with no projection and no
-    /// target bound.
+    /// One fake of each seam holding nothing, with no projection, no
+    /// target and no root bound.
     pub fn new() -> Self {
         Fakes {
             store: FakeStore::new(),
@@ -80,6 +86,7 @@ impl Fakes {
             keeper: FakeKeeper::new(),
             projections: BTreeMap::new(),
             targets: BTreeMap::new(),
+            roots: FakeRoots::new(),
         }
     }
 
@@ -116,7 +123,7 @@ impl Fakes {
                 .iter()
                 .map(|(p, t)| (p.clone(), Box::new(t.clone()) as _))
                 .collect(),
-            roots: Box::new(NoRoots),
+            roots: Box::new(self.roots.clone()),
         }
     }
 }
