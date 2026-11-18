@@ -63,7 +63,7 @@ credentials a target's tool reads, and nothing the repository binds
 ```toml
 [store]
 layout = "~/.local/share/timber/layout"   # C.2
-                                 # or: registry = "<host>/<repository>", C.1
+                                 # or: registry = "<host>/<root>", C.1
 
 [landing]
 sluice = { remote = "origin" }   # C.5; or: branch = { remote = "origin" }, C.6
@@ -117,7 +117,7 @@ to the given ones (118):
   credential is unreadable, naming it and the file.
 
 A file that names a table binds exactly what it names, and leaves the
-rest given: `[store] registry` alone writes into that registry and keeps
+rest given: `[store] registry` alone writes under that registry's root and keeps
 the given landing, ledger, key and gate; `[signing] kms` alone signs
 through that key and makes no host key; `[landing] branch = {}` reads
 the repository's own refs, and keeps the given ledger there too. An
@@ -150,11 +150,12 @@ empty file is no file.
   rebuild`, which writes it again from the store and git: one entry for
   each tag the branch landed whose name the store resolves to that
   component's index.
-- `[store] registry` names one repository of a registry, such as
+- `[store] registry` names a registry's host and the root every
+  repository of the store is under, `<host>/<root>`, such as
   `123456789012.dkr.ecr.us-east-1.amazonaws.com/timber`,
-  `ghcr.io/<owner>/timber` or `localhost:5000/timber`, the declared
-  repository the store's spaces
-  hang under (see [a registry's repositories](#a-registrys-repositories)).
+  `ghcr.io/<owner>/timber` or `localhost:5000/timber` (C.1). Each
+  repository that publishes keeps its own repositories under the root
+  (see [a registry's repositories](#a-registrys-repositories)).
   No binding makes a repository. The credential is never the file's: it
   is the host's Docker configuration and the credential helper it names
   for the registry, ECR's `ecr-login` among them, reached when the
@@ -207,15 +208,34 @@ empty file is no file.
 
 ### A registry's repositories
 
-The declared repository holds every blob, artifact, index and claim.
-Under it, the store keeps three spaces of repositories, so a credential
-can be scoped to each apart (C.1, 135; ADR 0023): each declared
-component's own, `<declared>/<component>`, holding its versions' tags,
-its channels' names and its indexes; one per artifact name,
-`<declared>/artifact/<ecosystem>/<name>`, the version its tag; and one
-per build profile's cache entries, `<declared>/cache/moon`, the build
-identity its tag. A repository that declares no component keeps its
-versions and channels as tags of the declared repository, as before.
+The root holds every repository of the store, in three spaces (C.1 as
+amended at `boomdrivedev/blueprints` f412008; record 0040, ADR 0023):
+
+- **The repository's own**, `<root>/<owner>/<name>`, one for each
+  repository that publishes, named by the owner and name its landing
+  remote's address ends in, lowercased, as the serving process names it
+  (114). A checkout of `https://github.com/Acme/Site.git` writes under
+  `<root>/acme/site`. The repository's own holds the versions and
+  channels of a repository that declares no component, and every blob,
+  artifact, index and claim a publish writes before any name reaches it.
+  Under it hang each declared component's repository,
+  `<root>/<owner>/<name>/<component>`, holding its versions' tags, its
+  channels' names and its indexes, and one cache repository per build
+  profile, `<root>/<owner>/<name>/cache/moon`, the build identity its
+  tag.
+- **The artifact space**, `<root>/artifact/<ecosystem>/<name>`, one
+  repository per artifact name for the whole store, under no
+  repository's own, the version its tag. A consumer finds a pin by its
+  ecosystem, name and version alone, and reads the version's claims
+  beside its index there (138).
+
+Each name's repository holds what its tag reaches and the claims on
+it, so a credential, or a package's visibility, can be scoped to each
+apart (135). An owner written `artifact` is refused, since its own
+repository would sit in the artifact space. A checkout whose landing
+names no remote, or whose remote's address ends in no owner and name,
+still syncs, reading the artifact space, and cannot publish: every write
+is absent naming the landing's remote, and nothing is written.
 
 A registry that makes a repository on its first push, zot, the
 reference distribution and GitHub's registry among them, makes each of
@@ -223,13 +243,11 @@ these as timber first writes into it. One that makes repositories only
 by a creation template, Amazon ECR among them, refuses a push into a
 repository nobody made, and timber answers that refusal in the
 registry's words, naming the repository it was for, and asks nothing
-again. Before the first publish to such a registry, make:
-
-- the declared repository;
-- and repository creation templates applying on push to
-  `<declared>/artifact/`, `<declared>/cache/` and each declared
-  component's `<declared>/<component>`, or one template applying to
-  `<declared>/` that covers all three, or each repository by hand.
+again. Before the first publish to such a registry, make repository
+creation templates applying on push to `<root>/artifact/` and to each
+publishing repository's `<root>/<owner>/<name>/`, its own among them, or
+one template applying to `<root>/` that covers both, or each repository
+by hand.
 
 A template that sets resource tags on the repositories it makes names a
 role that may tag them: on ECR, a template naming tags and no role makes
@@ -237,55 +255,56 @@ no repository, and every push under it is refused.
 
 A credential needs to write only where its job writes:
 
-- a push writes cache entries alone: write on `<declared>/cache/`, and
-  nothing on the declared repository;
-- a publish writes the declared repository, its component's repository
-  and `<declared>/artifact/`;
+- a pool's push writes cache entries alone: write on
+  `<root>/<owner>/<name>/cache/`, and nothing else;
+- a publishing host writes the repository's own, its components'
+  repositories and `<root>/artifact/`;
 - a promotion writes the channel's component's repository, for the
-  channel's tag, and the declared one, for its claim.
+  channel's tag, and each repository holding the index, for its claim.
 
 So a credential scoped to one component's repository makes that
 component's versions and moves its channels and no other component's.
 
-After upgrading to a timber that keeps these spaces, a store holding a
-declared component's versions from before:
+#### A store from before
 
-- **Carry each channel.** A declared component's channel tags written
-  before, `channel_2flib_2fbeta` in the declared repository, are read by
-  nothing now: put each, by hand, as the channel's tag of its
-  component's repository, `beta` in `<declared>/lib`, at the digest it
-  names, before the first promotion after upgrading. Until then the
-  channel, and its chain where the ledger is held in the store, reads as
-  empty.
-- **Publish each held version once again.** A declared component's
-  version is named `<component>:<tag>` now, so one held under its bare
-  tag is absent to the gate, a promotion, the record and verify. The next
-  publish of its revision finds the bare tag, names the version
-  `<component>:<tag>` at the same index and each artifact by its
-  ecosystem, name and version, and writes nothing else; do it before the
-  version is accepted or promoted.
+A store written before each repository kept its own root keeps every
+byte it holds, and nothing carries it (record 0041):
 
-Cache entries a push wrote into the declared repository before are read
-by nothing and may be removed; an entry gone is a build again (54).
+- **Read by nothing now:** its undeclared component's version and
+  channel tags in the root itself; its declared components'
+  repositories, `<root>/<component>`; its cache, `<root>/cache/<build>`,
+  where an entry gone is a build again (54); and the claims held in the
+  root alone.
+- **Where they were:** its artifact names, `<root>/artifact/…`, which a
+  consumer still resolves; their claims stay where they were written.
+- **Before following anything there**, a host binds a new root, or
+  publishes and promotes again under the old one, so each version's
+  names, channels and claims are written where they are read now.
 
 #### On GitHub's registry
 
 GitHub's registry is bound as any registry, `[store] registry =
-"ghcr.io/<owner>/<path>"`, and proven by hand outside the gate (record
-0039). What it holds, it holds as the owner's packages:
+"ghcr.io/<owner>/<root>"`, and proven by hand outside the gate (record
+0039). What it holds, it holds as the owner's packages (record 0040):
 
-- **Every repository is a package.** The declared repository and every
-  repository under it, each artifact's name, each declared component's
-  and each build profile's cache, is a package of the owner's. GitHub's
+- **Every repository is a package.** Each repository's own, each of its
+  components' and its cache repositories, and each artifact's name, is
+  a package of the owner's, public or private as a whole. GitHub's
   registry makes each on its first push, private.
-- **A package is made public one at a time.** An administrator of the
-  organization makes a package public in its settings. GitHub documents
+- **The publishing host makes the packages first.** Its first publish
+  makes the repository's own, its components' and its artifacts' names'
+  packages, before any job pushes there.
+- **Each package as its repository is.** An administrator of the
+  organization sets each package public or private as the repository
+  that publishes it is, one at a time, in its settings. GitHub documents
   that a public package is never made private again, so decide before
   you do it. Each new artifact's name and each new component is a new
   package, private until that is done.
-- **The declared repository holds everything.** Every blob, artifact,
-  index and claim a host publishes is held in the declared repository,
-  so make it public only where everything the host publishes may be.
+- **The pool writes only its cache.** Give the job's repository write
+  on `<root>/<owner>/<name>/cache/<build>` alone, and nothing on any
+  other package, and let the job push with its own token. A package a
+  job makes on its own holds no name the gate accepted, and is refused
+  wherever it is read (95, 96, 135).
 - **The host's token.** A publishing host needs a token with
   `write:packages`, a host that only reads a private store one with
   `read:packages`, kept by `docker login ghcr.io` in its Docker
@@ -299,8 +318,8 @@ GitHub's registry is bound as any registry, `[store] registry =
   holds a manifest, which the first publish puts: until then, a read of
   bytes it holds is unreadable in GitHub's words.
 - **The check's leavings.** Each run of the GHCR check, `moon run
-  ':#check-ghcr'`, leaves private packages under the repository it
-  names; remove them in the organization's package settings.
+  ':#check-ghcr'`, leaves private packages under the root it names;
+  remove them in the organization's package settings.
 
 ### On nix-darwin and NixOS
 
@@ -863,10 +882,11 @@ not a role assumed by OIDC.
 
 ### The cache key's scope
 
-The key belongs to an IAM user whose one policy lets it push to the
-cache entries' repositories and nothing else, so a check that reads the
-key can write cache entries and never offer, accept or move a name (96,
-135):
+The key belongs to an IAM user whose one policy lets it push to its
+repository's cache repositories, `<root>/<owner>/<name>/cache/`, and
+nothing else, so a check that reads the key can write cache entries and
+never offer, accept or move a name (96, 135). For the repository
+`acme/site` under the root `timber`:
 
 ```json
 {
@@ -882,7 +902,7 @@ key can write cache entries and never offer, accept or move a name (96,
         "ecr:PutImage",
         "ecr:BatchGetImage"
       ],
-      "Resource": "arn:aws:ecr:us-east-1:123456789012:repository/timber/cache/*"
+      "Resource": "arn:aws:ecr:us-east-1:123456789012:repository/timber/acme/site/cache/*"
     },
     {
       "Effect": "Allow",
@@ -894,8 +914,9 @@ key can write cache entries and never offer, accept or move a name (96,
 ```
 
 ECR makes a repository on push only through a creation template, so the
-operator makes the repository `timber/cache/moon` once, before the
-first push, and the key needs no `ecr:CreateRepository` (C.1).
+operator makes the repository `timber/acme/site/cache/moon` once, or a
+template covering `timber/acme/site/`, before the first push, and the
+key needs no `ecr:CreateRepository` (C.1).
 
 ### The publish workflow
 
