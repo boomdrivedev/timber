@@ -12,6 +12,8 @@ Status: accepted, boomdrive-design's. It carries out a choice the user already m
 
 Amended 2026-11-17, boomdrive-design's, on the construct of `each-repositorys-spaces-sit-under-its-own-root`: artifact pointers stay one space for the whole store, since a consumer finds a pin by ecosystem, name and version alone (138, core.60); only a repository's components and cache entries move under its root, spelled by its remote's owner and name.
 
+Amended 2026-11-18, boomdrive-design's, on batch 35's review: a repository that is renamed or moves owner keeps one history in the store, carried to its new root by its first publish after the move.
+
 Deciders: boomdrive-design, on two questions batch 33's review left open, relayed by boomdrive-planner on 2026-11-17.
 
 Sources: statement C.1 (the store's three spaces under one declared root) and 135 (a pool's credential writes cache entries and nothing else), 95 and 96 (no build host holds the accepting key); record 0039 (what GitHub's registry answered, proposed on the bolt `timber-publishes-from-githubs-registry`); GitHub's documentation on a package's access control and visibility, where each image name is a package with its own visibility and its own access list, and a repository's Actions may be given read, write or admin on a package.
@@ -33,6 +35,13 @@ For artifact pointers:
 1. **One `artifact/<ecosystem>/<name>` space for the whole store (chosen).** A consumer resolves what its lockfile pins by ecosystem, name and version alone and reads the version's claims beside its index there, knowing nothing of the publisher (138, core.60). Each name is already a package of its own, so its visibility is its publisher's without a root.
 2. **Under the publishing repository's root.** A consumer would need the publisher to find a pin, which 138 forbids, and GitHub's registry serves no catalog to search for it.
 
+For a repository renamed or moved to another owner:
+
+1. **Its first publish after the move carries its history to the new root (chosen).** Paths keep naming the repository as it is, nothing is split, and nobody runs anything.
+2. **The root keeps the name of the repository's first publish, recorded in its history.** Nothing moves, but every path names an owner the repository has left, and a new repository at the old name collides with it.
+3. **An operator's command carries the history.** The same carry, waiting on someone to remember it, with publishes refused until they do.
+4. **The new root starts afresh.** Each channel's chain would split in two, and a target following a channel at the old root would stop moving with no word.
+
 For the pool's credential:
 
 1. **The job's own token, given write on its repository's cache packages alone (chosen).** The publishing host makes the repository's component and artifact packages before the first publish and gives the job's repository nothing on them. A package the job could still make on its own holds no name anyone trusts: every name a consumer follows must carry the gate's signed acceptance, which no build host can make (95, 96).
@@ -44,6 +53,7 @@ For the pool's credential:
 Option 1 for both.
 
 - **A repository's components and cache hang under its own root.** The host binds a registry and a root. A repository's component tags and cache entries live under `<root>/<owner>/<name>/`, its remote's owner and name lowercased (114, 138), so its packages' visibility is its own.
+- **A moved repository keeps one history.** The repository's record of claimed versions, which git carries (22, 62), names the root it publishes under, so a rename or a move of owner is read from git alone. The first publish after one carries the repository's history to its new root before it publishes: each channel's chain goes on unbroken from its head, every version the repository published stays promotable there, and a read of a channel at the old root is answered with where it moved, never as current. No person runs anything for it. Cache entries are not carried; the next build fills them. Another repository's history never writes under a root a moved repository left.
 - **Artifact pointers stay store-wide.** `<root>/artifact/<ecosystem>/<name>` holds a name's pointers, its index and the claims beside it, one package per name, public or private as its publisher's repository is. The publishing host makes it before the name's first publish and gives no job anything on it.
 - **On GitHub's registry the pool writes only its cache.** The job pushes with its own token, which is given write on its repository's cache packages and nothing else. The publishing host makes the component and artifact packages first, so no job can take one over.
 - **The guarantee rests on the claims as well.** Clause 135's aim is that a build can never offer, accept or move a name a consumer follows. On GitHub it holds because the packages that carry names grant the job nothing, and because a name without the gate's acceptance is refused wherever it is read.
