@@ -30,7 +30,10 @@
 //! it names another root every such operation is refused naming the
 //! repository the store is bound for and where it moved, with nothing
 //! written; the artifact space is read as before. A store carrying a
-//! history to a root reads past a mark naming that root alone.
+//! history to a root reads past a mark naming that root alone. A push's
+//! store reads no mark and writes its cache entries at a root left as at
+//! any root: the mark guards history, and cache entries are none (135,
+//! rule core.62; record 0042).
 //!
 //! The store never makes a repository. A loopback host is spoken to over
 //! plain HTTP, as Docker speaks to one, and every other over HTTPS
@@ -735,8 +738,9 @@ impl Registry {
     fn own(&self) -> Answer<&str> {
         let own = self.own.as_deref().map_err(Clone::clone)?;
         // A push's store asks nothing of the repository's own, which its
-        // credential may not read (135, rule core.62; record 0040), so it
-        // reads no mark there.
+        // credential may not read (135, rule core.62; record 0040), and
+        // reads no mark: a root left refuses history, and a push's cache
+        // entries are none (record 0042).
         if !self.push {
             self.unmarked(own)?;
         }
@@ -1378,8 +1382,9 @@ fn next(link: &str) -> Option<String> {
 /// first, once in the store's life, and is refused naming where the
 /// repository moved where the mark names a root this store does not carry
 /// to, with nothing written; an artifact's name, and the digests it
-/// reaches, are read as before (C.1 as amended at
-/// `boomdrivedev/blueprints` e8700c8; design D4).
+/// reaches, are read as before. A push's store reads no mark, and writes
+/// its cache entries at a root left as at any root (C.1 as amended at
+/// `boomdrivedev/blueprints` e8700c8; design D4; record 0042).
 impl Store for Registry {
     /// The blob asked after first, and uploaded only when it is not held,
     /// in the repository's own, or, for a store bound for a push, its
@@ -1951,6 +1956,29 @@ mod tests {
         assert_eq!(stub.repositories(), ["acme/store/acme/app"]);
         let carrying = store_for(&stub, "acme", "app").carrying_to(repository("acme", "site"));
         assert_eq!(carrying.resolve(&moved_name()), Ok(bytes));
+    }
+
+    #[test]
+    fn a_pushs_store_at_a_root_marked_moved_writes_its_cache_and_reads_no_mark() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        marked(&stub, ("acme", "app"), ("acme", "site"));
+        let since = stub.asked().len();
+        let push = store_for(&stub, "acme", "app").bound_for("moon", true);
+        let bytes = push.put_bytes(b"a pre-move build's entry").unwrap().digest;
+        let entry = Name::new("cache/b7e1");
+        push.name(&entry, &bytes, None).unwrap();
+        assert_eq!(push.resolve(&entry), Ok(bytes.clone()));
+        let asked = &stub.asked()[since..];
+        assert!(
+            asked
+                .iter()
+                .all(|a| a.repository() == Some("acme/store/acme/app/cache/moon")),
+            "{asked:#?}"
+        );
+        assert!(!asked.iter().any(|a| a.path.ends_with("/manifests/moved")));
+        let cache = stub.held("acme/store/acme/app/cache/moon").unwrap();
+        assert!(cache.blobs.contains_key(&bytes));
+        assert!(cache.tags.contains_key("b7e1"));
     }
 
     #[test]
