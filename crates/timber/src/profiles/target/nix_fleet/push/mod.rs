@@ -226,7 +226,8 @@ impl ClanPush {
     fn git<S: AsRef<OsStr>>(&self, args: &[S], allowed: &[i32]) -> Answer<Ran> {
         let mut all = vec![OsStr::new("-C"), self.checkout.as_os_str()];
         all.extend(args.iter().map(AsRef::as_ref));
-        self.git.output(None, &all, GIT_REPOSITORY_ENV, allowed)
+        self.git
+            .output(None, &all, GIT_REPOSITORY_ENV, &[], allowed)
     }
 
     /// The checkout of `revision`: a detached worktree under the

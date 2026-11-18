@@ -281,7 +281,7 @@ impl Sluice {
         ];
         let ran = self
             .git
-            .fed(None, &args, GIT_REPOSITORY_ENV, input.as_bytes())?;
+            .fed(None, &args, GIT_REPOSITORY_ENV, &[], input.as_bytes())?;
         if ran.code != Some(0) {
             return Err(self.git.failed(&args, &ran));
         }

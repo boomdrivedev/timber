@@ -73,7 +73,7 @@ impl Clan {
             installable.as_str(),
         ];
         args.extend(rest);
-        self.nix.ran(None, &args, GIT_REPOSITORY_ENV)
+        self.nix.ran(None, &args, GIT_REPOSITORY_ENV, &[])
     }
 
     /// `clan ssh <machine>` running `script` with `sh -c` on the machine,
@@ -93,7 +93,7 @@ impl Clan {
             "-c",
             script,
         ];
-        self.clan.ran(None, &args, GIT_REPOSITORY_ENV)
+        self.clan.ran(None, &args, GIT_REPOSITORY_ENV, &[])
     }
 
     /// Unreadable naming `what` on `machine`, carrying what `ran` printed
@@ -160,7 +160,7 @@ impl Fleet for Clan {
 
     fn realise(&self, root: &StorePath) -> Answer<()> {
         let args = ["--realise", root.as_str(), "--option", "max-jobs", "0"];
-        let ran = self.nix_store.ran(None, &args, GIT_REPOSITORY_ENV)?;
+        let ran = self.nix_store.ran(None, &args, GIT_REPOSITORY_ENV, &[])?;
         if ran.code == Some(0) {
             return Ok(());
         }
@@ -190,7 +190,7 @@ impl Fleet for Clan {
             "strict",
         ];
         self.clan
-            .output(None, &args, GIT_REPOSITORY_ENV, &[0])
+            .output(None, &args, GIT_REPOSITORY_ENV, &[], &[0])
             .map(drop)
     }
 

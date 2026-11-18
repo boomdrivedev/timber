@@ -125,7 +125,7 @@ impl NixCache {
     fn held(&self, roots: &[StorePath]) -> Answer<()> {
         let mut args = vec!["--check-validity", "--print-invalid"];
         args.extend(roots.iter().map(StorePath::as_str));
-        let ran = self.nix_store.output(None, &args, &[], &[0])?;
+        let ran = self.nix_store.output(None, &args, &[], &[], &[0])?;
         let printed = String::from_utf8_lossy(&ran.stdout);
         let invalid: BTreeSet<&str> = printed.lines().collect();
         match roots.iter().find(|root| invalid.contains(root.as_str())) {
@@ -146,7 +146,7 @@ impl NixCache {
     fn push(&self, attic: &str, roots: &[StorePath]) -> Answer<()> {
         let mut args = vec!["push", attic];
         args.extend(roots.iter().map(StorePath::as_str));
-        self.attic.output(None, &args, &[], &[0]).map(|_| ())
+        self.attic.output(None, &args, &[], &[], &[0]).map(|_| ())
     }
 }
 
