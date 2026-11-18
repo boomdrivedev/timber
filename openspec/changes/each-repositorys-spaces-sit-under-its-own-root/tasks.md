@@ -26,7 +26,7 @@ changes. A task that cannot be done without one stops short with
 
 ## 1. The repository's own root
 
-- [ ] 1.1 Place each name under the root and the repository's own, in `crates/timber/src/profiles/store/registry/mod.rs` and `tag.rs` (design D1, D3; registry-store spec, "The binding declares a registry and a root", "A repository's own root is its remote's owner and name", "A store bound for no repository reads the artifact space alone", "Three spaces under the root", and the modified placement requirements).
+- [x] 1.1 Place each name under the root and the repository's own, in `crates/timber/src/profiles/store/registry/mod.rs` and `tag.rs` (design D1, D3; registry-store spec, "The binding declares a registry and a root", "A repository's own root is its remote's owner and name", "A store bound for no repository reads the artifact space alone", "Three spaces under the root", and the modified placement requirements).
   - `Registry::new` reads its text as `<host>/<root>`, with the same refusals as before. Rename the field `path` to `root`, and the `declared` parameter of `tag::repository` to `root`.
   - Add `pub fn for_repository(self, repository: Answer<RepositoryName>) -> Registry`, keeping the answer. A store with no repository given answers as one given an absent answer naming the repository it was bound for.
   - The repository's own is `<root>/<owner>/<name>`, each part written by `tag::component`. An owner whose component is `artifact` is refused (`Why::Said`), naming the owner and `<root>/artifact/`, the artifact space it would share.
