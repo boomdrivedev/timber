@@ -30,14 +30,14 @@ one stops short with `flume needs`.
 
 ## 1. The seams and the binding's roots
 
-- [ ] 1.1 Add the types of a root to `crates/timber-seams` (design D2, D4; seam-contracts spec, "The binding answers the roots", "A root moved is a refusal of its own", "The mark of a root left").
+- [x] 1.1 Add the types of a root to `crates/timber-seams` (design D2, D4; seam-contracts spec, "The binding answers the roots", "A root moved is a refusal of its own", "The mark of a root left").
   - `RepositoryName::lowercased(&self) -> RepositoryName`, the owner and name each lowercased, in `artifact.rs`.
   - `Why::RootMoved { from: RepositoryName, to: RepositoryName }` in `answer.rs`, citing C.1, reading "`<from>`'s history moved to `<to>`", in every match over `Why` the crate holds.
   - In a new `root.rs`, exported from `lib.rs`: `moved_name() -> Name`, `moved`, whose comment says why no version's, channel's, cache entry's or artifact's name can be it (core.48); and `MovedTo { to: RepositoryName }` with `to_bytes(&self) -> Vec<u8>`, the canonical JSON `{"moved_to":"<owner>/<name>"}` of the root lowercased, and `of_bytes(&[u8]) -> Option<MovedTo>`.
   - In `bind.rs`: the trait `Roots` and the struct `Left` as D2 writes them, and `NoRoots`, which answers `bound` with `Ok(None)` and `left` absent naming the root asked.
   - Tests in the modules they test: `a_root_moved_reads_where_the_history_went`, `a_root_moved_round_trips_through_json`, `the_marks_bytes_name_the_root_lowercased_and_read_back`, `bytes_that_are_no_mark_read_as_none`, `no_roots_answers_no_root_and_no_root_left`.
   - Verify with `devenv shell -- cargo test -p timber-seams`, where the new tests and every other test of the crate pass.
-- [ ] 1.2 Hand the roots to the core (design D2; seam-contracts spec, "The binding answers the roots").
+- [x] 1.2 Hand the roots to the core (design D2; seam-contracts spec, "The binding answers the roots").
   - `Seams` gains `pub roots: Box<dyn Roots>`, its comment citing 92 and C.1.
   - Every place that builds a `Seams` hands it `Box::new(NoRoots)`: `crates/timber-seams/src/lib.rs`, `crates/timber-fakes/src/lib.rs`, `crates/timber/src/bindings/mod.rs`, `crates/timber/tests/moon_cache.rs`, `crates/timber/tests/landings_end_to_end.rs`, `crates/timber-core/tests/gate.rs`, and `crates/timber-conformance/src/fakes.rs`, `world.rs` and `core/after.rs`. Tasks 1.3 and 3.3 replace the fakes' and the host's.
   - Verify with `devenv shell -- cargo check --workspace --all-targets --all-features`, which builds every place that builds a `Seams`.

@@ -27,7 +27,7 @@
 
 use std::collections::BTreeMap;
 
-use timber_seams::{Ecosystem, Seams, TargetProfile};
+use timber_seams::{Ecosystem, NoRoots, Seams, TargetProfile};
 
 pub mod build;
 pub mod keeper;
@@ -116,6 +116,7 @@ impl Fakes {
                 .iter()
                 .map(|(p, t)| (p.clone(), Box::new(t.clone()) as _))
                 .collect(),
+            roots: Box::new(NoRoots),
         }
     }
 }

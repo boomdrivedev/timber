@@ -149,7 +149,8 @@ use serde::de::DeserializeOwned;
 use timber_core::{History, RepositoryName};
 use timber_seams::{
     Answer, Branch, Digest, Ecosystem, EcosystemName, Envelope, Held, IsLanded, Landing, Manifest,
-    Name, NamedSigner, Not, Put, Revision, Seam, Seams, SignerId, Source, Store, Verdicts, Version,
+    Name, NamedSigner, NoRoots, Not, Put, Revision, Seam, Seams, SignerId, Source, Store, Verdicts,
+    Version,
 };
 
 use crate::profiles::signer::Signing;
@@ -851,6 +852,7 @@ pub fn bind(
             },
             projections,
             targets,
+            roots: Box::new(NoRoots),
         },
         store: named,
         signer: signing.map(Signing::signer),

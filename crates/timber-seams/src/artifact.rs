@@ -329,6 +329,15 @@ impl RepositoryName {
     pub fn path(&self) -> String {
         format!("/{}/{}", self.owner, self.name)
     }
+
+    /// The owner and name each lowercased, as a store spells a root, so
+    /// two roots are one where they differ only in case (C.1).
+    pub fn lowercased(&self) -> RepositoryName {
+        RepositoryName {
+            owner: self.owner.to_lowercase(),
+            name: self.name.to_lowercase(),
+        }
+    }
 }
 
 impl fmt::Display for RepositoryName {
