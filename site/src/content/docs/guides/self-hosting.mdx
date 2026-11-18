@@ -281,6 +281,36 @@ byte it holds, and nothing carries it (record 0041):
   publishes and promotes again under the old one, so each version's
   names, channels and claims are written where they are read now.
 
+#### When a repository moves
+
+A repository renamed or moved to another owner gets a new remote
+address, and every checkout following it binds a new root (C.1; record
+0042):
+
+- **The first publish after the move carries its history.** Before it
+  builds or claims anything, it marks the old root with where the
+  history went, copies there every version the repository's record of
+  claimed versions names, with every claim on it, makes each channel's
+  name at its chain's head, and records the new root in
+  `refs/timber/root`, beside the version tags. Nobody runs anything for
+  it, and a carry that stops partway is carried again by the next
+  publish. A version published before the move is promoted at the new
+  root after it, each channel's chain going on from its head.
+- **A checkout whose remote still names the old address is refused.**
+  Its publish is refused naming the old root and where its history went,
+  before anything is written, however a forge still redirects the old
+  address; set the checkout's remote to the new address, `git remote
+  set-url origin <address>`, and publish again.
+- **A move back is refused.** A repository moved back to a root it left
+  is refused the same way, since from git alone it cannot be told from a
+  checkout with a stale remote; its history stays where it was carried.
+- **The first publish may be refused for its cache.** Cache entries are
+  not carried. Where the landing's run pushed its entries under the old
+  root, the first publish after the move is refused naming the output
+  whose entry the new root lacks, after the carry is done; the pool's
+  next run pushes to the new root, and the publish after it goes on
+  (54, 135).
+
 #### On GitHub's registry
 
 GitHub's registry is bound as any registry, `[store] registry =
@@ -317,6 +347,11 @@ GitHub's registry is bound as any registry, `[store] registry =
 - **Until its first manifest.** A new package serves no bytes until it
   holds a manifest, which the first publish puts: until then, a read of
   bytes it holds is unreadable in GitHub's words.
+- **After a repository moves.** The carry makes the new root's
+  packages, each private, as any first push does. An administrator sets
+  each as its repository is, as for a new repository, and gives the
+  job's repository write on the new root's cache package,
+  `<root>/<owner>/<name>/cache/<build>`, alone (record 0040).
 - **The check's leavings.** Each run of the GHCR check, `moon run
   ':#check-ghcr'`, leaves private packages under the root it names;
   remove them in the organization's package settings.
