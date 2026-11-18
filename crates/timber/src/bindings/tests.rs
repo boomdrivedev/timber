@@ -2584,3 +2584,114 @@ fn publish_makes_the_given_layout_with_its_parents_and_verify_over_none_makes_no
     );
     assert!(host.bind(&repo, For::Verify).is_ok());
 }
+
+#[test]
+fn a_registrys_binding_answers_the_checkouts_root() {
+    let host = Host::new();
+    checkout_of(&host, "https://github.com/Acme/Site.git");
+    host.write(
+        "[store]\nregistry = \"localhost:5000/timber\"\n\n\
+         [landing]\nbranch = { remote = \"origin\" }\n",
+    );
+    for command in [For::Publish, For::Promote, For::Status, For::Sync] {
+        let binding = host.bind(host.dir.path(), command).unwrap();
+        assert_eq!(
+            binding.seams.roots.bound(),
+            Ok(Some(RepositoryName {
+                owner: "Acme".into(),
+                name: "Site".into(),
+            })),
+            "{command:?}"
+        );
+    }
+}
+
+#[test]
+fn a_layouts_binding_answers_no_root() {
+    let host = Host::new();
+    checkout_of(&host, "https://github.com/acme/site.git");
+    host.write("[landing]\nbranch = { remote = \"origin\" }\n");
+    let binding = host.bind(host.dir.path(), For::Publish).unwrap();
+    assert_eq!(binding.seams.roots.bound(), Ok(None));
+    let app = RepositoryName {
+        owner: "acme".into(),
+        name: "app".into(),
+    };
+    match binding.seams.roots.left(&app) {
+        Err(Not::Absent(a)) => {
+            assert_eq!(a.source, Source::host(host.file()));
+            assert!(a.what.contains("root left acme/app"), "{}", a.what);
+            assert!(a.what.contains("[store] layout (given)"), "{}", a.what);
+        }
+        Err(not) => panic!("a layout's root left answered {not:?}"),
+        Ok(_) => panic!("a layout bound a root left"),
+    }
+    assert!(!host.given_layout().exists(), "the layout was made");
+}
+
+#[test]
+fn a_binding_with_no_landing_remote_answers_its_root_absent() {
+    let host = Host::new();
+    host.write("[store]\nregistry = \"localhost:5000/timber\"\n\n[landing]\nbranch = {}\n");
+    let binding = host.bind(host.dir.path(), For::Publish).unwrap();
+    match binding.seams.roots.bound() {
+        Err(Not::Absent(a)) => assert!(a.what.contains("remote of the landing"), "{}", a.what),
+        other => panic!("a binding with no landing remote answered {other:?}"),
+    }
+}
+
+#[test]
+fn a_root_left_is_bound_under_the_same_registry_and_root() {
+    use crate::profiles::store::registry::stub::{Behaviour, Stub};
+    use crate::profiles::store::registry::Registry;
+    let stub = Stub::start(Behaviour::default(), &[]);
+    let host = Host::new();
+    checkout_of(&host, "https://github.com/acme/site.git");
+    let root = stub.repository("acme/store");
+    host.write(&format!(
+        "[store]\nregistry = \"{root}\"\n\n[landing]\nbranch = {{ remote = \"origin\" }}\n"
+    ));
+    let (app, site) = (
+        RepositoryName {
+            owner: "acme".into(),
+            name: "app".into(),
+        },
+        RepositoryName {
+            owner: "acme".into(),
+            name: "site".into(),
+        },
+    );
+    let writer = Registry::new(&root)
+        .unwrap()
+        .for_repository(Ok(app.clone()))
+        .carrying_to(site.clone());
+    let mark = writer
+        .put_bytes(&timber_seams::MovedTo { to: site.clone() }.to_bytes())
+        .unwrap()
+        .digest;
+    writer
+        .name(&timber_seams::moved_name(), &mark, None)
+        .unwrap();
+
+    let binding = host.bind(host.dir.path(), For::Publish).unwrap();
+    let left = binding.seams.roots.left(&app).unwrap();
+    assert_eq!(
+        left.source,
+        Source::new(Seam::Store, format!("registry {root}"))
+    );
+    let before = stub.asked().len();
+    assert_eq!(left.store.resolve(&timber_seams::moved_name()), Ok(mark));
+    left.store.put_bytes(b"carried").unwrap();
+    let asked = asked_of(&stub, before);
+    assert!(
+        !asked.is_empty()
+            && asked
+                .iter()
+                .all(|r| r.as_deref() == Some("acme/store/acme/app")),
+        "{asked:?}"
+    );
+
+    // The bound root's own store reads past no mark: bound for acme/site,
+    // it writes its own.
+    assert!(binding.seams.store.put_bytes(b"bound").is_ok());
+}

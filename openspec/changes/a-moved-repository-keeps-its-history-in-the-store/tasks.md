@@ -85,7 +85,7 @@ one stops short with `flume needs`.
   - In `crates/timber/src/profiles/ledger/mod.rs`: `left(table, repository, open, from)`, binding the ledger `[ledger]` names, or the given, over the root left: the git ref as `bind` and `given` bind it, and the store ledger over `open`'s store, kept under `timber/left/<owner>/<name>` in the common git directory.
   - Tests in a new test module of `profiles/ledger/mod.rs`: `a_root_lefts_store_ledger_keeps_its_chains_apart`, `a_root_lefts_git_ref_ledger_reads_the_repositorys_refs`.
   - Verify with `devenv shell -- cargo test -p timber --lib profiles::ledger::tests`.
-- [ ] 3.3 Bind the host's roots, in `crates/timber/src/bindings/mod.rs` (design D2; host-bindings spec, "Every binding answers the root its store is bound for", "A root left is bound with the host's store and ledger").
+- [x] 3.3 Bind the host's roots, in `crates/timber/src/bindings/mod.rs` (design D2; host-bindings spec, "Every binding answers the root its store is bound for", "A root left is bound with the host's store and ledger").
   - A roots binding holding the store's table, the checkout's repository answer and what binds the ledger: `bound` answers that repository for a registry and none for a layout; `left(from)` binds 3.2's store and ledger for `from` carrying to the bound repository, with the store's source. Every command's `Seams` gets it in place of `NoRoots`.
   - Say so in `bind`'s comment.
   - Tests in `crates/timber/src/bindings/tests.rs`: `a_registrys_binding_answers_the_checkouts_root`, `a_layouts_binding_answers_no_root`, `a_binding_with_no_landing_remote_answers_its_root_absent`, `a_root_left_is_bound_under_the_same_registry_and_root`.
