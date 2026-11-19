@@ -49,7 +49,7 @@ Read these before starting:
   - `StoreOp` gains `CacheEntries` and `RemoveCacheEntry`, recorded and scriptable as the other operations are. `forget`'s comment says it stands in for a store's own retention beside `remove_cache_entry`.
   - Tests in the module: `the_fake_store_lists_a_cache_entry_with_its_moment`, `the_fake_store_removes_an_entry_and_keeps_its_bytes`, `the_fake_store_refuses_a_removal_from_where_the_name_is_not`, `the_fake_store_answers_a_removal_of_no_entry_absent`, `a_moment_a_test_sets_is_listed`, `the_fake_store_records_its_cache_operations`.
   - Verify with `devenv shell -- cargo test -p timber-fakes store`.
-- [ ] 2.2 Answer the keeping time in the fake policy, `crates/timber-fakes/src/policy.rs` (design D1; seam-fakes spec, "The fake policy answers the keeping time a test sets"). `FakePolicy::keeps(days)` sets it for every revision and `keeps_at(revision, days)` for one, each answered written; otherwise thirty days given. Tests: `the_fake_policy_keeps_thirty_days_given`, `the_fake_policy_answers_a_time_set_at_one_revision_alone`. Verify with `devenv shell -- cargo test -p timber-fakes policy`.
+- [x] 2.2 Answer the keeping time in the fake policy, `crates/timber-fakes/src/policy.rs` (design D1; seam-fakes spec, "The fake policy answers the keeping time a test sets"). `FakePolicy::keeps(days)` sets it for every revision and `keeps_at(revision, days)` for one, each answered written; otherwise thirty days given. Tests: `the_fake_policy_keeps_thirty_days_given`, `the_fake_policy_answers_a_time_set_at_one_revision_alone`. Verify with `devenv shell -- cargo test -p timber-fakes policy`.
 
 ## 3. The policy file
 
