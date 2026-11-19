@@ -148,9 +148,9 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use timber_core::{History, RepositoryName};
 use timber_seams::{
-    Answer, Branch, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held, IsLanded, Landing,
-    Manifest, Name, NamedSigner, Not, Pushed, Put, Revision, RootLeft, Roots, Seam, Seams,
-    SignerId, Source, Store, Verdicts, Version,
+    Answer, Branch, BuildId, Chain, ChannelId, Digest, Ecosystem, EcosystemName, Envelope, Held,
+    IsLanded, Keeper, Landing, Manifest, Name, NamedSigner, Not, Pushed, Put, Revision, RootLeft,
+    Roots, Seam, Seams, SignerId, Source, Store, Verdicts, Version,
 };
 
 use crate::profiles::signer::Signing;
@@ -594,8 +594,12 @@ fn credential(
 /// makes the layout; status, which asks the landing, the policy, the
 /// ledger and the store, opened and never made, and reaches no signer;
 /// policy, which asks the landing, the policy and the ledger, with no
-/// store; or apply, bound with the store opened and the targets beside,
-/// and signing its report as promote signs (11, 43).
+/// store; apply, bound with the store opened and the targets beside,
+/// and signing its report as promote signs (11, 43); or prune, which asks
+/// the landing, the policy and the store's cache alone: the store bound
+/// for the build profile's cache repository as a push's is, a layout
+/// opened and never made, and no keeper, projection, target or signer
+/// reached (145, 135).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum For {
     Publish,
@@ -610,6 +614,9 @@ pub enum For {
     Status,
     Policy,
     Apply,
+    /// `prune`, which removes cache entries and binds nothing else that
+    /// writes (145).
+    Prune,
 }
 
 /// A store not opened: the policy command's, which asks none, every
@@ -701,6 +708,29 @@ impl Landing for NoLanding {
     }
 }
 
+/// The ledger of prune, which asks none: every operation absent naming
+/// the binding (145).
+struct NoKeeper;
+
+impl NoKeeper {
+    fn absent() -> Not {
+        Not::absent(
+            &Source::new(Seam::Keeper, "unbound"),
+            "binding of the ledger, which timber prune binds none",
+        )
+    }
+}
+
+impl Keeper for NoKeeper {
+    fn append(&self, _: &ChannelId, _: &Envelope, _: Option<&Digest>) -> Answer<Digest> {
+        Err(NoKeeper::absent())
+    }
+
+    fn chain(&self, _: &ChannelId) -> Answer<Chain> {
+        Err(NoKeeper::absent())
+    }
+}
+
 /// The binding the bindings file at `file` names for `command`, in the
 /// repository at `repository`, its `~/` paths expanded against `home`,
 /// and the given layout placed under `xdg_data_home` or `home` (118;
@@ -717,8 +747,12 @@ impl Landing for NoLanding {
 /// status binds both signers verify-only, the key service profile
 /// reaching no service, whatever `[signing]` names, and the store opened,
 /// one that cannot be opened answering every operation with the
-/// opening's words (60, 61); every other command binds both signers
-/// verify-only. A sync trusts the host's
+/// opening's words (60, 61); prune binds its signers as status does, the
+/// store as a push's is, bound for the build profile's cache repository,
+/// opened and never made, one that cannot be opened answering every
+/// operation with the opening's words, and no keeper, projection or
+/// target, the keeper absent naming the binding (145, 135); every other
+/// command binds both signers verify-only. A sync trusts the host's
 /// own signer, the one `[signing]` names, before the signers `[trust]`
 /// names, what verifies it read before the store is bound. An apply binds
 /// every target profile built beside the store, each through a store
@@ -749,7 +783,7 @@ pub fn bind(
     let gate = Teller::of(bindings.gate.as_ref())?;
     let given_signing;
     let signing = match (&bindings.signing, command) {
-        (_, For::Status | For::Policy) => None,
+        (_, For::Status | For::Policy | For::Prune) => None,
         (Some(signing), _) => Some(signing),
         (None, For::Publish | For::Promote | For::Apply) => {
             let data = data(xdg_data_home, home).ok_or_else(|| {
@@ -824,6 +858,15 @@ pub fn bind(
         };
         let keeper = ledger(&open)?;
         (open()?, keeper, BTreeMap::new(), BTreeMap::new())
+    } else if command == For::Prune {
+        // Prune lists and removes cache entries alone: its store reaches
+        // the build profile's cache repository as a push's does, and a
+        // layout is opened, never made (145, 135; design D7).
+        let build = Some(profiles::build::name());
+        let bound = profiles::store::bind_for(store, false, build, true, named_repository.clone())
+            .unwrap_or_else(Unopened::answering);
+        let keeper: Box<dyn Keeper> = Box::new(NoKeeper);
+        (bound, keeper, BTreeMap::new(), BTreeMap::new())
     } else if command == For::Policy {
         let keeper = ledger(&opened)?;
         let bound = Unopened::absent("binding of the store, which timber policy binds none".into());
@@ -867,7 +910,7 @@ pub fn bind(
             policy: profiles::policy::bind(repository),
             keeper,
             signers: match command {
-                For::Status => profiles::signer::unreaching(),
+                For::Status | For::Prune => profiles::signer::unreaching(),
                 _ => profiles::signer::bind(signing),
             },
             projections,

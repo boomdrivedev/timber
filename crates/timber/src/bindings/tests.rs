@@ -2695,3 +2695,104 @@ fn a_root_left_is_bound_under_the_same_registry_and_root() {
     // it writes its own.
     assert!(binding.seams.store.put_bytes(b"bound").is_ok());
 }
+
+// Requirement: Prune binds the landing, the policy and the store's cache alone
+
+#[test]
+fn prunes_registry_store_reaches_the_cache_repository_alone() {
+    use crate::profiles::store::registry::stub::{Behaviour, Stub};
+    let stub = Stub::start(Behaviour::default(), &[]);
+    let host = Host::new();
+    checkout_of(&host, "https://github.com/Acme/Site.git");
+    host.write(&format!(
+        "[store]\nregistry = \"{}\"\n\n[landing]\nbranch = {{ remote = \"origin\" }}\n",
+        stub.repository("acme/store")
+    ));
+    let push = host.bind(host.dir.path(), For::Push).unwrap();
+    let bytes = push.seams.store.put_bytes(b"an entry").unwrap().digest;
+    push.seams
+        .store
+        .name(&Name::new("cache/b7e1"), &bytes, None)
+        .unwrap();
+
+    let prune = host.bind(host.dir.path(), For::Prune).unwrap();
+    let before = stub.asked().len();
+    let listed = prune.seams.store.cache_entries().unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(
+        prune
+            .seams
+            .store
+            .remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+        Ok(())
+    );
+    let asked = asked_of(&stub, before);
+    assert!(
+        !asked.is_empty()
+            && asked
+                .iter()
+                .all(|r| r.as_deref() == Some("acme/store/acme/site/cache/moon")),
+        "{asked:?}"
+    );
+}
+
+#[test]
+fn prune_makes_no_layout() {
+    let host = Host::new();
+    let repo = repository(&host);
+    let binding = host
+        .bind(&repo, For::Prune)
+        .unwrap_or_else(|not| panic!("prune bound nothing: {not}"));
+    let layout = host.given_layout();
+    match binding.seams.store.cache_entries() {
+        Err(Not::Unreadable(u)) => {
+            assert_eq!(u.source.seam, Seam::Store);
+            assert!(
+                u.said
+                    .as_deref()
+                    .is_some_and(|s| s.contains("No such file or directory")),
+                "{u:?}"
+            );
+        }
+        other => panic!("a layout that is not there listed {other:?}"),
+    }
+    assert!(!layout.exists(), "prune made {}", layout.display());
+    assert!(!host.data().exists(), "prune made the data directory");
+}
+
+#[test]
+fn prune_binds_no_keeper_and_reaches_no_signer() {
+    let host = Host::new();
+    let repo = repository(&host);
+    let layout = host.dir.path().join("layout");
+    profiles::store::layout::Layout::create(&layout).unwrap();
+    host.write(&format!(
+        "[store]\nlayout = \"{}\"\n\n[landing]\nbranch = {{}}\n\n[signing]\nkms = \"{ARN}\"\n",
+        layout.display()
+    ));
+    let binding = host.bind(&repo, For::Prune).unwrap();
+    assert_eq!(binding.signer, None, "prune names a signer");
+    for signer in &binding.seams.signers {
+        for identity in [ARN, "laptop"] {
+            match signer.sign(&claim(), &SignerId::new(identity)) {
+                Err(Not::Absent(a)) => assert_eq!(a.source.seam, Seam::Signer),
+                other => panic!("prune's signer signed as {identity}: {other:?}"),
+            }
+        }
+    }
+    let stable = ChannelId::new(None, ChannelName::new("stable"));
+    match binding.seams.keeper.chain(&stable) {
+        Err(Not::Absent(a)) => {
+            assert_eq!(a.source.seam, Seam::Keeper);
+            assert!(a.what.contains("binding of the ledger"), "{a:?}");
+        }
+        other => panic!("prune's keeper answered {other:?}"),
+    }
+    assert!(binding.seams.projections.is_empty());
+    assert!(binding.seams.targets.is_empty());
+    assert_eq!(binding.seams.store.cache_entries(), Ok(vec![]));
+    assert!(
+        !host.data().exists(),
+        "binding prune made the data directory"
+    );
+}
