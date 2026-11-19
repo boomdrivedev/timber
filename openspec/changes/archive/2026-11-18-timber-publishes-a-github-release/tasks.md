@@ -58,7 +58,7 @@ each task's check is its own.
 
 ## 5. The specs
 
-- [ ] 5.1 Archive the change once groups 1 to 4 are done, so `openspec/specs/` gains `github-release-target` and its deltas to `environment-apply`, `seam-contracts`, `host-bindings` and `conformance-suite`: `devenv shell -- openspec archive timber-publishes-a-github-release --yes`. Then commit the archived change and the specs it writes. Verify with `devenv shell -- openspec validate github-release-target --type spec --strict`.
+- [x] 5.1 Archive the change once groups 1 to 4 are done, so `openspec/specs/` gains `github-release-target` and its deltas to `environment-apply`, `seam-contracts`, `host-bindings` and `conformance-suite`: `devenv shell -- openspec archive timber-publishes-a-github-release --yes`. Then commit the archived change and the specs it writes. Verify with `devenv shell -- openspec validate github-release-target --type spec --strict`.
 
 ## Workflow follow-up
 
