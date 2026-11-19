@@ -83,7 +83,7 @@ Read these before starting:
   - Say so in the module's comment, naming GitHub's API as this profile's alone (rule core.1).
   - Tests over the stub: `ghcr_removes_an_organizations_package_version_by_the_manifests_digest`, `ghcr_removes_a_users_package_version`, `ghcr_reads_every_page_of_versions`, `ghcr_sends_the_docker_credentials_token_as_the_bearer`, `ghcr_answers_no_version_of_the_digest_absent`, `ghcr_answers_a_403_refused_in_githubs_words`, `ghcr_reads_the_namespaces_type_once`, `ghcr_escapes_the_package_name`.
   - Verify with `devenv shell -- cargo test -p timber --lib profiles::store::registry::tests::ghcr`.
-- [ ] 4.4 Stamp, list and remove in the layout, `crates/timber/src/profiles/store/layout/` (design D2, D6; layout-store spec, "A name made at bytes says when it was made", "The layout lists its cache entries and removes a name alone").
+- [x] 4.4 Stamp, list and remove in the layout, `crates/timber/src/profiles/store/layout/` (design D2, D6; layout-store spec, "A name made at bytes says when it was made", "The layout lists its cache entries and removes a name alone").
   - `name` stamps the entry of a name it makes or moves at bytes with `org.opencontainers.image.created`, from a clock the layout takes as the registry does, the system's by default.
   - `cache_entries` and `remove_cache_entry` as design D6 says, the removal under the index's lock and the blob left on disk.
   - Tests in the module: `a_name_made_at_bytes_is_stamped`, `the_layout_lists_its_cache_entries_with_their_moments`, `an_entry_from_before_lists_no_moment`, `a_removed_entry_leaves_its_blob`, `a_removal_at_another_digest_is_refused_naming_where_it_is`, `a_removal_of_no_entry_is_absent`.
