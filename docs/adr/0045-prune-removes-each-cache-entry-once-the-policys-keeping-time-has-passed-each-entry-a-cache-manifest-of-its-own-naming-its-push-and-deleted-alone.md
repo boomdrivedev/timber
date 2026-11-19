@@ -78,6 +78,36 @@ Option 1 for each, as the change's design D1, D2 and D4 to D7 say.
 - A push moment is the pushing host's clock and the time passed the pruning host's; a skewed clock removes an entry early or late, and early costs a rebuild alone (54).
 - The reference distribution keeps a removed entry's bytes until its operator runs its garbage collection, and a layout keeps them.
 
+## The runs on GitHub's registry and ECR
+
+The cache manifest's form changed, so the GHCR and ECR checks ran by
+hand once each before the change lands (rule core.38), by the change's
+code stage in its place, with the settings boomdrive/ops named in the
+place's `devenv.local.nix`, on the tree of commit c6e45d3d. Before them,
+the ECR check failed once, from 02:03:08 to 02:04:52 UTC: the fixture
+of the cache manifest's scenarios still wrote the manifest's form from
+before this change, which ECR held no copy of. The fixture was
+corrected in that commit, and each check passed after it.
+
+- **ECR**, `devenv shell -- moon run ':#check-ecr' --force`, on
+  2026-11-19 from 02:06:24 to 02:08:00 UTC, against
+  `937485902695.dkr.ecr.us-west-2.amazonaws.com/tailrace-tools` under
+  the profile `wldn-dev`: `cli:tools-ecr`, hash cd8bac63, its three
+  tests passing in 86.70 s. The store group's cache scenarios listed
+  each entry with its push moment and removed one through the
+  distribution protocol's delete, another entry of the same bytes and
+  an artifact holding them left; the cache manifest's scenarios found
+  the new form.
+- **GitHub's registry**, `devenv shell -- moon run ':#check-ghcr'
+  --force`, on 2026-11-19 from 02:08:06 to 02:09:57 UTC, against
+  `ghcr.io/boomdrivedev/timber-tools-check`, the host's Docker sign-in
+  for `ghcr.io` holding a token with `write:packages` and
+  `delete:packages`: `cli:tools-ghcr`, hash e6e22e32, its five tests
+  passing in 84.31 s. The store group's cache scenarios removed an
+  entry through GitHub's REST API, deleting the package version its
+  cache manifest's digest names, and the cache manifest's scenarios
+  found the new form.
+
 ## What the code stage chose
 
 Answers the design left open, the code stage's own, each cheap to change:

@@ -65,8 +65,8 @@ its bytes and its digest (13).
 
 | member | profile | how | status |
 |---|---|---|---|
-| Amazon ECR | C.1, an OCI registry | over the distribution protocol, under one root the host names; the credential from ECR's helper; proven by hand, outside the gate, by a push on 2026-10-25 | built |
-| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; proven by hand, outside the gate, on 2026-11-17, under a root per repository on 2026-11-18, and carrying a moved repository's history on 2026-11-18 | built |
+| Amazon ECR | C.1, an OCI registry | over the distribution protocol, under one root the host names; the credential from ECR's helper; proven by hand, outside the gate, by a push on 2026-10-25, and removing cache entries on 2026-11-19 | built |
+| GitHub Container Registry | C.1 | the same, under the owner's packages, each made on its first push, private; attestations listed by the referrers tag; cache entries removed through GitHub's API; proven by hand, outside the gate, on 2026-11-17, under a root per repository on 2026-11-18, carrying a moved repository's history on 2026-11-18, and removing cache entries on 2026-11-19 | built |
 | Harbor | C.1 | the same, in a project of the operator's | designed |
 | zot | C.1 | the same, on a host or on object storage, attestations listed by its referrers API; proven in the gate | built |
 | the reference distribution | C.1 | the same, the smallest registry, with no referrers API, so attestations are listed by the referrers tag; proven in the gate | built |
@@ -197,7 +197,11 @@ another repository; record 0041 records the run. It was proven carrying
 a moved repository's history by one run on 2026-11-18, a version, its
 claims and a channel carried from one root to another under the root it
 names, the old root answering where its history went; record 0042
-records the run.
+records the run. Both were proven removing cache entries by one run
+each on 2026-11-19, each entry's cache manifest naming its push moment
+and deleted alone, through the distribution protocol's delete on ECR
+and through GitHub's API on GitHub's registry; record 0045 records the
+runs.
 
 The layout is bound for a host by its bindings file, `[store] layout =
 "<path>"`, and a registry by `[store] registry = "<host>/<root>"`
