@@ -9,7 +9,7 @@ decision-makers:
 
 # A target's credential is a file the host names, and timber hands its path to the target's own tool
 
-Status: accepted, boomdrive-design's own choice, made on the rules written and cheap to change.
+Status: accepted, boomdrive-design's own choice, made on the rules written and cheap to change. Amended on 2026-11-19, below: a credential may also be a secret of the host's SecretSpec, handed over as a leased file.
 
 Deciders: boomdrive-design, on afterthought's question of 2026-11-14, carried by boomdrive-planner, of how timber's Dash0 publish takes a token file.
 Sources: `boomdrivedev/blueprints:design/timber/requirements.md` 45, 64, 92, 118 and C.12, on branch `design/timber-deploys-dash0-dashboards`; record 0013; rule core.21; afterthought/swancloud's record 0062 as amended on 2026-11-14; the README of Dash0's CLI (`dash0hq/dash0-cli`), read 2026-11-14.
@@ -65,3 +65,39 @@ Option 1 of each, written as C.12's row for Dash0, as 118's credentials, and as 
 - Good: a later target whose tool reads a token from a file takes the same table, a package registry's among them.
 - Good: a host on agenix or sops points `[credentials]` at the decrypted file and writes nothing else.
 - Bad: a target whose tool takes a token only in a variable or on its command line needs its own way to be handed one. Such a target reads the file at the moment of use and passes the token to that one run alone (64).
+
+## Amendment, 2026-11-19: a credential may be a secret of the host's SecretSpec
+
+Status: boomdrive-design's, on the user's note on timber #59, "We should look more closely at Secret Spec direct integration", relayed by boomdrive-unstick on 2026-11-19 with SecretSpec 0.21's interfaces read. The direction came from the user's note. Each choice below is cheap to change.
+
+### Context
+
+A host names each credential as the path of a file that holds it. Each host has to put the secret in a file and keep that file, outside every store it already keeps secrets in. SecretSpec resolves a declared secret from whichever store the person uses, a keychain, 1Password or a file among them. Since 0.21 it offers three ways in: its Rust crate (`declare_secrets!` and a builder's `load()`), a resolver session over standard input and output (`secretspec serve`, `secretspec.resolver/1`) that answers a secret by value or as a temporary file it leases for a time, and `secretspec run`, which hands secrets to a command it starts.
+
+### Considered options
+
+For the way in:
+
+1. **The resolver session, asked for a leased file (chosen).** timber starts the host's `secretspec serve`, asks it for each credential as a leased file, hands the file's path to the target's tool as it hands a credential file's today, and ends the lease when the run ends. timber never reads the value, so statements 45 and 64 hold as they read.
+2. **The crate.** It links SecretSpec's providers into timber, so timber's build carries every store SecretSpec supports and moves with SecretSpec's releases. `declare_secrets!` reads a manifest at build time, while a host's credentials are known only on the host. And a value loaded in process is a credential timber holds (45).
+3. **`secretspec run` around the target's tool.** It hands secrets as variables, which Dash0's CLI and others take only as a file, and it puts a second program in the way of every apply.
+
+For where a credential is declared:
+
+- a. **The host's bindings, `[credentials]`, as a file path or as a SecretSpec secret by name (chosen).** A credential is the host's (statement 64; principle 14), and a repository names only which credential an environment needs, in its target table.
+- b. The repository's `secretspec.toml`. That would put a host's sources of secrets in the repository, so every host that publishes would need the same stores.
+
+### Decision outcome
+
+Options 1 and a.
+
+- **Two ways to name a credential.** `[credentials]` names each one either as the absolute path of a file, as before, or as a SecretSpec secret, `{ secretspec = "<name>" }`, resolved by the host's SecretSpec under the host's own SecretSpec settings.
+- **A leased file, never a value.** timber asks the resolver session for the secret as a leased file, hands its path to the target's tool, and ends the lease when the run ends. A session that cannot be started, or answers no file for the secret, leaves the environment unread, naming the secret.
+- **One session for each run.** A run that needs several credentials asks them all in one session, and the session ends with the run.
+
+### Consequences
+
+- Good: a host keeps target credentials in the store it already uses, and no secret sits in a file kept for timber.
+- Good: timber still never reads a target's credential, and its build carries none of SecretSpec's stores.
+- Bad: a host that names a SecretSpec secret needs SecretSpec 0.21 or later on its path.
+- Neutral: the statement's description of the bindings file in Part B says this, amended the same day in boomdrivedev/blueprints.
