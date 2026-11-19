@@ -15,7 +15,7 @@
 
 mod registry;
 
-use registry::{cache_entries, live, run_prefix, store_group_against, Prefixed};
+use registry::{cache_entries, live, run_prefix, store_group_against, Prefixed, PUT_AT};
 use timber_seams::{Manifest, Store};
 
 /// The setting a host names its ECR root by.
@@ -116,13 +116,17 @@ fn ecr_mounts_into_an_artifacts_repository_and_refuses_one_nobody_made() {
 
 #[test]
 fn ecr_names_a_cache_entry_through_a_cache_manifest() {
-    let registry = live(&repository()).bound_for("moon", false);
+    let registry = live(&repository())
+        .bound_for("moon", false)
+        .with_clock(Box::new(|| PUT_AT));
     let within = registry.bound();
+    let prefix = format!("{}-cache-", run_prefix());
     cache_entries(
         &Prefixed {
             registry,
-            prefix: format!("{}-cache-", run_prefix()),
+            prefix: prefix.clone(),
         },
         within,
+        &prefix,
     );
 }

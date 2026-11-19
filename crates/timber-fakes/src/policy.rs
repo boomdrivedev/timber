@@ -3,16 +3,22 @@
 //! environments, the givens it holds off, and the environments each
 //! revision declares, as a test scripts it. A channel carries its component (125), and the fake gives and
 //! holds off no channel a test did not script: the channels a profile
-//! gives with nothing declared are that profile's (C.10).
+//! gives with nothing declared are that profile's (C.10). The keeping
+//! time of cache entries is the givens' thirty days unless a test sets
+//! one, for every revision or for one (145).
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 use timber_seams::{
     Answer, AskedOf, Audience, ChannelId, ClaimKind, ComponentName, DeclaredChannel,
-    DeclaredEnvironment, EnvironmentName, HeldChannel, Moves, NamedSigner, Not, Policy,
+    DeclaredEnvironment, EnvironmentName, HeldChannel, Keeping, Moves, NamedSigner, Not, Policy,
     PolicyChannels, Required, RequiredClaim, Revision, Seam,
 };
+
+/// 145, C.10: the givens' keeping time, which the fake answers where a
+/// test sets none.
+pub const GIVEN_KEEP_DAYS: u32 = 30;
 
 use crate::Fake;
 
@@ -22,14 +28,16 @@ pub enum PolicyOp {
     PolicyFor,
     Channels,
     Environments,
+    CacheKept,
 }
 
 /// What each audience requires, at every revision and at one, the
 /// channels that move on each publish, at every revision and at one, the
 /// environments each bound channel comes after and the signers that may
 /// report them, the givens held off, each with how it would move and its
-/// line, and the environments each revision declares, by component and
-/// then name.
+/// line, the environments each revision declares, by component and
+/// then name, and the days cache entries are kept, at every revision and
+/// at one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyState {
     every: BTreeMap<Audience, Required>,
@@ -40,6 +48,8 @@ pub struct PolicyState {
     reporters: Vec<NamedSigner>,
     holds: BTreeMap<ChannelId, (Moves, String)>,
     environments: BTreeMap<Revision, Declared>,
+    keeps: Option<u32>,
+    keeps_at: BTreeMap<Revision, u32>,
 }
 
 /// The environments one revision declares, by component and then name.
@@ -158,6 +168,17 @@ impl FakePolicy {
             .or_default()
             .insert(key, environment);
     }
+
+    /// 145: cache entries kept `days` at every revision, answered written.
+    pub fn keeps(&self, days: u32) {
+        self.state().keeps = Some(days);
+    }
+
+    /// 145: cache entries kept `days` at `revision`, over the time at
+    /// every revision, answered written.
+    pub fn keeps_at(&self, revision: &Revision, days: u32) {
+        self.state().keeps_at.insert(revision.clone(), days);
+    }
 }
 
 /// The policy for a layout `scripted`, or one requiring nothing where
@@ -267,6 +288,21 @@ impl Policy for FakePolicy {
                 .get(revision)
                 .map(|declared| declared.values().cloned().collect())
                 .unwrap_or_default())
+        })
+    }
+
+    /// 145: the time set at `revision`, or at every revision, written;
+    /// otherwise the givens' thirty days, given.
+    fn cache_kept(&self, revision: &Revision) -> Answer<Keeping> {
+        let given = json!({ "revision": revision });
+        self.ask(PolicyOp::CacheKept, given, "the keeping time", |s, _| {
+            Ok(match s.keeps_at.get(revision).copied().or(s.keeps) {
+                Some(days) => Keeping { days, given: false },
+                None => Keeping {
+                    days: GIVEN_KEEP_DAYS,
+                    given: true,
+                },
+            })
         })
     }
 }
@@ -794,5 +830,62 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert!(calls.iter().all(|c| c.op == PolicyOp::Environments));
         assert!(matches!(&calls[0].answer, Err(Not::Unreadable(_))));
+    }
+
+    #[test]
+    fn the_fake_policy_keeps_thirty_days_given() {
+        let policy = FakePolicy::new();
+        assert_eq!(
+            policy.cache_kept(&Revision::new("4f2a9c1")),
+            Ok(Keeping {
+                days: 30,
+                given: true
+            })
+        );
+        policy.keeps(7);
+        assert_eq!(
+            policy.cache_kept(&Revision::new("4f2a9c1")),
+            Ok(Keeping {
+                days: 7,
+                given: false
+            })
+        );
+        policy.fault(
+            PolicyOp::CacheKept,
+            Fault::Unreadable("no such revision".into()),
+            Times::Once,
+        );
+        assert!(matches!(
+            policy.cache_kept(&Revision::new("4f2a9c1")),
+            Err(Not::Unreadable(u)) if u.said.as_deref() == Some("no such revision")
+        ));
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|c| c.op == PolicyOp::CacheKept));
+        assert_eq!(calls[0].given["revision"], "4f2a9c1");
+    }
+
+    #[test]
+    fn the_fake_policy_answers_a_time_set_at_one_revision_alone() {
+        let policy = FakePolicy::new();
+        let (set, other) = (Revision::new("4f2a9c1"), Revision::new("77b0e3d"));
+        policy.keeps_at(&set, 7);
+        assert_eq!(
+            policy.cache_kept(&set),
+            Ok(Keeping {
+                days: 7,
+                given: false
+            })
+        );
+        assert_eq!(
+            policy.cache_kept(&other),
+            Ok(Keeping {
+                days: 30,
+                given: true
+            })
+        );
+        policy.keeps(14);
+        assert_eq!(policy.cache_kept(&set).map(|k| k.days), Ok(7));
+        assert_eq!(policy.cache_kept(&other).map(|k| k.days), Ok(14));
     }
 }

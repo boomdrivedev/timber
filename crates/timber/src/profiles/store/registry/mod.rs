@@ -2,7 +2,9 @@
 //! distribution protocol (C.1, ADR 0003): bytes as blobs, an artifact or
 //! an index as a manifest put by its own digest in the bytes the layout
 //! writes, an attestation as a referrer of its subject, and a name as a
-//! tag, at bytes through a cache manifest (design D2 to D8, D14).
+//! tag, at bytes through a cache manifest of its own, naming the name and
+//! the moment the store put it by the store's clock (145; design D2 to
+//! D8, D14).
 //!
 //! The host names a registry and a root, `<host>[:<port>]/<root>`, and
 //! every name of the store is a tag of a repository under the root (C.1
@@ -21,6 +23,30 @@
 //! answers every write, and every name of the repository's own spaces,
 //! as its binding answered the repository, and reads the artifact space
 //! as any store does.
+//!
+//! The bound build profile's cache repository is listed and its entries
+//! removed one by one (145): each tag's cache manifest read for the bytes
+//! it names and the moment it was put, none where it carries none, and a
+//! removal checking the tag's cache manifest names the bytes given before
+//! deleting that manifest by its digest, which takes every tag at it, so
+//! the name alone goes and the bytes stay for the registry to collect
+//! once nothing names them. Nothing outside the cache repository is
+//! listed or deleted, nor any untagged manifest, nor a tag at any other
+//! manifest; the listing and the removal read no mark and ask nothing of
+//! the repository's own, cache entries being no history (record 0039,
+//! record 0042).
+//!
+//! GitHub's registry documents no delete through the distribution
+//! protocol, so on `ghcr.io` the cache manifest is deleted through
+//! GitHub's REST API, the one service beside the registry this profile
+//! speaks to, and no code outside it names (rule core.1): the root's
+//! namespace read once as an organization's or a user's, the cache
+//! repository's package's versions read page by page for the one the
+//! cache manifest's digest names, and that version deleted by its id,
+//! with the token the host's Docker credential for the registry holds,
+//! reached at use (145, rule core.21; design D5; record 0015). The listing
+//! stays on the distribution protocol, which GitHub's registry serves
+//! (record 0039).
 //!
 //! A root the repository left holds the mark `moved` in its own, at
 //! bytes naming the root its history moved to (C.1 as amended at
@@ -51,12 +77,13 @@ pub(crate) mod stub;
 
 use std::cell::RefCell;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use timber_seams::{
-    moved_name, Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, MovedTo, Name,
-    Not, Put, RepositoryName, Seam, Source, Store, Version, Why, REPOSITORY_COMPONENT,
+    moved_name, Answer, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest,
+    MovedTo, Name, Not, Pushed, Put, RepositoryName, Seam, Source, Store, Version, Why,
+    REPOSITORY_COMPONENT,
 };
 use ureq::http::{Method, StatusCode};
 
@@ -104,6 +131,34 @@ pub struct Registry {
     named_for: Option<RepositoryName>,
     carrying: Option<RepositoryName>,
     mark: RefCell<Option<Answer<()>>>,
+    clock: Box<dyn Fn() -> u64>,
+    github: Option<String>,
+    namespace: RefCell<Option<Namespace>>,
+}
+
+/// Where GitHub's REST API is, which GitHub's registry removes through
+/// (design D5).
+const GITHUB_API: &str = "https://api.github.com";
+
+/// GitHub's registry's host.
+const GHCR: &str = "ghcr.io";
+
+/// The API version every request to GitHub's API names (design D5).
+const GITHUB_API_VERSION: &str = "2022-11-28";
+
+/// What GitHub's API answers a namespace as: an organization's packages
+/// are under `/orgs/`, a user's under `/users/` (design D5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Namespace {
+    Organization,
+    User,
+}
+
+/// The system's clock, in seconds since the Unix epoch.
+fn system_clock() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// The space of repositories under the root an artifact's names are held
@@ -200,6 +255,9 @@ impl Registry {
             named_for: None,
             carrying: None,
             mark: RefCell::new(None),
+            clock: Box::new(system_clock),
+            github: (host == GHCR).then(|| GITHUB_API.to_string()),
+            namespace: RefCell::new(None),
         })
     }
 
@@ -252,6 +310,23 @@ impl Registry {
     pub fn bound_for(mut self, build: &str, push: bool) -> Registry {
         self.build = Some(build.to_string());
         self.push = push;
+        self
+    }
+
+    /// The store's clock set to `clock`, in seconds since the Unix epoch,
+    /// in place of the system's: the moment each cache manifest is
+    /// annotated as put at, so a test fixes it (145).
+    pub fn with_clock(mut self, clock: Box<dyn Fn() -> u64>) -> Registry {
+        self.clock = clock;
+        self
+    }
+
+    /// The store removing its cache entries through GitHub's API at
+    /// `origin`, as it does on `ghcr.io` at `https://api.github.com`, so a
+    /// test plays the API (145; design D5).
+    #[doc(hidden)]
+    pub fn with_github_api(mut self, origin: &str) -> Registry {
+        self.github = Some(origin.trim_end_matches('/').to_string());
         self
     }
 
@@ -643,11 +718,11 @@ impl Registry {
     }
 
     /// The cache manifest of the bytes held under `digest`, `size` bytes
-    /// long, held in the repository: the empty config put, and the
-    /// manifest put by its digest unless it is held already (design
-    /// D14).
-    fn cache(&self, repository: &str, digest: &Digest, size: u64) -> Answer<Vec<u8>> {
-        let bytes = oci::cache(digest, size);
+    /// long, for `name` and put now by the store's clock, held in the
+    /// repository: the empty config put, and the manifest put by its
+    /// digest unless it is held already (145; design D14).
+    fn cache(&self, repository: &str, name: &Name, digest: &Digest, size: u64) -> Answer<Vec<u8>> {
+        let bytes = oci::cache(digest, size, name, (self.clock)());
         let at = Digest::of(&bytes);
         if self.manifest_head(repository, at.as_str())?.is_none() {
             self.put_bytes_in(repository, EMPTY_JSON)?;
@@ -889,6 +964,209 @@ impl Registry {
             .transpose()
     }
 
+    /// 145: the bound build profile's cache repository, as its entries
+    /// are listed and removed: under the repository's own as the binding
+    /// answered it, with no mark read, since cache entries are no history
+    /// (record 0042); the binding's answer where the store is bound for
+    /// no repository, and refused where it is bound for no build profile.
+    fn cache_space(&self) -> Answer<String> {
+        let own = self.own.as_deref().map_err(Clone::clone)?;
+        let Some(build) = self.build.as_deref() else {
+            return Err(Not::refused(
+                &self.source,
+                Why::Said,
+                Some(
+                    "cache entries are held in a build profile's cache repository, and this \
+                     store is bound for no build profile"
+                        .into(),
+                ),
+            ));
+        };
+        tag::repository(
+            &self.host,
+            own,
+            &[CACHE_SPACE, build],
+            &format!("the cache of the build profile {build}"),
+        )
+        .map_err(|words| Not::refused(&self.source, Why::Said, Some(words)))
+    }
+
+    /// The manifest `tag` of `repository` names, by the digest of the
+    /// bytes the registry answered, and those bytes; none where the
+    /// repository holds no such tag.
+    fn tagged(&self, repository: &str, tag: &str) -> Answer<Option<(Digest, Vec<u8>)>> {
+        let url = self.url_in(repository, &format!("manifests/{tag}"));
+        let answered = self.send(
+            repository,
+            Method::GET,
+            &url,
+            &[("accept", MANIFESTS)],
+            None,
+        )?;
+        match answered.status {
+            StatusCode::OK => Ok(Some((Digest::of(&answered.body), answered.body))),
+            StatusCode::NOT_FOUND => Ok(None),
+            _ => Err(self.other(&url, &answered)),
+        }
+    }
+
+    /// 145: the cache entry `tag` of `repository` names: its cache
+    /// manifest's bytes and moment. Absent where the tag is gone since it
+    /// was listed; unreadable naming the tag where it names another
+    /// manifest or one that cannot be read, in the registry's or the
+    /// parser's words.
+    fn cache_entry(&self, repository: &str, tag: &str) -> Answer<Pushed> {
+        let what = format!("the cache entry {tag} of {}/{repository}", self.host);
+        let unreadable = |said: String| Not::unreadable(&self.source, what.clone(), Some(said));
+        let found = self.tagged(repository, tag).map_err(|not| match not {
+            Not::Absent(_) => not,
+            Not::Refused(r) => unreadable(r.said.unwrap_or_else(|| r.why.to_string())),
+            Not::Unreadable(u) => unreadable(u.said.unwrap_or(u.what)),
+        })?;
+        let Some((manifest, bytes)) = found else {
+            return Err(Not::absent(&self.source, what));
+        };
+        let digest = match oci::cached(&bytes) {
+            Ok(Some(layer)) => layer,
+            Ok(None) => {
+                return Err(unreadable(format!(
+                    "the tag {tag} names {manifest}, which is no cache manifest"
+                )))
+            }
+            Err(words) => return Err(unreadable(words)),
+        };
+        let at = oci::cache_pushed(&bytes).map_err(unreadable)?;
+        Ok(Pushed { digest, at })
+    }
+
+    /// 145: the cache manifest `manifest` of `repository`, which the
+    /// entry of `build` names, deleted by its digest through the
+    /// distribution protocol, every tag at it with it: done where the
+    /// registry takes it, absent naming the entry where it answers 404,
+    /// and refused in its words, or unreadable for a 5xx, otherwise (58,
+    /// 59).
+    fn delete_manifest(&self, repository: &str, manifest: &Digest, build: &BuildId) -> Answer<()> {
+        let url = self.url_in(repository, &format!("manifests/{manifest}"));
+        let answered = self.send(repository, Method::DELETE, &url, &[], None)?;
+        match answered.status {
+            status if status.is_success() => Ok(()),
+            StatusCode::NOT_FOUND => Err(Not::absent(&self.source, format!("cache entry {build}"))),
+            _ => Err(self.other(&url, &answered)),
+        }
+    }
+
+    /// A request to GitHub's API: `method` of `url` with the headers
+    /// every request names and `bearer`, where the host holds a token
+    /// (design D5).
+    fn github_send(&self, method: Method, url: &str, bearer: Option<&str>) -> Answer<Answered> {
+        self.client.plain(
+            method,
+            url,
+            &[
+                ("accept", "application/vnd.github+json"),
+                ("x-github-api-version", GITHUB_API_VERSION),
+            ],
+            bearer,
+        )
+    }
+
+    /// The root's namespace as GitHub's API answers it, an organization
+    /// or a user, read once in the store's life and answered the same
+    /// after (design D5).
+    fn namespace(&self, api: &str, namespace: &str, bearer: Option<&str>) -> Answer<Namespace> {
+        if let Some(kind) = *self.namespace.borrow() {
+            return Ok(kind);
+        }
+        #[derive(Deserialize)]
+        struct Account {
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        let url = format!("{api}/users/{namespace}");
+        let answered = self.github_send(Method::GET, &url, bearer)?;
+        if !answered.status.is_success() {
+            return Err(self.other(&url, &answered));
+        }
+        let account: Account = serde_json::from_slice(&answered.body)
+            .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
+        let kind = match account.kind.as_str() {
+            "Organization" => Namespace::Organization,
+            "User" => Namespace::User,
+            other => {
+                return Err(Not::unreadable(
+                    &self.source,
+                    &url,
+                    Some(format!(
+                        "GitHub's API answers {namespace} of the type {other}, which is neither \
+                         an organization nor a user"
+                    )),
+                ))
+            }
+        };
+        *self.namespace.borrow_mut() = Some(kind);
+        Ok(kind)
+    }
+
+    /// 145: the cache manifest `manifest` of `repository` deleted through
+    /// GitHub's API: the package the repository is under the root's
+    /// namespace, its path past the namespace with each `/` written
+    /// `%2F`; its versions read page by page for the one named the
+    /// manifest's digest, and that version deleted by its id. Absent
+    /// naming the package and the digest where no version is, or GitHub
+    /// answers 404; refused in GitHub's words for a 401 or a 403, and
+    /// unreadable for a 5xx or a body that cannot be read (design D5).
+    fn delete_version(&self, api: &str, repository: &str, manifest: &Digest) -> Answer<()> {
+        #[derive(Deserialize)]
+        struct Version {
+            id: u64,
+            name: String,
+        }
+        let namespace = self.root.split('/').next().unwrap_or(&self.root);
+        let path = repository
+            .strip_prefix(&format!("{namespace}/"))
+            .unwrap_or(repository);
+        let package = path.replace('/', "%2F");
+        let absent = || {
+            Not::absent(
+                &self.source,
+                format!("version {manifest} of the package {path} of {namespace}"),
+            )
+        };
+        let bearer = self.client.token()?.map(|token| format!("Bearer {token}"));
+        let bearer = bearer.as_deref();
+        let owner = match self.namespace(api, namespace, bearer)? {
+            Namespace::Organization => format!("{api}/orgs/{namespace}"),
+            Namespace::User => format!("{api}/users/{namespace}"),
+        };
+        let versions = format!("{owner}/packages/container/{package}/versions");
+        let mut page = 1;
+        let id = loop {
+            let url = format!("{versions}?per_page=100&page={page}");
+            let answered = self.github_send(Method::GET, &url, bearer)?;
+            match answered.status {
+                StatusCode::OK => {}
+                StatusCode::NOT_FOUND => return Err(absent()),
+                _ => return Err(self.other(&url, &answered)),
+            }
+            let listed: Vec<Version> = serde_json::from_slice(&answered.body)
+                .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
+            if let Some(version) = listed.iter().find(|v| v.name == manifest.as_str()) {
+                break version.id;
+            }
+            if listed.is_empty() {
+                return Err(absent());
+            }
+            page += 1;
+        };
+        let url = format!("{versions}/{id}");
+        let answered = self.github_send(Method::DELETE, &url, bearer)?;
+        match answered.status {
+            status if status.is_success() => Ok(()),
+            StatusCode::NOT_FOUND => Err(absent()),
+            _ => Err(self.other(&url, &answered)),
+        }
+    }
+
     /// The manifest `digest` held in `repository` with everything it
     /// names and timber's attestations on each, each asked after by a
     /// `HEAD` first and only what the repository lacks written: the
@@ -1014,14 +1292,14 @@ impl Registry {
     /// The manifest `place`'s tag is put at for `to`, with what it names
     /// held in `place`'s repository: `to`'s own where `to` is a manifest,
     /// held as [`Registry::hold`] holds it; and where `to` is bytes, the
-    /// cache manifest of them, the bytes held as [`Registry::mount`]
-    /// holds them (design D8, D14). `to` is asked of each repository it
+    /// cache manifest of them made for `name`, the bytes held as
+    /// [`Registry::mount`] holds them (145; design D8, D14). `to` is asked of each repository it
     /// was reached in, the repository's own and then the cache
     /// repository, as a read is, and of the cache repository alone by a
     /// push's store, which asks nothing of the repository's own its
     /// credential may not read (135; design D4, D9). Absent where `to` is
     /// neither.
-    fn named_at(&self, place: &Place, to: &Digest) -> Answer<(String, Vec<u8>)> {
+    fn named_at(&self, name: &Name, place: &Place, to: &Digest) -> Answer<(String, Vec<u8>)> {
         let asked = if self.push && place.space == Space::Cache {
             vec![place.repository.clone()]
         } else {
@@ -1058,7 +1336,7 @@ impl Registry {
                 self.mount(&place.repository, to, repository)?;
                 return Ok((
                     IMAGE_MANIFEST.to_string(),
-                    self.cache(&place.repository, to, size)?,
+                    self.cache(&place.repository, name, to, size)?,
                 ));
             }
         }
@@ -1384,7 +1662,10 @@ fn next(link: &str) -> Option<String> {
 /// to, with nothing written; an artifact's name, and the digests it
 /// reaches, are read as before. A push's store reads no mark, and writes
 /// its cache entries at a root left as at any root (C.1 as amended at
-/// `boomdrivedev/blueprints` e8700c8; design D4; record 0042).
+/// `boomdrivedev/blueprints` e8700c8; design D4; record 0042). The
+/// listing and the removal of cache entries read no mark either, and
+/// reach the bound build profile's cache repository alone (145; record
+/// 0039).
 impl Store for Registry {
     /// The blob asked after first, and uploaded only when it is not held,
     /// in the repository's own, or, for a store bound for a push, its
@@ -1533,7 +1814,7 @@ impl Store for Registry {
         if at.as_ref() != expected {
             return Err(Not::refused(&self.source, Why::NameAt { at }, None));
         }
-        let (media_type, bytes) = self.named_at(&place, to)?;
+        let (media_type, bytes) = self.named_at(name, &place, to)?;
         self.put_manifest(repository, tag, &media_type, &bytes)?;
         let found = self.shown(repository, tag, at.as_ref(), to)?;
         if found.as_ref() == Some(to) {
@@ -1641,6 +1922,102 @@ impl Store for Registry {
                 None => return Ok(versions),
             }
             first = false;
+        }
+    }
+
+    /// 145: a cache entry for each tag of the bound build profile's cache
+    /// repository, read page by page as the registry's `Link` header
+    /// leads, a subject's referrers tag passed over; each its cache
+    /// manifest's bytes and moment, or its own answer where the tag names
+    /// another manifest or one that cannot be read. A repository the
+    /// registry does not hold lists none.
+    fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+        #[derive(Deserialize)]
+        struct Tags {
+            #[serde(default)]
+            tags: Option<Vec<String>>,
+        }
+        let repository = self.cache_space()?;
+        let mut url = self.url_in(&repository, "tags/list");
+        let mut entries = Vec::new();
+        let mut first = true;
+        loop {
+            let answered = self.send(&repository, Method::GET, &url, &[], None)?;
+            match answered.status {
+                StatusCode::OK => {}
+                StatusCode::NOT_FOUND if first => return Ok(entries),
+                StatusCode::NOT_FOUND => {
+                    return Err(Not::unreadable(
+                        &self.source,
+                        &url,
+                        Some(format!(
+                            "{}/{repository} answered a page of its tag list and then not the \
+                             next, so its cache entries were not all read: {}",
+                            self.host,
+                            answered.words()
+                        )),
+                    ))
+                }
+                _ => return Err(self.other(&url, &answered)),
+            }
+            let page: Tags = serde_json::from_slice(&answered.body)
+                .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
+            for written in page.tags.unwrap_or_default() {
+                if tag::is_referrers(&written) {
+                    continue;
+                }
+                let build = BuildId::new(tag::read(&written).unwrap_or_else(|| written.clone()));
+                entries.push((build, self.cache_entry(&repository, &written)));
+            }
+            match answered.header("link").and_then(next) {
+                Some(link) => url = self.absolute(&link),
+                None => return Ok(entries),
+            }
+            first = false;
+        }
+    }
+
+    /// 145, 54: the entry of `build` removed by deleting the cache
+    /// manifest its tag names, once that manifest is found to name `at`;
+    /// refused naming the bytes it names otherwise, or naming the tag
+    /// where it names no cache manifest, and absent where the repository
+    /// holds no such tag, with nothing deleted. A delete the registry
+    /// answers 404 is absent, and any other answer it does not take is
+    /// refused in its words, or unreadable for a 5xx (58, 59).
+    fn remove_cache_entry(&self, build: &BuildId, at: &Digest) -> Answer<()> {
+        let repository = self.cache_space()?;
+        let tag = self.tag(&Name::new(build.as_str()))?;
+        let absent = || Not::absent(&self.source, format!("cache entry {build}"));
+        let Some((manifest, bytes)) = self.tagged(&repository, &tag)? else {
+            return Err(absent());
+        };
+        let url = self.url_in(&repository, &format!("manifests/{tag}"));
+        match oci::cached(&bytes) {
+            Ok(Some(layer)) if &layer == at => {}
+            Ok(Some(layer)) => {
+                return Err(Not::refused(
+                    &self.source,
+                    Why::NameAt { at: Some(layer) },
+                    None,
+                ))
+            }
+            Ok(None) => {
+                return Err(Not::refused(
+                    &self.source,
+                    Why::Said,
+                    Some(format!(
+                        "the tag {tag} of {}/{repository} names {manifest}, which is no cache \
+                         manifest, and a cache entry is removed only by deleting its cache \
+                         manifest",
+                        self.host
+                    )),
+                ))
+            }
+            Err(words) => return Err(Not::unreadable(&self.source, url, Some(words))),
+        }
+        match &self.github {
+            Some(api) => self.delete_version(api, &repository, &manifest),
+            None => self.delete_manifest(&repository, &manifest, build),
         }
     }
 }
@@ -2128,6 +2505,730 @@ mod tests {
             sync.read(&resolved),
             Ok(Held::Bytes(b"a cache entry".to_vec()))
         );
+    }
+
+    /// The moment a fixed clock answers in these tests.
+    const AT: u64 = 1_793_000_000;
+
+    /// The manifest a tag of `repository` names, as `stub` holds it.
+    fn tagged(stub: &Stub, repository: &str, tag: &str) -> (Digest, Vec<u8>) {
+        let held = stub.held(repository).unwrap();
+        let at = held.tags.get(tag).expect("the tag").clone();
+        let bytes = held.manifests[&at].1.clone();
+        (at, bytes)
+    }
+
+    #[test]
+    fn two_names_of_the_same_bytes_each_have_a_cache_manifest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let push = store(&stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(|| AT));
+        let bytes = push.put_bytes(b"an empty output").unwrap().digest;
+        for entry in ["cache/b7e1", "cache/c9d2"] {
+            push.name(&Name::new(entry), &bytes, None).unwrap();
+            assert_eq!(push.resolve(&Name::new(entry)), Ok(bytes.clone()));
+        }
+        let cache = "acme/store/acme/site/cache/moon";
+        let (first, first_bytes) = tagged(&stub, cache, "b7e1");
+        let (second, second_bytes) = tagged(&stub, cache, "c9d2");
+        assert_ne!(first, second, "one cache manifest for two names");
+        for (bytes_of, entry) in [(&first_bytes, "cache/b7e1"), (&second_bytes, "cache/c9d2")] {
+            let json: serde_json::Value = serde_json::from_slice(bytes_of).unwrap();
+            assert_eq!(json["annotations"][oci::STORE_NAME], entry);
+            assert_eq!(oci::cached(bytes_of), Ok(Some(bytes.clone())));
+            assert_eq!(oci::cache_pushed(bytes_of), Ok(Some(AT)));
+        }
+    }
+
+    #[test]
+    fn a_name_found_held_puts_no_cache_manifest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let push = store(&stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(|| AT));
+        let bytes = push.put_bytes(b"a cache entry").unwrap().digest;
+        let entry = Name::new("cache/b7e1");
+        push.name(&entry, &bytes, None).unwrap();
+        let cache = "acme/store/acme/site/cache/moon";
+        let manifests = stub.held(cache).unwrap().manifests.len();
+        let since = stub.asked().len();
+
+        let later = store(&stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(|| AT + 60));
+        let other = later.put_bytes(b"another host's entry").unwrap().digest;
+        let since_put = stub.asked().len();
+        match later.name(&entry, &other, None) {
+            Err(Not::Refused(r)) => assert_eq!(r.why, Why::NameAt { at: Some(bytes) }),
+            answered => panic!("a name held was answered {answered:?}"),
+        }
+        assert_eq!(stub.held(cache).unwrap().manifests.len(), manifests);
+        let asked = &stub.asked()[since_put..];
+        assert!(
+            asked
+                .iter()
+                .all(|a| a.method == "GET" || a.method == "HEAD"),
+            "{asked:#?}"
+        );
+        assert!(since_put > since);
+    }
+
+    #[test]
+    fn the_mark_is_written_through_a_cache_manifest_naming_moved() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let to = repository("acme", "site");
+        let carrying = store_for(&stub, "acme", "app")
+            .carrying_to(to.clone())
+            .with_clock(Box::new(|| AT));
+        let bytes = carrying
+            .put_bytes(&MovedTo { to }.to_bytes())
+            .unwrap()
+            .digest;
+        carrying.name(&moved_name(), &bytes, None).unwrap();
+        let (_, manifest) = tagged(&stub, "acme/store/acme/app", "moved");
+        let json: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        assert_eq!(json["annotations"][oci::STORE_NAME], "moved");
+        assert_eq!(oci::cache_pushed(&manifest), Ok(Some(AT)));
+        assert_eq!(oci::cached(&manifest), Ok(Some(bytes)));
+    }
+
+    /// The cache repository of `acme/site` for `moon` under `acme/store`.
+    const CACHE_OF_SITE: &str = "acme/store/acme/site/cache/moon";
+
+    /// A push's store for `acme/site` whose clock answers `at`.
+    fn pushing_at(stub: &Stub, at: u64) -> Registry {
+        store(stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(move || at))
+    }
+
+    /// The entry of `build` written at `bytes` by a push at `at`.
+    fn entry_at(stub: &Stub, build: &str, bytes: &[u8], at: u64) -> Digest {
+        let push = pushing_at(stub, at);
+        let digest = push.put_bytes(bytes).unwrap().digest;
+        push.name(&Name::new(format!("cache/{build}")), &digest, None)
+            .unwrap();
+        digest
+    }
+
+    /// A cache manifest of `bytes` as one was written before moments,
+    /// with no annotation, held in `repository` and tagged `tag`.
+    fn entry_from_before(stub: &Stub, repository: &str, tag: &str, bytes: &Digest) {
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": IMAGE_MANIFEST,
+            "artifactType": oci::CACHE,
+            "config": {"mediaType": oci::EMPTY, "digest": Digest::of(b"{}"), "size": 2},
+            "layers": [{"mediaType": OCTETS, "digest": bytes, "size": 13}],
+        });
+        let at = stub.manifest(repository, &serde_json::to_vec(&manifest).unwrap());
+        stub.tag(repository, tag, &at);
+    }
+
+    /// The entries `store` lists, by build identity.
+    fn listed(store: &Registry) -> std::collections::BTreeMap<String, Answer<Pushed>> {
+        store
+            .cache_entries()
+            .unwrap()
+            .into_iter()
+            .map(|(build, entry)| (build.as_str().to_string(), entry))
+            .collect()
+    }
+
+    #[test]
+    fn a_cache_repositorys_entries_are_listed_with_their_moments() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let first = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let second = entry_at(&stub, "c9d2", b"another entry", AT + 60);
+        let lister = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            listed(&lister),
+            std::collections::BTreeMap::from([
+                (
+                    "b7e1".to_string(),
+                    Ok(Pushed {
+                        digest: first,
+                        at: Some(AT)
+                    })
+                ),
+                (
+                    "c9d2".to_string(),
+                    Ok(Pushed {
+                        digest: second,
+                        at: Some(AT + 60)
+                    })
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn an_entry_written_before_moments_lists_none() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let now = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let before = Digest::of(b"an older entry");
+        entry_from_before(&stub, CACHE_OF_SITE, "c9d2", &before);
+        let entries = listed(&store(&stub).bound_for("moon", true));
+        assert_eq!(
+            entries["b7e1"],
+            Ok(Pushed {
+                digest: now,
+                at: Some(AT)
+            })
+        );
+        assert_eq!(
+            entries["c9d2"],
+            Ok(Pushed {
+                digest: before,
+                at: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_tag_at_another_manifest_is_listed_unreadable_naming_it() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let other = stub.manifest(
+            CACHE_OF_SITE,
+            br#"{"schemaVersion":2,"artifactType":"application/vnd.other.v1"}"#,
+        );
+        stub.tag(CACHE_OF_SITE, "x1", &other);
+        let entries = listed(&store(&stub).bound_for("moon", true));
+        assert_eq!(
+            entries["b7e1"],
+            Ok(Pushed {
+                digest: bytes,
+                at: Some(AT)
+            })
+        );
+        match &entries["x1"] {
+            Err(Not::Unreadable(u)) => {
+                assert!(u.what.contains("x1"), "{u:?}");
+                assert!(
+                    u.said.as_deref().unwrap().contains("no cache manifest"),
+                    "{u:?}"
+                );
+            }
+            other => panic!("a tag at another manifest was listed {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_cache_repository_never_made_lists_no_entries() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        assert_eq!(
+            store(&stub).bound_for("moon", true).cache_entries(),
+            Ok(vec![])
+        );
+        assert!(stub.repositories().is_empty(), "the listing made one");
+    }
+
+    #[test]
+    fn the_listing_reads_every_page_of_tags() {
+        let stub = Stub::start(
+            Behaviour {
+                page: 2,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        for build in ["a1", "b2", "c3", "d4", "e5"] {
+            entry_at(&stub, build, build.as_bytes(), AT);
+        }
+        let entries = listed(&store(&stub).bound_for("moon", true));
+        assert_eq!(
+            entries.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a1", "b2", "c3", "d4", "e5"]
+        );
+        assert!(entries.values().all(Result::is_ok), "{entries:?}");
+        let pages = stub
+            .asked()
+            .iter()
+            .filter(|a| a.path.contains("/tags/list"))
+            .count();
+        assert_eq!(pages, 3);
+    }
+
+    #[test]
+    fn an_entry_removed_deletes_its_cache_manifest_alone() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"an empty output", AT);
+        entry_at(&stub, "c9d2", b"an empty output", AT);
+        let (manifest, _) = tagged(&stub, CACHE_OF_SITE, "b7e1");
+        let prune = store(&stub).bound_for("moon", true);
+        let since = stub.asked().len();
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Ok(())
+        );
+        let deletes: Vec<_> = stub.asked()[since..]
+            .iter()
+            .filter(|a| a.method == "DELETE")
+            .cloned()
+            .collect();
+        assert_eq!(
+            deletes.iter().map(|a| a.path.as_str()).collect::<Vec<_>>(),
+            [format!("/v2/{CACHE_OF_SITE}/manifests/{manifest}")]
+        );
+        let held = stub.held(CACHE_OF_SITE).unwrap();
+        assert!(!held.tags.contains_key("b7e1"));
+        assert!(!held.manifests.contains_key(&manifest));
+        assert!(held.blobs.contains_key(&bytes), "the bytes went too");
+        assert_eq!(prune.resolve(&Name::new("cache/c9d2")), Ok(bytes.clone()));
+        assert_eq!(
+            prune.read(&bytes),
+            Ok(Held::Bytes(b"an empty output".to_vec()))
+        );
+        assert_eq!(
+            listed(&prune)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["c9d2"]
+        );
+    }
+
+    #[test]
+    fn a_removal_at_another_digest_is_refused_naming_the_layer() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &Digest::of(b"other bytes")),
+            Err(Not::refused(
+                prune.source(),
+                Why::NameAt {
+                    at: Some(bytes.clone())
+                },
+                None
+            ))
+        );
+        assert!(stub.asked().iter().all(|a| a.method != "DELETE"));
+        assert_eq!(prune.resolve(&Name::new("cache/b7e1")), Ok(bytes));
+    }
+
+    #[test]
+    fn a_removal_of_a_tag_not_held_is_absent() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("c9d2"), &bytes),
+            Err(Not::absent(prune.source(), "cache entry c9d2"))
+        );
+        let never = Stub::start(Behaviour::default(), &[]);
+        let prune = store(&never).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("c9d2"), &bytes),
+            Err(Not::absent(prune.source(), "cache entry c9d2"))
+        );
+        assert!(stub.asked().iter().all(|a| a.method != "DELETE"));
+    }
+
+    #[test]
+    fn a_delete_the_registry_refuses_is_refused_in_its_words() {
+        let stub = Stub::start(
+            Behaviour {
+                refuses_deletes: true,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Err(Not::refused(
+                prune.source(),
+                Why::Said,
+                Some(stub::UNSUPPORTED.into())
+            ))
+        );
+        assert_eq!(prune.resolve(&Name::new("cache/b7e1")), Ok(bytes));
+    }
+
+    #[test]
+    fn a_removal_at_a_root_marked_moved_reads_no_mark() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        marked(&stub, ("acme", "site"), ("acme", "web"));
+        let bytes = entry_at(&stub, "b7e1", b"a pre-move build's entry", AT);
+        let since = stub.asked().len();
+        let prune = store(&stub).bound_for("moon", false);
+        assert_eq!(listed(&prune).len(), 1);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Ok(())
+        );
+        let asked = &stub.asked()[since..];
+        assert!(
+            asked.iter().all(|a| a.repository() == Some(CACHE_OF_SITE)),
+            "{asked:#?}"
+        );
+        assert!(!asked.iter().any(|a| a.path.ends_with("/manifests/moved")));
+    }
+
+    #[test]
+    fn nothing_outside_the_cache_repository_is_listed_or_deleted() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub).bound_for("moon", false);
+        let version = published(&site, "web", &[("eco", "site")]);
+        let names = [
+            named("eco", "site", "1.3.0"),
+            Name::new("web:web-v1.3.0"),
+            Name::new("channel/web/beta"),
+        ];
+        for name in &names {
+            site.name(name, &version.index, None).unwrap();
+        }
+        let first = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let second = entry_at(&stub, "c9d2", b"another entry", AT);
+        let before: Vec<(String, stub::Held)> = stub
+            .repositories()
+            .into_iter()
+            .filter(|r| r != CACHE_OF_SITE)
+            .map(|r| (r.clone(), stub.held(&r).unwrap()))
+            .collect();
+        let since = stub.asked().len();
+
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            listed(&prune)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["b7e1", "c9d2"]
+        );
+        for (build, bytes) in [("b7e1", &first), ("c9d2", &second)] {
+            prune
+                .remove_cache_entry(&BuildId::new(build), bytes)
+                .unwrap();
+        }
+        let asked = &stub.asked()[since..];
+        assert!(
+            asked.iter().all(|a| a.repository() == Some(CACHE_OF_SITE)),
+            "{asked:#?}"
+        );
+        for (repository, held) in before {
+            let now = stub.held(&repository).unwrap();
+            assert_eq!(now.tags, held.tags, "{repository}");
+            assert_eq!(
+                now.manifests.keys().collect::<Vec<_>>(),
+                held.manifests.keys().collect::<Vec<_>>(),
+                "{repository}"
+            );
+        }
+        for name in &names {
+            assert_eq!(site.resolve(name), Ok(version.index.clone()));
+        }
+        assert_eq!(site.claims_of(&version.index).unwrap().len(), 1);
+    }
+
+    /// A Docker configuration holding `token` as the password of the
+    /// stub's host, as `docker login` writes one.
+    fn docker_login(stub: &Stub, token: &str) -> tempfile::TempDir {
+        use base64::Engine as _;
+        let dir = tempfile::TempDir::new().unwrap();
+        let basic = base64::engine::general_purpose::STANDARD.encode(format!("someone:{token}"));
+        let config = format!(
+            r#"{{"auths":{{"127.0.0.1:{}":{{"auth":"{basic}"}}}}}}"#,
+            stub.port
+        );
+        std::fs::write(dir.path().join("config.json"), config).unwrap();
+        dir
+    }
+
+    /// What `f` answers with the Docker configuration `login` makes.
+    fn logged_in<T>(login: &tempfile::TempDir, f: impl FnOnce() -> T) -> T {
+        client::tests::under_docker_config(login.path(), f)
+    }
+
+    /// `stub` playing GitHub's API with `acme` of type `kind`, the entry
+    /// `b7e1` written, and a store removing through the stub's API.
+    fn on_github(stub: &Stub, kind: &str) -> (Registry, Digest) {
+        stub.plays_github("acme", kind);
+        let bytes = entry_at(stub, "b7e1", b"a cache entry", AT);
+        let prune = store(stub)
+            .bound_for("moon", true)
+            .with_github_api(&stub.origin());
+        (prune, bytes)
+    }
+
+    /// The package of `acme/site`'s cache under the root `acme/store`.
+    const PACKAGE: &str = "store%2Facme%2Fsite%2Fcache%2Fmoon";
+
+    #[test]
+    fn ghcr_removes_an_organizations_package_version_by_the_manifests_digest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        entry_at(&stub, "c9d2", b"a cache entry", AT);
+        let (manifest, _) = tagged(&stub, CACHE_OF_SITE, "b7e1");
+        let login = docker_login(&stub, "ghp_token");
+        let removed = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(removed, Ok(()));
+        let api = stub.api_asked();
+        let calls: Vec<(&str, &str)> = api
+            .iter()
+            .map(|a| (a.method.as_str(), a.path.as_str()))
+            .collect();
+        let versions = format!("/orgs/acme/packages/container/{PACKAGE}/versions");
+        assert_eq!(calls[0], ("GET", "/users/acme"));
+        assert_eq!(calls[1].0, "GET");
+        assert_eq!(calls[1].1, format!("{versions}?per_page=100&page=1"));
+        assert_eq!(calls[2].0, "DELETE");
+        assert!(calls[2].1.starts_with(&format!("{versions}/")), "{calls:?}");
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        let held = stub.held(CACHE_OF_SITE).unwrap();
+        assert!(!held.manifests.contains_key(&manifest));
+        assert!(!held.tags.contains_key("b7e1"));
+        assert!(held.tags.contains_key("c9d2"));
+        assert!(held.blobs.contains_key(&bytes));
+        assert!(
+            stub.asked()
+                .iter()
+                .all(|a| a.method != "DELETE" || !a.path.starts_with("/v2/")),
+            "the distribution protocol's delete was asked"
+        );
+    }
+
+    #[test]
+    fn ghcr_removes_a_users_package_version() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "User");
+        let login = docker_login(&stub, "ghp_token");
+        let removed = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(removed, Ok(()));
+        let api = stub.api_asked();
+        assert!(api[1..].iter().all(|a| a.path.starts_with(&format!(
+            "/users/acme/packages/container/{PACKAGE}/versions"
+        ))));
+        assert_eq!(api.last().unwrap().method, "DELETE");
+        assert!(!stub.held(CACHE_OF_SITE).unwrap().tags.contains_key("b7e1"));
+    }
+
+    #[test]
+    fn ghcr_reads_every_page_of_versions() {
+        let stub = Stub::start(
+            Behaviour {
+                page: 2,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        stub.plays_github("acme", "Organization");
+        for build in ["a1", "b2", "c3", "d4", "e5"] {
+            entry_at(&stub, build, build.as_bytes(), AT);
+        }
+        let held = stub.held(CACHE_OF_SITE).unwrap();
+        let last = held.manifests.keys().last().unwrap().clone();
+        let (build, _) = held.tags.iter().find(|(_, at)| **at == last).unwrap();
+        let bytes = Digest::of(build.as_bytes());
+        let prune = store(&stub)
+            .bound_for("moon", true)
+            .with_github_api(&stub.origin());
+        let login = docker_login(&stub, "ghp_token");
+        let removed = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new(build.as_str()), &bytes)
+        });
+        assert_eq!(removed, Ok(()));
+        let pages: Vec<String> = stub
+            .api_asked()
+            .iter()
+            .filter(|a| a.method == "GET" && a.path.contains("/versions?"))
+            .map(|a| a.path.clone())
+            .collect();
+        assert_eq!(pages.len(), 3, "{pages:?}");
+        assert!(pages[2].ends_with("page=3"), "{pages:?}");
+    }
+
+    #[test]
+    fn ghcr_sends_the_docker_credentials_token_as_the_bearer() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let login = docker_login(&stub, "ghp_token");
+        logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        })
+        .unwrap();
+        let api = stub.api_asked();
+        assert_eq!(api.len(), 3);
+        for asked in api {
+            assert_eq!(asked.header("authorization"), Some("Bearer ghp_token"));
+            assert_eq!(asked.header("accept"), Some("application/vnd.github+json"));
+            assert_eq!(asked.header("x-github-api-version"), Some("2022-11-28"));
+        }
+    }
+
+    #[test]
+    fn ghcr_answers_no_version_of_the_digest_absent() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let (manifest, _) = tagged(&stub, CACHE_OF_SITE, "b7e1");
+        stub.github_hides(&manifest);
+        let login = docker_login(&stub, "ghp_token");
+        let answered = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(
+            answered,
+            Err(Not::absent(
+                prune.source(),
+                format!("version {manifest} of the package store/acme/site/cache/moon of acme")
+            ))
+        );
+        assert!(stub.api_asked().iter().all(|a| a.method == "GET"));
+        assert!(stub.held(CACHE_OF_SITE).unwrap().tags.contains_key("b7e1"));
+    }
+
+    #[test]
+    fn ghcr_answers_a_403_refused_in_githubs_words() {
+        let stub = Stub::start(
+            Behaviour {
+                github_refuses_deletes: true,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let login = docker_login(&stub, "ghp_token");
+        let answered = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(
+            answered,
+            Err(Not::refused(
+                prune.source(),
+                Why::Said,
+                Some(stub::GITHUB_FORBIDDEN.into())
+            ))
+        );
+        assert_eq!(prune.resolve(&Name::new("cache/b7e1")), Ok(bytes));
+    }
+
+    #[test]
+    fn ghcr_reads_the_namespaces_type_once() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, first) = on_github(&stub, "Organization");
+        let second = entry_at(&stub, "c9d2", b"another entry", AT);
+        let login = docker_login(&stub, "ghp_token");
+        logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &first)?;
+            prune.remove_cache_entry(&BuildId::new("c9d2"), &second)
+        })
+        .unwrap();
+        let namespaces = stub
+            .api_asked()
+            .iter()
+            .filter(|a| a.path == "/users/acme")
+            .count();
+        assert_eq!(namespaces, 1);
+    }
+
+    #[test]
+    fn ghcr_escapes_the_package_name() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let login = docker_login(&stub, "ghp_token");
+        logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        })
+        .unwrap();
+        for asked in &stub.api_asked()[1..] {
+            let (_, package) = asked.path.split_once("/packages/container/").unwrap();
+            assert!(
+                package.starts_with(&format!("{PACKAGE}/versions")),
+                "{}",
+                asked.path
+            );
+        }
+        assert!(Registry::new("ghcr.io/boomdrivedev")
+            .unwrap()
+            .github
+            .as_deref()
+            .is_some_and(|api| api == "https://api.github.com"));
+        assert!(Registry::new("localhost:5000/acme")
+            .unwrap()
+            .github
+            .is_none());
+    }
+
+    /// The store group's rig over the stub: a store under a stub of its
+    /// own, bound for `acme/site` and the build profile `moon`, and one
+    /// at a port nothing listens on, which `unreachable` makes the rig's.
+    struct StubRig {
+        _stub: Stub,
+        live: Registry,
+        dead: Registry,
+        down: std::cell::Cell<bool>,
+    }
+
+    impl StubRig {
+        fn new() -> StubRig {
+            let stub = Stub::start(Behaviour::default(), &[]);
+            let port = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            StubRig {
+                live: store(&stub).bound_for("moon", false),
+                dead: Registry::new(&format!("127.0.0.1:{port}/acme/store"))
+                    .unwrap()
+                    .for_repository(Ok(repository("acme", "site")))
+                    .bound_for("moon", false),
+                _stub: stub,
+                down: std::cell::Cell::new(false),
+            }
+        }
+    }
+
+    impl timber_conformance::Rig for StubRig {
+        fn profile(&self) -> String {
+            self.live.source().profile.clone()
+        }
+    }
+
+    impl timber_conformance::seams::store::StoreRig for StubRig {
+        fn store(&self) -> &dyn Store {
+            if self.down.get() {
+                &self.dead
+            } else {
+                &self.live
+            }
+        }
+
+        fn unreachable(&self) -> String {
+            self.down.set(true);
+            match self.dead.resolve(&Name::new("anything")) {
+                Err(Not::Unreadable(u)) => u.said.expect("the client's words"),
+                other => panic!("a store nothing listens for answered {other:?}"),
+            }
+        }
+
+        fn settles_within(&self) -> Duration {
+            self.live.bound()
+        }
+
+        fn names_conditional(&self) -> bool {
+            self.live.names_conditional()
+        }
+    }
+
+    #[test]
+    fn the_stub_keeps_the_stores_contract() {
+        use timber_conformance::seams::store;
+        let report = timber_conformance::run(store::GROUP, &store::scenarios(), &|| {
+            Box::new(StubRig::new())
+        });
+        report.assert();
+        assert_eq!(report.ran, store::scenarios().len());
+        let not: Vec<&str> = report.not_applicable.iter().map(|n| n.scenario).collect();
+        assert_eq!(not, ["a name moved from where it is not"], "{report}");
     }
 
     #[test]

@@ -29,7 +29,9 @@
 
 mod registry;
 
-use registry::{cache_entries, live, run_prefix, store_group_against, store_under, Prefixed, LIVE};
+use registry::{
+    cache_entries, live, run_prefix, store_group_against, store_under, Prefixed, LIVE, PUT_AT,
+};
 use timber_seams::{Digest, Envelope, Held, Manifest, Name, Signature, SignerId, Store, IN_TOTO};
 
 /// The setting a host names its root of GitHub's registry by.
@@ -68,14 +70,18 @@ fn ghcr_keeps_the_stores_contract() {
 
 #[test]
 fn ghcr_names_a_cache_entry_through_a_cache_manifest() {
-    let registry = live(&repository()).bound_for("moon", false);
+    let registry = live(&repository())
+        .bound_for("moon", false)
+        .with_clock(Box::new(|| PUT_AT));
     let within = registry.bound();
+    let prefix = format!("{}-cache-", run_prefix());
     cache_entries(
         &Prefixed {
             registry,
-            prefix: format!("{}-cache-", run_prefix()),
+            prefix: prefix.clone(),
         },
         within,
+        &prefix,
     );
 }
 

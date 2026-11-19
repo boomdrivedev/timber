@@ -231,6 +231,10 @@ impl Policy for Watched {
     fn environments(&self, revision: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
         self.inner.environments(revision)
     }
+
+    fn cache_kept(&self, revision: &Revision) -> Answer<timber_seams::Keeping> {
+        self.inner.cache_kept(revision)
+    }
 }
 
 #[test]

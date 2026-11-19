@@ -14,19 +14,14 @@
 use serde::{Serialize, Serializer};
 use serde_json::{json, Value};
 use timber_seams::{
-    no_cache_entries, Answer, Branch, BuildId, CacheEntry, Contents, Digest, Ecosystem, Name, Not,
+    no_cache_entries, Answer, Branch, BuildId, CacheEntry, Contents, Digest, Ecosystem, Not,
     Outcome, Output, Refusal, Revision, Seam, Seams, Source, Why,
 };
 
+/// The cache name's one spelling, the seams' (52, rule core.48).
+pub use timber_seams::{cache_name, CACHE};
+
 use crate::{answer_json, Landed, BOUND};
-
-/// What every cache name begins with, and no other name does.
-pub const CACHE: &str = "cache/";
-
-/// 52: the store's name for the cache entry of `build`.
-pub fn cache_name(build: &BuildId) -> Name {
-    Name::new(format!("{CACHE}{build}"))
-}
 
 /// What a write answers: the entry packed, the projection that packed
 /// it, and whether the store held it already.

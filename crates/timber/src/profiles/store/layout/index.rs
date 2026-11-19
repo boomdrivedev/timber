@@ -106,6 +106,28 @@ impl Index {
         })
     }
 
+    /// Every name an entry holds with its entry, in the order of
+    /// `index.json`.
+    pub(super) fn name_entries(&self) -> impl Iterator<Item = (&str, &Descriptor)> {
+        self.entries.iter().filter_map(|e| match e {
+            Entry::Name(n, d) => Some((n.as_str(), d)),
+            _ => None,
+        })
+    }
+
+    /// `name`'s one entry removed, every other entry kept as it was.
+    pub(super) fn remove_name(&mut self, name: &str) {
+        if let Some(i) = self
+            .entries
+            .iter()
+            .position(|e| matches!(e, Entry::Name(n, _) if n == name))
+        {
+            self.file.manifests.remove(i);
+            self.entries.remove(i);
+            self.changed = true;
+        }
+    }
+
     /// Every name an entry holds, in the order of `index.json`.
     pub(super) fn names(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().filter_map(|e| match e {

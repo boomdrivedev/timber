@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use timber_seams::{
-    Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put,
-    RepositoryName, Seam, Source, Store, Version,
+    Answer, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Pushed,
+    Put, RepositoryName, Seam, Source, Store, Version,
 };
 
 use crate::bindings::{self, Table};
@@ -215,6 +215,14 @@ impl Store for Unmade {
 
     fn versions(&self, ecosystem: &Ecosystem, name: &EcosystemName) -> Answer<Vec<Version>> {
         self.layout()?.versions(ecosystem, name)
+    }
+
+    fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+        self.layout()?.cache_entries()
+    }
+
+    fn remove_cache_entry(&self, build: &BuildId, at: &Digest) -> Answer<()> {
+        self.layout()?.remove_cache_entry(build, at)
     }
 }
 

@@ -5,6 +5,15 @@
 //! layout holds to a registry and a copy of the directory carries every
 //! artifact and attestation with it.
 //!
+//! A name made or moved at bytes, as a cache entry's is, has its entry
+//! stamped `org.opencontainers.image.created` with the moment it was
+//! written, by the layout's clock, the system's unless a test sets one.
+//! The layout lists each name under `cache/` with the digest it names
+//! and that moment, none where its entry carries none, and removes one
+//! such entry under the index's lock where it names the digest given,
+//! the blob left on disk: a layout keeps no count of what reaches a blob,
+//! and the disk is the host's own (145, 54, C.2; design D6).
+//!
 //! A layout is made only by [`Layout::create`]. Every operation begins by
 //! reading `oci-layout`, so a layout that is gone or unreadable is
 //! answered unreadable with the operating system's words before anything
@@ -12,20 +21,23 @@
 //! does makes one.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use timber_seams::{
-    canonical, Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put,
-    Seam, Source, Store, Version, Why,
+    cache_name, canonical, utc, utc_seconds, Answer, BuildId, Digest, Ecosystem, EcosystemName,
+    Envelope, Held, Manifest, Name, Not, Pushed, Put, Seam, Source, Store, Version, Why, CACHE,
 };
 
 mod blobs;
 mod index;
 
-use super::oci::{self, Descriptor, ENVELOPE, OCTETS, REF_NAME, SUBJECT};
+use super::oci::{self, Descriptor, CREATED, ENVELOPE, OCTETS, REF_NAME, SUBJECT};
 
 /// The layout version this store reads and writes.
 const LAYOUT_VERSION: &str = "1.0.0";
@@ -36,6 +48,28 @@ const LAYOUT_VERSION: &str = "1.0.0";
 pub struct Layout {
     root: PathBuf,
     source: Source,
+    clock: Clock,
+}
+
+/// The moment a name is stamped with, in seconds since the Unix epoch:
+/// the system's, or one a test sets (145).
+#[derive(Clone)]
+struct Clock(Arc<dyn Fn() -> u64 + Send + Sync>);
+
+impl fmt::Debug for Clock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Clock")
+    }
+}
+
+impl Clock {
+    fn system() -> Clock {
+        Clock(Arc::new(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs())
+        }))
+    }
 }
 
 #[derive(Deserialize)]
@@ -49,7 +83,16 @@ impl Layout {
         Layout {
             root: root.to_path_buf(),
             source: Source::new(Seam::Store, format!("OCI layout {}", root.display())),
+            clock: Clock::system(),
         }
+    }
+
+    /// The layout's clock set to `clock`, in seconds since the Unix epoch,
+    /// in place of the system's: the moment each name made or moved at
+    /// bytes is stamped with, so a test fixes it (145).
+    pub fn with_clock(mut self, clock: impl Fn() -> u64 + Send + Sync + 'static) -> Layout {
+        self.clock = Clock(Arc::new(clock));
+        self
     }
 
     /// A layout made at `path`, which is missing or an empty directory:
@@ -238,7 +281,8 @@ impl Store for Layout {
     /// two writers cannot both move it; refused naming where it is
     /// otherwise, with nothing written and nothing retried (70, rule
     /// core.6). The entry carries the media type and size of the manifest
-    /// `to` names, or of its bytes.
+    /// `to` names, or of its bytes, stamped with the moment it was written
+    /// by the layout's clock (145).
     fn name(&self, name: &Name, to: &Digest, expected: Option<&Digest>) -> Answer<()> {
         let marker = self.opened()?;
         let size = self.blob_size(to)?;
@@ -252,7 +296,7 @@ impl Store for Layout {
                 digest: to.clone(),
                 size,
                 artifact_type: None,
-                annotations: BTreeMap::new(),
+                annotations: BTreeMap::from([(CREATED.into(), utc((self.clock.0)()))]),
             });
             entry.annotations.insert(REF_NAME.into(), name.to_string());
             index.set_name(name.as_str(), entry);
@@ -308,6 +352,62 @@ impl Store for Layout {
             .filter(|(e, n, _)| e == ecosystem && n == name)
             .map(|(_, _, v)| v)
             .collect())
+    }
+
+    /// 145: each entry of `index.json` whose ref name begins `cache/`,
+    /// in its order, with the digest it names and the moment its entry
+    /// was stamped with, none where it carries none; unreadable naming the
+    /// name where the moment is not written as `utc` writes one.
+    fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+        self.opened()?;
+        Ok(self
+            .read_index()?
+            .name_entries()
+            .filter_map(|(name, entry)| {
+                let build = name.strip_prefix(CACHE)?;
+                let at = match entry.annotations.get(CREATED) {
+                    None => Ok(None),
+                    Some(written) => utc_seconds(written).map(Some).ok_or_else(|| {
+                        Not::unreadable(
+                            &self.source,
+                            format!("the name {name}"),
+                            Some(format!(
+                                "its entry's {CREATED} is \"{written}\", and a moment is \
+                                 written YYYY-MM-DDTHH:MM:SSZ"
+                            )),
+                        )
+                    }),
+                };
+                let pushed = at.map(|at| Pushed {
+                    digest: entry.digest.clone(),
+                    at,
+                });
+                Some((BuildId::new(build), pushed))
+            })
+            .collect())
+    }
+
+    /// 145, 54: the entry of `build`'s name removed from `index.json`
+    /// under the lock its changes are written under, only where it names
+    /// `at`; refused naming where it is otherwise and absent where there
+    /// is none, with nothing written. The blob stays on disk (100).
+    fn remove_cache_entry(&self, build: &BuildId, at: &Digest) -> Answer<()> {
+        let marker = self.opened()?;
+        let name = cache_name(build);
+        self.change_index(&marker, |index| {
+            match index.named(name.as_str()).map(|d| d.digest.clone()) {
+                None => Err(Not::absent(&self.source, format!("cache entry {build}"))),
+                Some(held) if &held != at => Err(Not::refused(
+                    &self.source,
+                    Why::NameAt { at: Some(held) },
+                    None,
+                )),
+                Some(_) => {
+                    index.remove_name(name.as_str());
+                    Ok(())
+                }
+            }
+        })
     }
 }
 
@@ -779,5 +879,170 @@ pub(super) mod tests {
             layout.resolve(&Name::new("never-made")),
             Err(Not::absent(layout.source(), "name never-made"))
         );
+    }
+
+    /// The moment a fixed clock answers in these tests.
+    const AT: u64 = 1_793_000_000;
+
+    /// A fresh layout whose clock answers `at`.
+    fn at(at: u64) -> (TempDir, Layout) {
+        let (dir, layout) = fresh();
+        (dir, layout.with_clock(move || at))
+    }
+
+    /// The entry of `name` in `index.json`, as written.
+    fn entry_of(layout: &Layout, name: &str) -> Option<serde_json::Value> {
+        let (_, manifests) = held(layout);
+        manifests
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["annotations"][REF_NAME] == name)
+            .cloned()
+    }
+
+    #[test]
+    fn a_name_made_at_bytes_is_stamped() {
+        let (_dir, layout) = at(AT);
+        let bytes = layout.put_bytes(b"a cache entry").unwrap().digest;
+        layout.name(&Name::new("cache/b7e1"), &bytes, None).unwrap();
+        let entry = entry_of(&layout, "cache/b7e1").unwrap();
+        assert_eq!(entry["annotations"][CREATED], utc(AT));
+        assert_eq!(entry["digest"], serde_json::json!(bytes));
+
+        let moved = layout.clone().with_clock(|| AT + 60);
+        let other = moved.put_bytes(b"other bytes").unwrap().digest;
+        moved
+            .name(&Name::new("cache/b7e1"), &other, Some(&bytes))
+            .unwrap();
+        let entry = entry_of(&layout, "cache/b7e1").unwrap();
+        assert_eq!(entry["annotations"][CREATED], utc(AT + 60), "a move stamps");
+    }
+
+    #[test]
+    fn the_layout_lists_its_cache_entries_with_their_moments() {
+        let (_dir, layout) = at(AT);
+        let first = layout.put_bytes(b"a cache entry").unwrap().digest;
+        let second = layout.put_bytes(b"another entry").unwrap().digest;
+        layout.name(&Name::new("cache/b7e1"), &first, None).unwrap();
+        layout
+            .clone()
+            .with_clock(|| AT + 60)
+            .name(&Name::new("cache/c9d2"), &second, None)
+            .unwrap();
+        layout
+            .name(&Name::new("channel/stable"), &first, None)
+            .unwrap();
+        let before = held(&layout);
+        assert_eq!(
+            layout.cache_entries(),
+            Ok(vec![
+                (
+                    BuildId::new("b7e1"),
+                    Ok(Pushed {
+                        digest: first,
+                        at: Some(AT)
+                    })
+                ),
+                (
+                    BuildId::new("c9d2"),
+                    Ok(Pushed {
+                        digest: second,
+                        at: Some(AT + 60)
+                    })
+                ),
+            ])
+        );
+        assert_eq!(held(&layout), before, "the listing wrote");
+    }
+
+    #[test]
+    fn an_entry_from_before_lists_no_moment() {
+        let (_dir, layout) = at(AT);
+        let bytes = layout.put_bytes(b"a cache entry").unwrap().digest;
+        layout.name(&Name::new("cache/b7e1"), &bytes, None).unwrap();
+        let path = layout.root().join("index.json");
+        let mut index: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        index["manifests"][0]["annotations"]
+            .as_object_mut()
+            .unwrap()
+            .remove(CREATED);
+        fs::write(&path, serde_json::to_vec(&index).unwrap()).unwrap();
+        assert_eq!(
+            layout.cache_entries(),
+            Ok(vec![(
+                BuildId::new("b7e1"),
+                Ok(Pushed {
+                    digest: bytes,
+                    at: None
+                })
+            )])
+        );
+    }
+
+    #[test]
+    fn a_removed_entry_leaves_its_blob() {
+        let (_dir, layout) = at(AT);
+        let bytes = layout.put_bytes(b"an empty output").unwrap().digest;
+        for name in ["cache/b7e1", "cache/c9d2"] {
+            layout.name(&Name::new(name), &bytes, None).unwrap();
+        }
+        let artifact = Manifest::Artifact {
+            meta: meta("@acme/site"),
+            layers: vec![bytes.clone()],
+        };
+        let index = layout.put_artifact(&artifact).unwrap().digest;
+        assert_eq!(
+            layout.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Ok(())
+        );
+        assert!(entry_of(&layout, "cache/b7e1").is_none());
+        assert!(layout.blob_path(&bytes).exists(), "the blob went");
+        assert_eq!(layout.resolve(&Name::new("cache/c9d2")), Ok(bytes.clone()));
+        assert_eq!(layout.read(&index), Ok(Held::Manifest(artifact)));
+        assert_eq!(
+            layout.read(&bytes),
+            Ok(Held::Bytes(b"an empty output".to_vec()))
+        );
+        assert_eq!(
+            layout
+                .cache_entries()
+                .unwrap()
+                .into_iter()
+                .map(|(b, _)| b)
+                .collect::<Vec<_>>(),
+            [BuildId::new("c9d2")]
+        );
+    }
+
+    #[test]
+    fn a_removal_at_another_digest_is_refused_naming_where_it_is() {
+        let (_dir, layout) = at(AT);
+        let bytes = layout.put_bytes(b"a cache entry").unwrap().digest;
+        layout.name(&Name::new("cache/b7e1"), &bytes, None).unwrap();
+        let before = held(&layout);
+        assert_eq!(
+            layout.remove_cache_entry(&BuildId::new("b7e1"), &Digest::of(b"other bytes")),
+            Err(Not::refused(
+                layout.source(),
+                Why::NameAt { at: Some(bytes) },
+                None
+            ))
+        );
+        assert_eq!(held(&layout), before);
+    }
+
+    #[test]
+    fn a_removal_of_no_entry_is_absent() {
+        let (_dir, layout) = at(AT);
+        let bytes = layout.put_bytes(b"a cache entry").unwrap().digest;
+        layout.name(&Name::new("b7e1"), &bytes, None).unwrap();
+        let before = held(&layout);
+        assert_eq!(
+            layout.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Err(Not::absent(layout.source(), "cache entry b7e1"))
+        );
+        assert_eq!(held(&layout), before, "a name outside cache/ is no entry");
     }
 }

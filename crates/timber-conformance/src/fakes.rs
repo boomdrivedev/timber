@@ -472,6 +472,7 @@ impl PolicyRig for FakePolicyRig {
                 PolicyOp::PolicyFor,
                 PolicyOp::Channels,
                 PolicyOp::Environments,
+                PolicyOp::CacheKept,
             ],
         )
     }

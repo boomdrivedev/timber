@@ -133,6 +133,12 @@ mod tests {
         fn versions(&self, _: &Ecosystem, _: &EcosystemName) -> Answer<Vec<Version>> {
             nothing(Seam::Store, "versions")
         }
+        fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+            nothing(Seam::Store, "cache entries")
+        }
+        fn remove_cache_entry(&self, _: &BuildId, _: &Digest) -> Answer<()> {
+            nothing(Seam::Store, "cache entries")
+        }
     }
 
     impl Build for Nowhere {
@@ -174,6 +180,9 @@ mod tests {
         }
         fn environments(&self, _: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
             nothing(Seam::Policy, "environments")
+        }
+        fn cache_kept(&self, _: &Revision) -> Answer<Keeping> {
+            nothing(Seam::Policy, "cache-kept")
         }
     }
 

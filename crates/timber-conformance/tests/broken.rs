@@ -45,6 +45,16 @@ impl Store for NeverHeldAlready {
     ) -> Answer<Vec<timber_seams::Version>> {
         self.inner.versions(ecosystem, name)
     }
+    fn cache_entries(&self) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+        self.inner.cache_entries()
+    }
+    fn remove_cache_entry(
+        &self,
+        build: &timber_seams::BuildId,
+        at: &timber_seams::Digest,
+    ) -> Answer<()> {
+        self.inner.remove_cache_entry(build, at)
+    }
 }
 
 const NEVER_HELD: &str = "a store that never holds bytes already";

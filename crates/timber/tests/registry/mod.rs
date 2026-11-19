@@ -175,10 +175,14 @@ impl Server {
                 } else {
                     String::new()
                 };
+                // Deletes on: a cache entry is removed by deleting its
+                // cache manifest, which the reference distribution
+                // answers UNSUPPORTED while deletes are off, its default
+                // (145).
                 let config = format!(
                     "version: 0.1\nlog:\n  level: error\n  accesslog:\n    disabled: true\n\
-                     storage:\n  filesystem:\n    rootdirectory: {}\n{auth}\
-                     http:\n  addr: 127.0.0.1:{port}\n",
+                     storage:\n  filesystem:\n    rootdirectory: {}\n  delete:\n    enabled: true\n\
+                     {auth}http:\n  addr: 127.0.0.1:{port}\n",
                     root.display()
                 );
                 let path = dir.path().join("config.yml");
@@ -275,9 +279,10 @@ impl Drop for Server {
 }
 
 /// The store group's rig: a registry store under a fresh root of a server
-/// the test started, bound for the repository `acme/site`, and one at a
-/// port nothing listens on, which [`StoreRig::unreachable`] makes the
-/// rig's store.
+/// the test started, bound for the repository `acme/site` and the build
+/// profile `moon`, whose cache repository holds its cache entries, and one
+/// at a port nothing listens on, which [`StoreRig::unreachable`] makes
+/// the rig's store (145).
 pub struct RegistryRig {
     _server: Rc<Server>,
     live: Registry,
@@ -288,8 +293,8 @@ pub struct RegistryRig {
 impl RegistryRig {
     pub fn new(server: &Rc<Server>) -> RegistryRig {
         RegistryRig {
-            live: site(&server.repository()),
-            dead: site(&format!("127.0.0.1:{}/store", unanswered())),
+            live: site(&server.repository()).bound_for("moon", false),
+            dead: site(&format!("127.0.0.1:{}/store", unanswered())).bound_for("moon", false),
             _server: server.clone(),
             down: Cell::new(false),
         }
@@ -406,12 +411,32 @@ impl Store for Prefixed {
     ) -> Answer<Vec<timber_seams::Version>> {
         self.registry.versions(ecosystem, &self.artifact(name))
     }
+    /// The entries whose build identity carries the run's prefix, listed
+    /// without it, so a scenario sees its own entries alone.
+    fn cache_entries(&self) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+        Ok(self
+            .registry
+            .cache_entries()?
+            .into_iter()
+            .filter_map(|(build, entry)| {
+                let own = build.as_str().strip_prefix(&self.prefix)?;
+                Some((timber_seams::BuildId::new(own), entry))
+            })
+            .collect())
+    }
+    fn remove_cache_entry(&self, build: &timber_seams::BuildId, at: &Digest) -> Answer<()> {
+        self.registry.remove_cache_entry(
+            &timber_seams::BuildId::new(format!("{}{build}", self.prefix)),
+            at,
+        )
+    }
 }
 
 /// The store group's rig under the root of a hosted registry the host
-/// names, bound for the repository [`LIVE`], a scenario's names apart from
-/// every other's by the run's prefix, and a store at a loopback port
-/// nothing listens on, which [`StoreRig::unreachable`] makes the rig's.
+/// names, bound for the repository [`LIVE`] and the build profile `moon`,
+/// a scenario's names apart from every other's by the run's prefix, and a
+/// store at a loopback port nothing listens on, which
+/// [`StoreRig::unreachable`] makes the rig's (145).
 pub struct LiveRig {
     live: Prefixed,
     dead: Registry,
@@ -422,10 +447,10 @@ impl LiveRig {
     pub fn new(repository: &str, run: &str, scenario: usize) -> LiveRig {
         LiveRig {
             live: Prefixed {
-                registry: live(repository),
+                registry: live(repository).bound_for("moon", false),
                 prefix: format!("{run}-{scenario}-"),
             },
-            dead: live(&format!("127.0.0.1:{}/store", unanswered())),
+            dead: live(&format!("127.0.0.1:{}/store", unanswered())).bound_for("moon", false),
             down: Cell::new(false),
         }
     }
@@ -631,15 +656,21 @@ fn pass(
     client.flush()
 }
 
-/// The cache manifest the registry store names `bytes` through, written
-/// out here apart from the profile's own form, so a test that finds these
-/// bytes in a registry proves the form (design D14).
-pub fn cache_manifest(bytes: &[u8]) -> Vec<u8> {
+/// The moment a store whose clock is fixed for the cache manifest's
+/// scenarios puts each cache manifest at.
+pub const PUT_AT: u64 = 1_793_000_000;
+
+/// The cache manifest the registry store names `bytes` through for the
+/// store name `name`, put at `at`, written out here apart from the
+/// profile's own form, so a test that finds these bytes in a registry
+/// proves the form (145; design D14).
+pub fn cache_manifest(bytes: &[u8], name: &str, at: u64) -> Vec<u8> {
     format!(
-        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.agentplot.timber.cache.v1","config":{{"mediaType":"application/vnd.oci.empty.v1+json","digest":"{}","size":2}},"layers":[{{"mediaType":"application/octet-stream","digest":"{}","size":{}}}]}}"#,
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.agentplot.timber.cache.v1","config":{{"mediaType":"application/vnd.oci.empty.v1+json","digest":"{}","size":2}},"layers":[{{"mediaType":"application/octet-stream","digest":"{}","size":{}}}],"annotations":{{"io.github.agentplot.timber.store-name":"{name}","org.opencontainers.image.created":"{}"}}}}"#,
         Digest::of(b"{}"),
         Digest::of(bytes),
-        bytes.len()
+        bytes.len(),
+        timber_seams::utc(at)
     )
     .into_bytes()
 }
@@ -654,8 +685,11 @@ pub fn cache_manifest(bytes: &[u8]) -> Vec<u8> {
 /// as the store group reads one (C.1, 36). A move from bytes the name has
 /// left is refused only by the check's best effort, so it is proven
 /// where every read shows a move at once, in `registry_store.rs`, and
-/// never against ECR (C.1, ADR 0015).
-pub fn cache_entries(store: &dyn Store, within: Duration) {
+/// never against ECR (C.1, ADR 0015). The store's clock answers
+/// [`PUT_AT`], and it writes each cache entry's name with `prefix` before
+/// its build identity, as [`Prefixed`] does, so the cache manifest's
+/// own digest is known (145).
+pub fn cache_entries(store: &dyn Store, within: Duration, prefix: &str) {
     let (entry, other): (&[u8], &[u8]) = (b"a cache entry", b"another cache entry");
     let bytes = store.put_bytes(entry).unwrap().digest;
     let moved = store.put_bytes(other).unwrap().digest;
@@ -677,7 +711,7 @@ pub fn cache_entries(store: &dyn Store, within: Duration) {
     let was = [None, Some(&bytes)];
     assert_eq!(resolved(&two, &moved, &was).as_ref(), Ok(&moved));
 
-    let manifest = cache_manifest(entry);
+    let manifest = cache_manifest(entry, &format!("cache/{prefix}one"), PUT_AT);
     let own = Digest::of(&manifest);
     assert_eq!(store.read(&own), Ok(Held::Bytes(manifest)));
     assert_eq!(store.claims_of(&bytes), Ok(vec![]));

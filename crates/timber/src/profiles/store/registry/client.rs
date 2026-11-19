@@ -4,11 +4,13 @@
 //! registry challenges answered once with the host's Docker credential,
 //! reached at that moment through the host's Docker configuration and
 //! the helper it names, as `Basic` or as a `Bearer` token asked of the
-//! challenge's realm: a read for the scope the challenge names, a write,
-//! any method but `GET` and `HEAD`, for `repository:<repository>:pull,push`
-//! whatever the challenge names, as a registry that names `pull` alone
-//! for a write would answer a token that cannot push (64, C.1; record
-//! 0039). `service` is the challenge's either way. What authorizes the next
+//! challenge's realm: a read for the scope the challenge names, a delete
+//! for `repository:<repository>:pull,delete`, and any other write, any
+//! method but `GET`, `HEAD` and `DELETE`, for
+//! `repository:<repository>:pull,push`, whatever the challenge names, as
+//! a registry that names `pull` alone for a write would answer a token
+//! that cannot push (64, 145, C.1; record 0039). `service` is the
+//! challenge's either way. What authorizes the next
 //! request to each repository is held in memory by the one handle and
 //! written nowhere, so a token scoped to one repository is kept beside
 //! another's (64, rule core.21; design D8).
@@ -216,6 +218,30 @@ impl Client {
         self.once(&method, url, headers, body, Some(&authorization))
     }
 
+    /// `method` of `url`, a request to another service than the registry,
+    /// as GitHub's API, sent as asked with `authorization` where given and
+    /// no challenge answered, its answer read whole (145; design D5).
+    pub(super) fn plain(
+        &self,
+        method: Method,
+        url: &str,
+        headers: &[(&str, &str)],
+        authorization: Option<&str>,
+    ) -> Answer<Answered> {
+        self.once(&method, url, headers, None, authorization)
+    }
+
+    /// The token the host's Docker credential for the registry holds,
+    /// reached now and kept nowhere: its password, or its identity token;
+    /// none where the host holds no credential for the registry (64, rule
+    /// core.21; record 0015).
+    pub(super) fn token(&self) -> Answer<Option<String>> {
+        Ok(self.credential()?.map(|credential| match credential {
+            DockerCredential::UsernamePassword(_, password) => password,
+            DockerCredential::IdentityToken(token) => token,
+        }))
+    }
+
     /// `method` of `url` sent and its answer read whole. A read, `GET` or
     /// `HEAD`, whose connection closed before its whole answer arrived,
     /// as a kept connection the far side closed while it idled does, is
@@ -290,7 +316,8 @@ impl Client {
     /// What authorizes a `method` request for `repository` that
     /// `challenge` was answered to: the host's credential as `Basic`, or a
     /// token the realm answers for it, a read's for the scope the
-    /// challenge names and a write's for pulling and pushing `repository`;
+    /// challenge names, a delete's for pulling and deleting in
+    /// `repository` and another write's for pulling and pushing it;
     /// none where the host holds no credential for the registry, so the
     /// challenge is the answer.
     fn authorize(
@@ -313,8 +340,9 @@ impl Client {
                 service,
                 scope,
             } => {
-                let write = ![Method::GET, Method::HEAD].contains(method);
-                let scope = if write {
+                let scope = if *method == Method::DELETE {
+                    Some(format!("repository:{repository}:pull,delete"))
+                } else if ![Method::GET, Method::HEAD].contains(method) {
                     Some(format!("repository:{repository}:pull,push"))
                 } else {
                     scope.clone()
@@ -414,7 +442,7 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -530,6 +558,57 @@ mod tests {
     }
 
     #[test]
+    fn a_delete_asks_to_pull_and_delete_in_its_repository() {
+        use std::sync::{Arc, Mutex, OnceLock};
+        let at: Arc<OnceLock<u16>> = Arc::new(OnceLock::new());
+        let asked: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (port_of, queries) = (at.clone(), asked.clone());
+        let port = stub(3, move |head| {
+            let first = head.lines().next().unwrap_or_default().to_string();
+            let reply = |status: &str, headers: &str, body: &str| {
+                format!(
+                    "HTTP/1.1 {status}\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            if let Some(path) = first.split(' ').nth(1).filter(|p| p.starts_with("/token")) {
+                let query = path.split_once('?').map(|(_, q)| q).unwrap_or_default();
+                queries.lock().unwrap().push(query.to_string());
+                return reply("200 OK", "", r#"{"token":"deleting"}"#);
+            }
+            if head
+                .to_lowercase()
+                .contains("authorization: bearer deleting")
+            {
+                return reply("202 Accepted", "", "");
+            }
+            let port = port_of.get().copied().unwrap();
+            reply(
+                "401 Unauthorized",
+                &format!(
+                    "www-authenticate: Bearer realm=\"http://127.0.0.1:{port}/token\",service=\"stub\",scope=\"repository:one:pull\"\r\n"
+                ),
+                "",
+            )
+        });
+        at.set(port).unwrap();
+        let source = Source::new(timber_seams::Seam::Store, "OCI registry stub");
+        let url = format!("http://127.0.0.1:{port}/v2/one/manifests/sha256:00");
+        let none = tempfile::TempDir::new().unwrap();
+        let client = Client::new(&format!("127.0.0.1:{port}"), &source);
+        let deleted = under_docker_config(none.path(), || {
+            client.send("one", Method::DELETE, &url, &[], None)
+        })
+        .unwrap();
+        assert_eq!(deleted.status, StatusCode::ACCEPTED, "{}", deleted.words());
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["service=stub&scope=repository%3Aone%3Apull%2Cdelete"],
+            "a delete asked a token that cannot delete"
+        );
+    }
+
+    #[test]
     fn a_write_asks_to_pull_and_push_its_repository() {
         use std::sync::{Arc, Mutex, OnceLock};
         let at: Arc<OnceLock<u16>> = Arc::new(OnceLock::new());
@@ -616,7 +695,10 @@ mod tests {
     /// that configuration alone and never the host's or the helper it
     /// names (rule core.38); one test at a time, since the variable is the
     /// process's, and the variable as it was after.
-    fn under_docker_config<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
+    pub(in crate::profiles::store::registry) fn under_docker_config<T>(
+        dir: &std::path::Path,
+        f: impl FnOnce() -> T,
+    ) -> T {
         static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _environment = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
         let before = std::env::var_os("DOCKER_CONFIG");

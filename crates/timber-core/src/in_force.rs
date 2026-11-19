@@ -1,10 +1,10 @@
 //! `timber policy`: the policy in force at the governed branch's landed
 //! head, as the policy seam answers it: what acceptance and a layout
-//! require, and every channel the channels answer lists, the givens
-//! beside the repository's own, each with how it moves and its own policy,
-//! and apart from them the givens held off, each with the line that
-//! switches it on, from the same one answer (82, 131, C.10; design D11,
-//! D13).
+//! require, how long cache entries are kept (145), and every channel the
+//! channels answer lists, the givens beside the repository's own, each
+//! with how it moves and its own policy, and apart from them the givens
+//! held off, each with the line that switches it on, from the same one
+//! answer (82, 131, C.10; design D11, D13).
 //!
 //! It asks the landing and the policy alone, and writes nothing (60, rule
 //! core.32). Each part, and each channel's policy, carries its own answer,
@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize, Serializer};
 use timber_seams::{
-    Answer, Audience, Branch, DeclaredChannel, HeldChannel, Required, Revision, Seams,
+    Answer, Audience, Branch, DeclaredChannel, HeldChannel, Keeping, Required, Revision, Seams,
 };
 
 use crate::{answer_json, policy_at, policy_channels_at, History, Landed};
@@ -36,6 +36,10 @@ pub struct InForce {
     pub acceptance: Answer<Required>,
     #[serde(serialize_with = "one_answer")]
     pub layout: Answer<Required>,
+    /// 145: how long the repository keeps its cache entries from their
+    /// push, and whether that is the givens' time.
+    #[serde(serialize_with = "one_answer")]
+    pub cache: Answer<Keeping>,
     #[serde(serialize_with = "one_answer")]
     pub channels: Answer<ChannelsInForce>,
 }
@@ -71,9 +75,10 @@ fn one_answer<T: Serialize, S: Serializer>(
 /// landing says the branch landed it; refused naming the branch and the
 /// revision before the policy is asked where it has not (14), and the
 /// history's or the landing's own answer where the head cannot be read.
-/// Acceptance, a layout, the channels with the givens held off, and each
-/// channel's policy are each asked of the policy seam and answered as it
-/// answers them.
+/// Acceptance, a layout, the keeping time of cache entries, the channels
+/// with the givens held off, and each channel's policy are each asked of
+/// the policy seam at the landed revision and answered as it answers
+/// them.
 pub fn in_force(seams: &Seams, history: &History, ask: &InForceAsk) -> Answer<InForce> {
     let head = history.head(&ask.branch)?;
     let landed = Landed::check(seams.landing.as_ref(), &ask.branch, &head)?;
@@ -94,6 +99,7 @@ pub fn in_force(seams: &Seams, history: &History, ask: &InForceAsk) -> Answer<In
         revision: head,
         acceptance: policy_at(policy, &landed, &Audience::Acceptance),
         layout: policy_at(policy, &landed, &Audience::Layout),
+        cache: policy.cache_kept(landed.revision()),
         channels,
     })
 }

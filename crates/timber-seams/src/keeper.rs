@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Answer, ChannelId, ChannelName, Claim, ClaimKind, ComponentName, Digest, Envelope, Name, Read,
-    Revision, SignerId, Version,
+    Answer, BuildId, ChannelId, ChannelName, Claim, ClaimKind, ComponentName, Digest, Envelope,
+    Name, Read, Revision, SignerId, Version,
 };
 
 /// A version and the index its name resolved to, which a promotion
@@ -83,6 +83,17 @@ pub fn channel_name(channel: &ChannelId) -> Name {
 
 /// What every channel's name in the store begins with (125, C.14).
 const CHANNEL: &str = "channel/";
+
+/// What every cache entry's name in the store begins with, and no other
+/// name does (52, rule core.48).
+pub const CACHE: &str = "cache/";
+
+/// 52: the store's name for the cache entry of `build`, `cache/` and the
+/// build identity, the one spelling the core and every store profile
+/// call, as [`channel_name`] is a channel's (rule core.48).
+pub fn cache_name(build: &BuildId) -> Name {
+    Name::new(format!("{CACHE}{build}"))
+}
 
 impl Name {
     /// [`channel_name`] read back: after `channel/`, the component up to
@@ -237,6 +248,15 @@ mod tests {
             )),
             Name::new("channel/lib/stable")
         );
+    }
+
+    #[test]
+    fn a_cache_name_is_cache_and_the_build_identity() {
+        assert_eq!(cache_name(&BuildId::new("b7e1")), Name::new("cache/b7e1"));
+        assert!(cache_name(&BuildId::new("b7e1"))
+            .as_str()
+            .starts_with(CACHE));
+        assert_eq!(cache_name(&BuildId::new("b7e1")).as_channel(), None);
     }
 
     #[test]

@@ -329,6 +329,10 @@ impl Policy for Watched {
     fn environments(&self, revision: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
         self.inner.environments(revision)
     }
+
+    fn cache_kept(&self, revision: &Revision) -> Answer<timber_seams::Keeping> {
+        self.inner.cache_kept(revision)
+    }
 }
 
 fn the_policy_read_at_the_landed_revision(world: &FakeWorld) {

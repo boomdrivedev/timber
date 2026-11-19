@@ -3,15 +3,18 @@
 //! nothing accepted or released the worse for it, S14 among them (52 to
 //! 54, 100; design D8); the push after a landing, which writes the
 //! entries of a landing's passing builds and offers and keeps nothing
-//! (52 to 54, 77); and the push before one, which writes what a
-//! checkout's run left with the landing asked nothing, for a host that
-//! holds none of it to publish (52 to 54).
+//! (52 to 54, 77); the push before one, which writes what a checkout's
+//! run left with the landing asked nothing, for a host that holds none
+//! of it to publish (52 to 54); and prune, which removes each entry once
+//! the keeping time the policy gives at a landed revision has passed
+//! since its push, and nothing accepted or released, no record of a
+//! claimed version and no ledger (145, 54, 22, 34).
 
 use timber_core::{
-    cache_name, push, push_left, sync, write, Entry, Filled, LeftAsk, Published, Push, PushAsk,
-    PushedLeft, SyncAsk, Synced, Verified,
+    cache_name, prune, push, push_left, sync, write, Entry, Fate, Filled, LeftAsk, PruneAsk,
+    Pruned, Published, Push, PushAsk, PushedLeft, SyncAsk, Synced, ToldBy, Verified,
 };
-use timber_fakes::{PolicyOp, ProjectionOp};
+use timber_fakes::{KeeperOp, PolicyOp, ProjectionOp, SignerOp, StoreOp};
 use timber_seams::{
     Answer, Artifact, AskedOf, Audience, Branch, BuildId, CacheEntry, ClaimKind, ComponentName,
     Contents, Digest, Ecosystem, Held, Layout, Left, Miss, Name, NamedSigner, Not, Outcome, Output,
@@ -105,6 +108,30 @@ pub fn scenarios() -> Vec<Scenario<FakeWorld>> {
             plays: None,
             cites: &[52, 54],
             run: a_failed_build_identity_left,
+        },
+        Scenario {
+            name: "an entry past its keeping time removed, one within kept",
+            plays: None,
+            cites: &[145],
+            run: an_entry_past_its_keeping_time_removed_one_within_kept,
+        },
+        Scenario {
+            name: "an entry with no push moment removed",
+            plays: None,
+            cites: &[145, 54],
+            run: an_entry_with_no_push_moment_removed,
+        },
+        Scenario {
+            name: "the keeping time read at the landed revision",
+            plays: None,
+            cites: &[145, 22],
+            run: the_keeping_time_read_at_the_landed_revision,
+        },
+        Scenario {
+            name: "a released version read back whole after prune",
+            plays: None,
+            cites: &[145, 54, 22, 34],
+            run: a_released_version_read_back_whole_after_prune,
         },
     ]
 }
@@ -827,4 +854,297 @@ fn a_failed_build_identity_left(world: &FakeWorld) {
         "the second push wrote to the store"
     );
     assert_eq!(world.fakes.landing.calls(), [], "the landing was asked");
+}
+
+/// The moment every prune here runs at, in seconds since the Unix epoch.
+const NOW: u64 = 1_800_000_000;
+
+/// A day, in seconds.
+const DAY: u64 = 86_400;
+
+/// Prune asked at `revision` of `main` at [`NOW`].
+fn pruned(world: &FakeWorld, revision: &Revision) -> Pruned {
+    let ask = PruneAsk {
+        branch: world.main.clone(),
+        revision: revision.clone(),
+        now: NOW,
+    };
+    ok(prune(&world.seams(), &ask), "the prune")
+}
+
+/// What became of the entry of `build`.
+fn fate<'a>(pruned: &'a Pruned, build: &BuildId) -> &'a Answer<Fate> {
+    &pruned
+        .entries
+        .iter()
+        .find(|(b, _)| b == build)
+        .unwrap_or_else(|| panic!("prune named no entry for {build}: {pruned:?}"))
+        .1
+}
+
+/// The build identities the store lists, in its order.
+fn listed(world: &FakeWorld) -> Vec<BuildId> {
+    ok(world.fakes.store.cache_entries(), "cache-entries")
+        .into_iter()
+        .map(|(build, _)| build)
+        .collect()
+}
+
+/// The head landed with passing verdicts on both outputs and their
+/// entries pushed, the site's at `site` and the server's at `server`, a
+/// moment or none; the two build identities.
+fn pushed_at(world: &FakeWorld, site: Option<u64>, server: Option<u64>) -> (BuildId, BuildId) {
+    passing(world, &world.head);
+    let (s, v) = (
+        build_of("site", &world.head),
+        build_of("server", &world.head),
+    );
+    world.fakes.store.pushed(&s, site);
+    world.fakes.store.pushed(&v, server);
+    (s, v)
+}
+
+/// 145: the policy's thirty days given, an entry pushed thirty-one days
+/// ago is removed and one pushed twenty-nine days ago kept until a day
+/// after the prune.
+fn an_entry_past_its_keeping_time_removed_one_within_kept(world: &FakeWorld) {
+    let (old, recent) = (NOW - 31 * DAY, NOW - 29 * DAY);
+    let (site, server) = pushed_at(world, Some(old), Some(recent));
+    let pruned = pruned(world, &world.head);
+    assert_eq!(
+        (pruned.keeping.days, pruned.keeping.given),
+        (30, true),
+        "the givens' thirty days were not the keeping time"
+    );
+    assert_eq!(
+        fate(&pruned, &site),
+        &Ok(Fate::Removed { pushed: Some(old) }),
+        "the entry past its time was not removed"
+    );
+    assert_eq!(
+        fate(&pruned, &server),
+        &Ok(Fate::Kept {
+            pushed: recent,
+            until: NOW + DAY
+        }),
+        "the entry within its time was not kept"
+    );
+    assert_eq!(listed(world), [server], "the store lists otherwise");
+}
+
+/// 145, 54: an entry with no push moment, pushed before moments were
+/// written, is removed, and the revision's sync answers it absent,
+/// refusing nothing.
+fn an_entry_with_no_push_moment_removed(world: &FakeWorld) {
+    let (site, server) = pushed_at(world, None, Some(NOW));
+    let pruned = pruned(world, &world.head);
+    assert_eq!(
+        fate(&pruned, &site),
+        &Ok(Fate::Removed { pushed: None }),
+        "the entry with no moment was not removed"
+    );
+    assert!(
+        matches!(fate(&pruned, &server), Ok(Fate::Kept { .. })),
+        "the entry pushed now was not kept"
+    );
+    let answer = synced(world, &world.head);
+    assert!(
+        matches!(filled(&answer, &site), Err(Not::Absent(_))),
+        "the removed entry was not answered absent by a sync: {:?}",
+        filled(&answer, &site)
+    );
+}
+
+/// 145, 22: the keeping time is read at the landed revision prune is
+/// asked, never at another, and prune claims no version: the record of
+/// the versions claimed, the history's tags, is as it was.
+fn the_keeping_time_read_at_the_landed_revision(world: &FakeWorld) {
+    let at = NOW - 8 * DAY;
+    let (site, server) = pushed_at(world, Some(at), Some(at));
+    world.fakes.policy.keeps_at(&world.head, 7);
+    world.fakes.policy.keeps_at(&world.start, 60);
+    let tags = (world.repo().tags(), world.shared().tags());
+    let pruned = pruned(world, &world.head);
+    assert_eq!(
+        (pruned.keeping.days, pruned.keeping.given),
+        (7, false),
+        "the time written at the landed revision was not read"
+    );
+    for build in [&site, &server] {
+        assert_eq!(
+            fate(&pruned, build),
+            &Ok(Fate::Removed { pushed: Some(at) }),
+            "{build} was not removed after its seven days"
+        );
+    }
+    let asked: Vec<String> = world
+        .fakes
+        .policy
+        .calls()
+        .iter()
+        .filter(|c| c.op == PolicyOp::CacheKept)
+        .map(|c| c.given["revision"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        asked,
+        [world.head.as_str()],
+        "the keeping time was read at another revision"
+    );
+    assert_eq!(
+        (world.repo().tags(), world.shared().tags()),
+        tags,
+        "prune changed the record of claimed versions"
+    );
+}
+
+/// 145, 54, 22, 34: a version published from the entries its landing
+/// pushed, accepted by the gate and promoted to `beta`, reads back whole
+/// once prune has removed those entries: every name outside `cache/` at
+/// the digest it was, every claim as it was, the chain as it was and the
+/// history's tags too; and prune asked the store only to list and remove
+/// cache entries, and nothing of the ledger or a signer.
+fn a_released_version_read_back_whole_after_prune(world: &FakeWorld) {
+    let beta = timber_seams::ChannelId::new(None, timber_seams::ChannelName::new("beta"));
+    let gate = NamedSigner {
+        id: SignerId::new(crate::world::GATE),
+        verified_by: format!("{}'s key", crate::world::GATE),
+        kinds: vec![ClaimKind::Acceptance],
+        checks: vec![],
+    };
+    let (site, server) = pushed_at(world, Some(NOW - 40 * DAY), None);
+    let policy = &world.fakes.policy;
+    policy.require(Audience::Acceptance, acceptance());
+    policy.require(
+        Audience::Channel(beta.clone()),
+        Required::Channel {
+            claims: vec![RequiredClaim {
+                kind: ClaimKind::Acceptance,
+                check: None,
+                environment: None,
+                signers: vec![gate.clone()],
+                asked_of: AskedOf::Every,
+            }],
+            bound_to: None,
+            promoted_by: vec![gate],
+            approvers: vec![],
+        },
+    );
+    policy.follows(&beta, false);
+    let published = ok(one(world.publish(&world.ask(&world.head))), "the publish");
+    let (version, index) = version_of(&published);
+    let told = ToldBy::Publish {
+        index: index.clone(),
+    };
+    let judged = world.judge(
+        &world.gate_ask(version.as_str(), told, crate::world::GATE),
+        &[crate::world::GATE],
+    );
+    assert!(
+        matches!(judged, Ok(timber_core::Judged::Accepted { .. })),
+        "the version was not accepted: {judged:?}"
+    );
+
+    let names: Vec<(Name, Digest)> = world
+        .fakes
+        .store
+        .contents()
+        .names
+        .into_iter()
+        .filter(|(name, _)| !name.as_str().starts_with("cache/"))
+        .collect();
+    assert!(
+        names.iter().any(|(_, at)| at == index),
+        "no name outside cache/ is at the index: {names:?}"
+    );
+    let claims: Vec<(Digest, Vec<timber_seams::Envelope>)> = world
+        .fakes
+        .store
+        .contents()
+        .attached
+        .into_keys()
+        .map(|d| {
+            let held = ok(world.fakes.store.claims_of(&d), "claims-of");
+            (d, held)
+        })
+        .collect();
+    let chain = ok(
+        timber_seams::Keeper::chain(&world.fakes.keeper, &beta),
+        "beta's chain",
+    )
+    .claims;
+    let tags = (world.repo().tags(), world.shared().tags());
+    let counts = (
+        world.fakes.store.calls().len(),
+        world.fakes.keeper.calls().len(),
+        world.fakes.signer.calls().len(),
+    );
+
+    let pruned = pruned(world, &world.head);
+    let store_ops: Vec<StoreOp> = world.fakes.store.calls()[counts.0..]
+        .iter()
+        .map(|c| c.op)
+        .collect();
+    assert_eq!(
+        store_ops,
+        [
+            StoreOp::CacheEntries,
+            StoreOp::RemoveCacheEntry,
+            StoreOp::RemoveCacheEntry
+        ],
+        "prune asked the store otherwise than to list and remove cache entries"
+    );
+    let keeper: Vec<KeeperOp> = world.fakes.keeper.calls()[counts.1..]
+        .iter()
+        .map(|c| c.op)
+        .collect();
+    assert!(keeper.is_empty(), "prune asked the ledger {keeper:?}");
+    let signer: Vec<SignerOp> = world.fakes.signer.calls()[counts.2..]
+        .iter()
+        .map(|c| c.op)
+        .collect();
+    assert!(signer.is_empty(), "prune asked a signer {signer:?}");
+    for build in [&site, &server] {
+        assert!(
+            matches!(fate(&pruned, build), Ok(Fate::Removed { .. })),
+            "{build} was not removed: {:?}",
+            fate(&pruned, build)
+        );
+    }
+    assert!(listed(world).is_empty(), "an entry is still listed");
+
+    for (name, at) in &names {
+        assert_eq!(
+            world.fakes.store.resolve(name).as_ref(),
+            Ok(at),
+            "{name} names otherwise after prune"
+        );
+    }
+    for (digest, held) in &claims {
+        assert_eq!(
+            world.fakes.store.claims_of(digest).as_ref(),
+            Ok(held),
+            "the claims on {digest} changed"
+        );
+    }
+    assert_eq!(
+        ok(
+            timber_seams::Keeper::chain(&world.fakes.keeper, &beta),
+            "beta's chain"
+        )
+        .claims,
+        chain,
+        "beta's chain changed"
+    );
+    assert_eq!(
+        (world.repo().tags(), world.shared().tags()),
+        tags,
+        "prune changed the record of claimed versions"
+    );
+    assert!(
+        matches!(
+            world.fakes.store.read(index),
+            Ok(Held::Manifest(timber_seams::Manifest::Index(_)))
+        ),
+        "the index does not read back as an index"
+    );
 }
