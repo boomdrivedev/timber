@@ -1986,7 +1986,7 @@ fn a_fragment_that_cannot_be_read_makes_every_answer_unreadable_naming_the_given
         (broken, words),
         (
             "[acceptance]\nrequire = []\n",
-            "the givens hold acceptance, and they hold only channels' tables, [channels.<name>]"
+            "the givens hold acceptance, and they hold only channels' tables, [channels.<name>], and [cache]"
                 .to_string(),
         ),
     ] {
@@ -2543,4 +2543,121 @@ fn a_key_naming_the_artifacts_a_claim_is_asked_of_is_unreadable() {
         said,
         "[acceptance]: unknown field `asked_of`, expected one of `kind`, `check`, `signers`"
     );
+}
+
+#[test]
+fn the_keeping_time_written_is_answered_written() {
+    let repo = Repo::new();
+    let at = repo.at(&format!("{}[cache]\nkeep_days = 14\n", signers()));
+    assert_eq!(
+        repo.policy().cache_kept(&at),
+        Ok(Keeping {
+            days: 14,
+            given: false
+        })
+    );
+}
+
+#[test]
+fn no_cache_table_answers_the_givens_thirty_days() {
+    let repo = Repo::new();
+    let at = repo.at(&signers());
+    assert_eq!(
+        repo.policy().cache_kept(&at),
+        Ok(Keeping {
+            days: 30,
+            given: true
+        })
+    );
+    let empty = repo.at(&format!("{}[cache]\n", signers()));
+    assert_eq!(
+        repo.policy().cache_kept(&empty),
+        Ok(Keeping {
+            days: 30,
+            given: true
+        }),
+        "an empty [cache] writes no time"
+    );
+}
+
+#[test]
+fn a_revision_with_no_file_answers_the_givens_thirty_days() {
+    let repo = Repo::new();
+    fs::write(repo.path().join("README"), "no policy").unwrap();
+    let none = repo.commit();
+    assert_eq!(
+        repo.policy().cache_kept(&none),
+        Ok(Keeping {
+            days: 30,
+            given: true
+        })
+    );
+    let policy = PolicyFile::with_givens(repo.path(), "[channels.edge]\non_each_publish = true\n");
+    assert_eq!(
+        policy.cache_kept(&none),
+        Err(Not::unreadable(
+            &source(),
+            GIVENS_NAME,
+            Some("the givens give no [cache] keep_days".into())
+        )),
+        "a fragment that gives no time is named"
+    );
+}
+
+#[test]
+fn keep_days_of_zero_is_answered() {
+    let repo = Repo::new();
+    let at = repo.at("[cache]\nkeep_days = 0\n");
+    assert_eq!(
+        repo.policy().cache_kept(&at),
+        Ok(Keeping {
+            days: 0,
+            given: false
+        })
+    );
+}
+
+#[test]
+fn another_key_under_cache_is_unreadable_naming_it() {
+    let repo = Repo::new();
+    let at = repo.at(&format!("{}[cache]\nkeep = 14\n", signers()));
+    let policy = repo.policy();
+    assert_eq!(
+        unreadable(policy.cache_kept(&at), &at),
+        "[cache] names keep, and [cache] holds keep_days alone"
+    );
+    assert!(
+        policy.listed(&at).is_ok(),
+        "[cache] is read when the keeping time is asked"
+    );
+}
+
+#[test]
+fn keep_days_of_another_form_is_unreadable_naming_it() {
+    let repo = Repo::new();
+    for (written, said) in [
+        (
+            "\"14d\"",
+            "[cache] keep_days is \"14d\", and it is a whole number of days from 0 to 4294967295",
+        ),
+        (
+            "-1",
+            "[cache] keep_days is -1, and it is a whole number of days from 0 to 4294967295",
+        ),
+        (
+            "4294967296",
+            "[cache] keep_days is 4294967296, and it is a whole number of days from 0 to 4294967295",
+        ),
+        (
+            "14.5",
+            "[cache] keep_days is 14.5, and it is a whole number of days from 0 to 4294967295",
+        ),
+    ] {
+        let at = repo.at(&format!("[cache]\nkeep_days = {written}\n"));
+        assert_eq!(
+            unreadable(repo.policy().cache_kept(&at), &at),
+            said,
+            "{written}"
+        );
+    }
 }

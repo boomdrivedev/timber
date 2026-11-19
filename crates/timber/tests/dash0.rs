@@ -201,7 +201,8 @@ fn publish(store: &Layout, dir: &Path, version: &str, ids: &[&str]) -> Verified 
     .unwrap()
     .published_from(Revision::new(revision), Some(repository()));
     let index = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-    Verified::new(index, version)
+    let tag = format!("{}{version}", component.prefix);
+    Verified::new(index, version, tag)
 }
 
 /// A layout that answers a read of a digest it was told stands for
@@ -244,6 +245,16 @@ impl Store for Aliased {
     }
     fn versions(&self, ecosystem: &Ecosystem, name: &EcosystemName) -> Answer<Vec<Version>> {
         self.store().versions(ecosystem, name)
+    }
+    fn cache_entries(&self) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+        self.store().cache_entries()
+    }
+    fn remove_cache_entry(
+        &self,
+        build: &timber_seams::BuildId,
+        at: &timber_seams::Digest,
+    ) -> Answer<()> {
+        self.store().remove_cache_entry(build, at)
     }
 }
 
@@ -431,7 +442,7 @@ impl TargetRig for Dash0Rig {
         let a = &self.proof.versions[0];
         let mut aliases = self.proof.store.aliases.borrow_mut();
         aliases.insert(digest.clone(), a.index().clone());
-        Verified::new(digest.clone(), a.version().clone())
+        Verified::new(digest.clone(), a.version().clone(), a.tag())
     }
 
     fn environment(&self, _head: Option<&Digest>) -> Environment {

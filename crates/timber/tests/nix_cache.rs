@@ -33,6 +33,7 @@ use base64::Engine;
 use serde_json::json;
 use ssh_key::rand_core::{OsRng, RngCore};
 use tempfile::TempDir;
+use timber::bindings::Credentials;
 use timber::profiles::projection::file::FileProjection;
 use timber::profiles::store::layout::Layout;
 use timber::profiles::target::nix_cache::{self, NixCache};
@@ -369,7 +370,13 @@ impl Fleet {
     /// nix-store.
     fn target(&self) -> NixCache {
         let store = Layout::open(&self.layout).expect("the layout the test published into");
-        NixCache::with_programs(Box::new(store), &self.attic, "nix-store")
+        NixCache::with_programs(
+            Box::new(store),
+            &Credentials::default(),
+            &self.attic,
+            "cachix",
+            "nix-store",
+        )
     }
 
     /// The cache environment `name` of the machine's component, following
@@ -468,7 +475,8 @@ fn publish(layout: &Path, file: &Path, root: &str) -> Verified {
     )
     .unwrap();
     let index = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-    Verified::new(index, version)
+    let tag = format!("{}{version}", component.prefix);
+    Verified::new(index, version, tag)
 }
 
 /// Every file under `dir` but those under `except`, links unfollowed.

@@ -6,10 +6,11 @@ use timber::{run, Cli, Command};
 use timber_seams::{Not, Seam, Source};
 
 /// The command line over the host's bindings file (118): publish, verify,
-/// sync, push, rebuild, promote, apply, status and policy are bound by it,
-/// only publish and push making the layout it names, `push --left`
+/// sync, push, rebuild, promote, apply, status, policy and prune are bound
+/// by it, only publish and push making the layout it names, `push --left`
 /// needing no `[landing]`, status and policy bound on a host with none to
-/// what they ask (60, 139), and apply with every target profile built
+/// what they ask (60, 139), prune to the landing, the policy and the
+/// store's cache alone (145), and apply with every target profile built
 /// beside its store (92); serve binds nothing itself, and each request the
 /// checkout that named its repository (132).
 fn main() {
@@ -26,6 +27,7 @@ fn main() {
         Command::Apply(_) => bindings::load(&at, For::Apply),
         Command::Status(_) => bindings::load(&at, For::Status),
         Command::Policy(_) => bindings::load(&at, For::Policy),
+        Command::Prune(_) => bindings::load(&at, For::Prune),
         Command::Serve(_) => Err(Not::absent(
             &Source::new(Seam::Host, "bindings"),
             "binding, since serve binds each request's checkout itself",

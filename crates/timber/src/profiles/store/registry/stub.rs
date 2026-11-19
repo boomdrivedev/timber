@@ -2,8 +2,13 @@
 //! tests (design D17): repositories of blobs, manifests and tags spoken
 //! to over the distribution protocol as far as the store speaks it, every
 //! request kept, a mount it may decline, repositories it may make on
-//! push or hold only where made, a tag list it pages, and a blob it may
-//! serve only beside a manifest.
+//! push or hold only where made, a tag list it pages, a blob it may
+//! serve only beside a manifest, and a manifest deleted by its digest
+//! with every tag at it, or a delete it refuses. Where a test asks, it
+//! plays GitHub's REST API for a namespace: the namespace's type, each
+//! repository under it a package whose versions are its manifests, named
+//! by their digests, read page by page and deleted by their ids with every
+//! tag at them, each request kept with its headers (design D5).
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -50,6 +55,33 @@ struct State {
     repositories: BTreeMap<String, Held>,
     asked: Vec<Asked>,
     uploads: u64,
+    /// The namespaces GitHub's API answers, each with its type.
+    namespaces: BTreeMap<String, String>,
+    /// Every request to GitHub's API, with its headers.
+    api: Vec<ApiAsked>,
+    /// A package version's id, by the digest it names: its place here.
+    ids: Vec<Digest>,
+    /// The manifests GitHub's API lists no version of.
+    hidden: Vec<Digest>,
+}
+
+/// One request the stub was asked as GitHub's API: its method, its path
+/// with query, and its headers, lowercased.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ApiAsked {
+    pub method: String,
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+}
+
+impl ApiAsked {
+    /// The header `name`'s value.
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// What the stub does beside holding what it is given.
@@ -72,6 +104,12 @@ pub(crate) struct Behaviour {
     /// holds no manifest, while a `HEAD` answers the blob held, as
     /// GitHub's registry does in a package its push made (record 0039).
     pub serves_blobs_beside_a_manifest_alone: bool,
+    /// It answers a manifest's `DELETE` `UNSUPPORTED`, as the reference
+    /// distribution does where deletes are not enabled.
+    pub refuses_deletes: bool,
+    /// It answers a package version's delete through GitHub's API 403,
+    /// in [`GITHUB_FORBIDDEN`]'s words.
+    pub github_refuses_deletes: bool,
 }
 
 impl Default for Behaviour {
@@ -82,6 +120,8 @@ impl Default for Behaviour {
             page: 100,
             loses_later_pages: false,
             serves_blobs_beside_a_manifest_alone: false,
+            refuses_deletes: false,
+            github_refuses_deletes: false,
         }
     }
 }
@@ -96,6 +136,14 @@ pub(crate) struct Stub {
 /// The registry's words for a repository it does not hold.
 pub(crate) const NAME_UNKNOWN: &str =
     r#"{"errors":[{"code":"NAME_UNKNOWN","message":"repository name not known to registry"}]}"#;
+
+/// The reference distribution's words for a delete where deletes are
+/// not enabled.
+pub(crate) const UNSUPPORTED: &str =
+    r#"{"errors":[{"code":"UNSUPPORTED","message":"The operation is unsupported."}]}"#;
+
+/// GitHub's API's words for a delete the token may not make.
+pub(crate) const GITHUB_FORBIDDEN: &str = r#"{"message":"Must have admin rights to Repository.","documentation_url":"https://docs.github.com/rest/packages/packages#delete-package-version-for-an-organization","status":"403"}"#;
 
 /// GitHub's registry's words for a `GET` of a blob in a package that
 /// holds no manifest, verbatim as it answered on 2026-11-17 (record 0039).
@@ -155,6 +203,54 @@ impl Stub {
             .or_default()
             .tags
             .insert(tag.to_string(), digest.clone());
+    }
+
+    /// `bytes` held as a manifest of `repository`, untagged, as another
+    /// tool or an earlier timber would have put it; answers its digest.
+    pub(crate) fn manifest(&self, repository: &str, bytes: &[u8]) -> Digest {
+        let digest = Digest::of(bytes);
+        self.state
+            .lock()
+            .unwrap()
+            .repositories
+            .entry(repository.to_string())
+            .or_default()
+            .manifests
+            .insert(
+                digest.clone(),
+                (
+                    "application/vnd.oci.image.manifest.v1+json".into(),
+                    bytes.to_vec(),
+                ),
+            );
+        digest
+    }
+
+    /// GitHub's API played for `namespace`, answered of type `kind`,
+    /// `Organization` or `User`.
+    pub(crate) fn plays_github(&self, namespace: &str, kind: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .namespaces
+            .insert(namespace.to_string(), kind.to_string());
+    }
+
+    /// No version of `manifest` listed by GitHub's API, as one deleted
+    /// through GitHub's settings would leave its tag behind a lagging
+    /// registry.
+    pub(crate) fn github_hides(&self, manifest: &Digest) {
+        self.state.lock().unwrap().hidden.push(manifest.clone());
+    }
+
+    /// Every request asked of GitHub's API so far, in order.
+    pub(crate) fn api_asked(&self) -> Vec<ApiAsked> {
+        self.state.lock().unwrap().api.clone()
+    }
+
+    /// The origin GitHub's API is played at.
+    pub(crate) fn origin(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
     }
 
     /// Every repository the stub holds.
@@ -328,6 +424,14 @@ fn handle(
     if path == "/v2/" || path == "/v2" {
         return Reply::new(200).body("{}");
     }
+    if path.starts_with("/users/") || path.starts_with("/orgs/") {
+        state.api.push(ApiAsked {
+            method: method.into(),
+            path: path.into(),
+            headers: headers.to_vec(),
+        });
+        return github(state, behaviour, method, path);
+    }
     let asked = Asked {
         method: method.into(),
         path: path.into(),
@@ -415,6 +519,21 @@ fn handle(
     }
     if let Some(reference) = bare.strip_prefix("/manifests/") {
         let held = state.repositories.get_mut(&repository).unwrap();
+        if method == "DELETE" {
+            if behaviour.refuses_deletes {
+                return Reply::new(405)
+                    .header("content-type", "application/json")
+                    .body(UNSUPPORTED);
+            }
+            let Ok(digest) = Digest::parse(reference) else {
+                return Reply::error(400, "UNSUPPORTED", "a manifest is deleted by its digest");
+            };
+            if held.manifests.remove(&digest).is_none() {
+                return Reply::error(404, "MANIFEST_UNKNOWN", "manifest unknown");
+            }
+            held.tags.retain(|_, at| *at != digest);
+            return Reply::new(202);
+        }
         if method == "PUT" {
             let media_type = headers
                 .iter()
@@ -484,4 +603,101 @@ fn handle(
         return reply;
     }
     Reply::error(404, "NOT_FOUND", "no such route")
+}
+
+/// GitHub's error, as its API answers one.
+fn github_error(status: u16, message: &str) -> Reply {
+    Reply::new(status)
+        .header("content-type", "application/json; charset=utf-8")
+        .body(json!({ "message": message, "documentation_url": "https://docs.github.com/rest", "status": status.to_string() }).to_string())
+}
+
+/// GitHub's REST API as far as the store speaks it (design D5): a
+/// namespace's type, a package's versions by page, and a version's
+/// delete, the package being the repository under the namespace its name
+/// names with each `%2F` a `/`.
+fn github(state: &mut State, behaviour: Behaviour, method: &str, path: &str) -> Reply {
+    let bare = path.split('?').next().unwrap_or(path);
+    let parts: Vec<&str> = bare.trim_start_matches('/').split('/').collect();
+    if let ["users", namespace] = parts.as_slice() {
+        return match state.namespaces.get(*namespace) {
+            Some(kind) => Reply::new(200)
+                .header("content-type", "application/json; charset=utf-8")
+                .body(json!({ "login": namespace, "id": 1, "type": kind }).to_string()),
+            None => github_error(404, "Not Found"),
+        };
+    }
+    let (owner, namespace, package, version) = match parts.as_slice() {
+        [owner, namespace, "packages", "container", package, "versions"] => {
+            (*owner, *namespace, *package, None)
+        }
+        [owner, namespace, "packages", "container", package, "versions", id] => {
+            (*owner, *namespace, *package, Some(*id))
+        }
+        _ => return github_error(404, "Not Found"),
+    };
+    let kind = state.namespaces.get(namespace).map(String::as_str);
+    let expected = match owner {
+        "orgs" => "Organization",
+        _ => "User",
+    };
+    if kind != Some(expected) {
+        return github_error(404, "Not Found");
+    }
+    let repository = format!("{namespace}/{}", decoded(package));
+    let Some(held) = state.repositories.get(&repository) else {
+        return github_error(404, "Package not found.");
+    };
+    let digests: Vec<Digest> = held
+        .manifests
+        .keys()
+        .filter(|d| !state.hidden.contains(d))
+        .cloned()
+        .collect();
+    let mut ids = Vec::new();
+    for digest in &digests {
+        let id = match state.ids.iter().position(|d| d == digest) {
+            Some(at) => at + 1,
+            None => {
+                state.ids.push(digest.clone());
+                state.ids.len()
+            }
+        };
+        ids.push((id, digest.clone()));
+    }
+    match (method, version) {
+        ("GET", None) => {
+            let per_page: usize = query(path, "per_page")
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(30);
+            let page: usize = query(path, "page")
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(1);
+            let size = per_page.min(behaviour.page);
+            let listed: Vec<Value> = ids
+                .iter()
+                .skip((page - 1) * size)
+                .take(size)
+                .map(|(id, digest)| json!({ "id": id, "name": digest, "package_html_url": "https://github.com" }))
+                .collect();
+            Reply::new(200)
+                .header("content-type", "application/json; charset=utf-8")
+                .body(Value::Array(listed).to_string())
+        }
+        ("DELETE", Some(id)) => {
+            if behaviour.github_refuses_deletes {
+                return Reply::new(403)
+                    .header("content-type", "application/json; charset=utf-8")
+                    .body(GITHUB_FORBIDDEN);
+            }
+            let Some((_, digest)) = ids.iter().find(|(i, _)| i.to_string() == id) else {
+                return github_error(404, "Not Found");
+            };
+            let held = state.repositories.get_mut(&repository).unwrap();
+            held.manifests.remove(digest);
+            held.tags.retain(|_, at| at != digest);
+            Reply::new(204)
+        }
+        _ => github_error(404, "Not Found"),
+    }
 }

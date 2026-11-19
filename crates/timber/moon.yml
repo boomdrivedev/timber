@@ -91,3 +91,32 @@ tasks:
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_DASH0']
     tags: [check-dash0]
     options: {runFromWorkspaceRoot: true}
+  # The GitHub release target's group, and applies of three versions, one
+  # over a draft an apply left, against the throwaway repository the host
+  # names in devenv.local.nix (env.TIMBER_TOOLS_GITHUB_RELEASE, as
+  # `<owner>/<name>#<token file>`), with the gh the tree pins
+  # (TIMBER_TOOLS_GH_CLI), behind the `tools` feature; it refuses to run,
+  # naming the setting, on a host that names none. Its token is a file a
+  # person makes, which writes that repository's contents, so it runs
+  # outside the gate under a tag of its own, by hand with
+  # `moon run ':#check-github-release'` (core.38).
+  github-release:
+    command: 'cargo test -p timber --features tools --test github_release'
+    inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_GITHUB_RELEASE']
+    tags: [check-github-release]
+    options: {runFromWorkspaceRoot: true}
+  # The Nix cache target's proof against Cachix: a closure new to the
+  # throwaway public cache the host names in devenv.local.nix
+  # (env.TIMBER_TOOLS_CACHIX, as `<cache>#<token file>`) pushed through the
+  # profile with the cachix the tree pins (TIMBER_TOOLS_CACHIX_CLI),
+  # realised in a fresh Nix store from that cache alone, and the target
+  # group run there, behind the `tools` feature; it refuses to run, naming
+  # the setting, on a host that names none. Its token is a file a person
+  # makes, and it reaches a hosted service, so it runs outside the gate
+  # under a tag of its own, by hand with `moon run ':#check-cachix'`
+  # (core.38).
+  cachix:
+    command: 'cargo test -p timber --features tools --test cachix'
+    inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_CACHIX']
+    tags: [check-cachix]
+    options: {runFromWorkspaceRoot: true}

@@ -648,14 +648,15 @@ The file SHALL name each credential a target needs in `[credentials]`
 (118): each key a credential's name, as an environment's target table
 gives it, and each value the path of a file holding only that
 credential, absolute or beginning with `~/`, expanded as the file's
-other paths are. The file SHALL never hold a credential, and timber
-SHALL never open the file a path names (45, 64, rule core.21). A file
-with no `[credentials]` SHALL name none.
+other paths are. The file SHALL never hold a credential, and the binding
+SHALL open no file a path names: a target reaches it at use (45, 64,
+rule core.21; record 0043). A file with no `[credentials]` SHALL name
+none.
 
 #### Scenario: A credential named by its path
 
 - **WHEN** the file names `[credentials] dash0-dashboards = "~/.local/share/secrets/dash0-dashboards"`, and `timber apply` runs
-- **THEN** the targets are handed `dash0-dashboards` with that path expanded against the home directory, and the file at that path is not opened
+- **THEN** the targets are handed `dash0-dashboards` with that path expanded against the home directory, and the binding does not open the file at that path
 
 #### Scenario: No credentials table
 
@@ -865,3 +866,21 @@ under `timber/left/<owner>/<name>` in the common git directory (61, 62).
 
 - **WHEN** a host whose file names no `[ledger]` binds the root left `acme/app`
 - **THEN** its ledger reads the repository's own ledger refs
+
+### Requirement: Prune binds the landing, the policy and the store's cache alone
+
+The binding for prune SHALL hold the landing and the policy as the file
+names them or as given, and the store bound for the build profile's
+cache repository as a push's is, a layout opened and never made. The
+keeper, the signers, the projections and the targets SHALL each be
+absent naming the binding, and no signer reached (145, 135).
+
+#### Scenario: A registry's binding for prune
+
+- **WHEN** a host whose file names a registry is bound for prune
+- **THEN** the store lists the cache repository of the bound build profile and asks nothing of the repository's own
+
+#### Scenario: A host with no layout
+
+- **WHEN** a host whose given store is a layout that does not exist is bound for prune
+- **THEN** no layout is made, and the store's answers say the layout is not there

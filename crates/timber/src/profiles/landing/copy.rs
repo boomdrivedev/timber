@@ -55,7 +55,7 @@ impl Refs<'_> {
 
     fn git<S: AsRef<OsStr>>(&self, args: &[S], allowed: &[i32]) -> Answer<Ran> {
         self.git
-            .output(None, &self.args(args), GIT_REPOSITORY_ENV, allowed)
+            .output(None, &self.args(args), GIT_REPOSITORY_ENV, &[], allowed)
     }
 
     /// One `update-ref --stdin` transaction of `lines`.
@@ -64,7 +64,7 @@ impl Refs<'_> {
         let all = self.args(&args);
         let ran = self
             .git
-            .fed(None, &all, GIT_REPOSITORY_ENV, lines.as_bytes())?;
+            .fed(None, &all, GIT_REPOSITORY_ENV, &[], lines.as_bytes())?;
         if ran.code != Some(0) {
             return Err(self.git.failed(&all, &ran));
         }

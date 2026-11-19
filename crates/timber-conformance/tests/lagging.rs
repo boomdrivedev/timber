@@ -69,6 +69,16 @@ impl Store for Lagging {
     ) -> Answer<Vec<timber_seams::Version>> {
         self.inner.versions(ecosystem, name)
     }
+    fn cache_entries(&self) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+        self.inner.cache_entries()
+    }
+    fn remove_cache_entry(
+        &self,
+        build: &timber_seams::BuildId,
+        at: &timber_seams::Digest,
+    ) -> Answer<()> {
+        self.inner.remove_cache_entry(build, at)
+    }
 }
 
 struct LaggingRig {
@@ -116,8 +126,9 @@ impl StoreRig for LaggingRig {
 }
 
 /// The report's words over a lagging store whose rig declares `within`,
-/// which fails the two scenarios that read a name once it is moved: the
-/// move refused, and the names a listing's versions resolve by (138).
+/// which fails the scenarios that read a name once it is moved: the move
+/// refused, the names a listing's versions resolve by (138), and the
+/// three that read a cache entry's name once it is made (145).
 fn failed(within: Duration, elsewhere: Option<Digest>) -> String {
     let report = run(store::GROUP, &store::scenarios(), &|| {
         Box::new(LaggingRig::new(within, elsewhere.clone()))
@@ -127,11 +138,23 @@ fn failed(within: Duration, elsewhere: Option<Digest>) -> String {
         failed,
         [
             "a name moved from where it is not",
-            "a name's versions listed"
+            "a name's versions listed",
+            "a cache entry listed with when it was pushed",
+            "a cache entry removed, its bytes' other names left",
+            "a cache entry's removal from where it is not",
         ],
         "{report}"
     );
-    report.to_string()
+    let text = report.to_string();
+    for words in [
+        "- `a cache entry listed with when it was pushed` (clauses 145, 52): ",
+        "- `a cache entry removed, its bytes' other names left` (clauses 145, 54, 100): ",
+        "- `a cache entry's removal from where it is not` (clause 145): ",
+        "cache/b7e1 does not resolve to its bytes",
+    ] {
+        assert!(text.contains(words), "{text}\ndoes not say: {words}");
+    }
+    text
 }
 
 #[test]

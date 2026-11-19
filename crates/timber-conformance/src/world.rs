@@ -88,6 +88,8 @@ pub enum Write {
         to: Digest,
         expected: Option<Digest>,
     },
+    /// remove-cache-entry, of the entry of `build` at `at` (145).
+    RemoveCacheEntry { build: BuildId, at: Digest },
 }
 
 impl Write {
@@ -511,9 +513,15 @@ impl FakeWorld {
                         to: serde_json::from_value(read("to")).ok()?,
                         expected: serde_json::from_value(read("expected")).ok()?,
                     },
-                    StoreOp::ClaimsOf | StoreOp::Resolve | StoreOp::Read | StoreOp::Versions => {
-                        return None
-                    }
+                    StoreOp::RemoveCacheEntry => Write::RemoveCacheEntry {
+                        build: serde_json::from_value(read("build")).ok()?,
+                        at: serde_json::from_value(read("at")).ok()?,
+                    },
+                    StoreOp::ClaimsOf
+                    | StoreOp::Resolve
+                    | StoreOp::Read
+                    | StoreOp::Versions
+                    | StoreOp::CacheEntries => return None,
                 })
             })
             .collect()

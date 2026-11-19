@@ -26,6 +26,7 @@
 //! | [`verify`](mod@verify) | which signer the policy names made each attestation on a version, and whether each counts, and the notes its index names | 3, 9, 65, 80, 81, 116, 117, 134; core.4, core.7 |
 //! | [`cache`](mod@cache) | a cache entry under its build identity in the store, written by packing with no version and named from nothing, never an artifact; a checkout's cache filled from a landed revision's passing verdicts, an entry gone answered and refusing nothing | 52 to 54, 100, C.3; core.6, core.11, core.30 |
 //! | [`push`](mod@push) | the step after a landing: the cache entry of each build identity a landed revision's passing verdicts name, written from what its build left on the host; and the push before a landing: the cache entry of each build identity a checkout's run left with a pass, asking no landing; each offering nothing and keeping nothing | 52 to 54, 61, 77, 78, 100, 135, 139, C.3; core.6 |
+//! | [`prune`](mod@prune) | a repository's cache entries removed once the keeping time the policy gives at a landed revision has passed since their push, an entry with no push moment removed, each entry answered on its own, the landing, the policy and the store's two cache operations asked alone, nothing removed but cache entries and nothing kept | 14, 22, 34, 54, 61, 145; core.11, core.22, core.52 |
 //! | [`render`](mod@render) | a consumer layout: each version a checkout's lockfile pins, found by its ecosystem, name and version through the version's index, a name the store does not hold absent, judged under the consumer's layout line, else its publisher's through a signer the host trusts, else the given, rendered at `.timber/layouts/<ecosystem>/` holding only what the policy admits, every read before any write, a layout that cannot be refreshed answered from the host's record of it under the checkout's own git directory; a checkout synced, its cache filled and then each layout its lockfiles pin | 4, 9, 47 to 51, 58, 61 to 63, 81, 99, 113, 116, 117, 118, 138, C.10; core.4, core.7, core.17 to core.20, core.22 |
 //! | [`gate`](mod@gate) | an offered version judged under the policy for acceptance at the governed branch's landed head: accepted whole with one claim of the gate's own on its index, no byte changed, or refused whole naming the artifact and the claim found wanting; the gate never accepting what it offered but on the one host; and each channel of the component that the policy's channels answer says follows each publish promoted by the gate, where the channel's policy names it a promoter, the ledger appended before the name moves | 7, 9, 13, 25 to 30, 32, 33, 35, 39, 94 to 96, 105, 107, 108, 125, 131; core.4, core.6, core.7, core.14, core.15, core.34 |
 //! | [`ledger`] | a channel the policy lists for its component moved by a promotion the host's signer makes, where the channel's policy names it a promoter, judged under the channel's policy and its binding, held by the ledger before the store is written and undone by a promotion back; the store rewritten from the ledger; and a channel read from the ledger alone | 9, 31 to 39, 58, 101, 105, 106, 109, 125, 131; core.4, core.6, core.7, core.15, core.16, core.34 |
@@ -61,6 +62,7 @@ pub mod landed;
 pub mod ledger;
 pub mod notes;
 pub mod provenance;
+pub mod prune;
 pub mod publish;
 pub mod published;
 pub mod push;
@@ -84,6 +86,7 @@ pub use in_force::*;
 pub use landed::*;
 pub use ledger::*;
 pub use provenance::*;
+pub use prune::*;
 pub use publish::*;
 pub use published::*;
 pub use push::*;

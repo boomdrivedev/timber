@@ -3,16 +3,21 @@
 //! built. The repository's environments pick among them (92, C.10,
 //! C.12): a profile bound once serves every environment that names it,
 //! each handed its own settings as the policy answers them (design D3).
-//! Every profile reads a version's files through [`file_artifact`], and
-//! the Nix profiles a closure's form through [`nix_closure`], which they
-//! share, so none calls another (rule core.2; the Nix cache unit's design
-//! D6, the Dash0 target's design D1).
+//! Every profile reads a version's files through [`file_artifact`], the
+//! Nix profiles a closure's form through [`nix_closure`], and the targets
+//! whose tool takes a token only in a variable, the GitHub release target
+//! and the Nix cache target on Cachix, read that token at use through
+//! [`token`], which they share, so none calls another (rule core.2; the
+//! Nix cache unit's design D6, the Dash0 target's design D1, the Cachix
+//! change's design D6).
 
 pub mod dash0;
 pub mod file_artifact;
+pub mod github_release;
 pub mod nix_cache;
 pub mod nix_closure;
 pub mod nix_fleet;
+pub mod token;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,6 +26,7 @@ use timber_seams::{Answer, RepositoryName, Store, Target, TargetProfile};
 
 use crate::bindings::Credentials;
 use dash0::Dash0;
+use github_release::GithubRelease;
 use nix_cache::NixCache;
 use nix_fleet::push::{self, ClanPush};
 
@@ -29,12 +35,17 @@ use nix_fleet::push::{self, ClanPush};
 /// store of its own, which `store` binds, since a store is not shared:
 /// the Dash0 target, which names its markers for `repository`, the
 /// checkout's repository, and hands Dash0's CLI the path of the token
-/// `credentials`, the host's, names; the Nix cache; and the clan push
-/// profile, which runs the fleet's own tools against `checkout`, the
-/// checkout's path, and keeps its markers under `repository`. A profile
-/// whose repository is unread answers why at every operation that needs
-/// it (119); `credentials` are as the bindings file's `[credentials]`
-/// names them (118; the Dash0 target's design D3).
+/// `credentials`, the host's, names; the GitHub release target, which
+/// makes its releases in `repository` on github.com, and reads the token
+/// `credentials` names at the moment of use, since `gh` takes no file;
+/// the Nix cache, which pushes to a Cachix cache with the token
+/// `credentials` names, read when apply pushes, since `cachix` takes no
+/// file either (record 0044); and the clan push profile, which runs the
+/// fleet's own tools against `checkout`, the checkout's path, and keeps
+/// its markers under `repository`. A profile whose repository is unread answers why
+/// at every operation that needs it (119); `credentials` are as the
+/// bindings file's `[credentials]` names them, and the binding opens none
+/// (118; the Dash0 target's design D3; record 0043).
 pub fn bound(
     store: &dyn Fn() -> Answer<Box<dyn Store>>,
     checkout: &Path,
@@ -47,8 +58,16 @@ pub fn bound(
             Box::new(Dash0::new(store()?, repository.clone(), credentials)) as Box<dyn Target>,
         ),
         (
+            TargetProfile::new(github_release::PROFILE),
+            Box::new(GithubRelease::new(
+                store()?,
+                repository.clone(),
+                credentials,
+            )) as Box<dyn Target>,
+        ),
+        (
             TargetProfile::new(nix_cache::PROFILE),
-            Box::new(NixCache::new(store()?)) as Box<dyn Target>,
+            Box::new(NixCache::new(store()?, credentials)) as Box<dyn Target>,
         ),
         (
             TargetProfile::new(push::PROFILE),

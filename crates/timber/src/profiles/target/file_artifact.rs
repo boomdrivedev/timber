@@ -5,7 +5,10 @@
 //! index with [`index`], finds the artifact of an output in it with
 //! [`file_of`] or [`artifact_of`], and reads its bytes with [`bytes`],
 //! each through the profile's own store binding by digest (42, rules
-//! core.4, core.5).
+//! core.4, core.5). A version's notes are read here too: the artifact
+//! the index names in the ecosystem of notes with [`notes_of`], and its
+//! one layer, the rendered Markdown, with [`bytes`] (134; the GitHub
+//! release target's design D10).
 //!
 //! Each answer names the artifact in the asking profile's own [`Words`]:
 //! a closure file to the Nix profiles, a dashboard file to the Dash0
@@ -23,6 +26,11 @@ use timber_seams::{
 /// artifact; read from the index, so no profile asks that projection
 /// anything (rule core.2).
 pub const FILE: &str = "file";
+
+/// The ecosystem a version's notes are named in, by the version's
+/// component, as an index names them; read from the index, so no profile
+/// asks the core anything (134, rule core.2).
+pub const NOTES: &str = "notes";
 
 /// What an asking profile calls one of its file artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +129,31 @@ pub fn artifact_of<'a>(
             ),
         )
     })
+}
+
+/// The notes `index` names: its artifact in the ecosystem [`NOTES`],
+/// named by the index's component (134); refused naming the version and
+/// what `words` says the notes carry where it names none, as an index
+/// of a version published before its notes were made names none.
+pub fn notes_of<'a>(index: &'a IndexMeta, words: Words, source: &Source) -> Answer<&'a Artifact> {
+    let component = index.component();
+    index
+        .artifacts()
+        .iter()
+        .find(|a| {
+            a.meta.ecosystem().as_str() == NOTES && a.meta.name().as_str() == component.as_str()
+        })
+        .ok_or_else(|| {
+            refused(
+                source,
+                format!(
+                    "version {} of {component} names no {NOTES} artifact of {component}, \
+                     so it carries no {}",
+                    index.version(),
+                    words.carries
+                ),
+            )
+        })
 }
 
 /// The bytes of the file `artifact`, read through `store` by the one
@@ -262,6 +295,18 @@ mod tests {
         fn versions(&self, ecosystem: &Ecosystem, name: &EcosystemName) -> Answer<Vec<Version>> {
             self.store.versions(ecosystem, name)
         }
+        fn cache_entries(
+            &self,
+        ) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+            self.store.cache_entries()
+        }
+        fn remove_cache_entry(
+            &self,
+            build: &timber_seams::BuildId,
+            at: &timber_seams::Digest,
+        ) -> Answer<()> {
+            self.store.remove_cache_entry(build, at)
+        }
     }
 
     fn meta(name: &str, version: &str) -> ArtifactMeta {
@@ -323,12 +368,12 @@ mod tests {
     fn an_index_of_another_version_is_refused_naming_both() {
         let store = FakeStore::default();
         let digest = put_index(&store, "1.3.0", Vec::new());
-        let verified = Verified::new(digest.clone(), Version::new("1.4.0"));
+        let verified = Verified::new(digest.clone(), Version::new("1.4.0"), "dashboards-v1.4.0");
         assert_eq!(
             refused_said(index(&store, &verified, &source())),
             format!("the index {digest} names version 1.3.0, and the version verified is 1.4.0")
         );
-        let same = Verified::new(digest, Version::new("1.3.0"));
+        let same = Verified::new(digest, Version::new("1.3.0"), "dashboards-v1.3.0");
         assert_eq!(
             index(&store, &same, &source()).map(|m| m.version().clone()),
             Ok(Version::new("1.3.0"))
@@ -391,7 +436,11 @@ mod tests {
             }
             other => panic!("a missing layer answered {other:?}, not unreadable"),
         }
-        let gone = Verified::new(Digest::of(b"no index"), Version::new("1.3.0"));
+        let gone = Verified::new(
+            Digest::of(b"no index"),
+            Version::new("1.3.0"),
+            "dashboards-v1.3.0",
+        );
         match index(&store, &gone, &source()) {
             Err(Not::Unreadable(u)) => {
                 assert_eq!(u.what, "the index of version 1.3.0");
@@ -410,7 +459,7 @@ mod tests {
         let digest = put_index(&store, "1.3.0", Vec::new());
         let meta = index(
             &store,
-            &Verified::new(digest, Version::new("1.3.0")),
+            &Verified::new(digest, Version::new("1.3.0"), "dashboards-v1.3.0"),
             &source(),
         )
         .unwrap();
@@ -423,6 +472,84 @@ mod tests {
             )),
             "version 1.3.0 of dashboards names no file artifact of the output dashboards, so it \
              carries no dashboard of it"
+        );
+    }
+
+    const NOTED: Words = Words {
+        file: "notes",
+        carries: "notes",
+    };
+
+    /// The notes of `component` at 1.3.0 holding `markdown`, put into
+    /// `store` as a publish puts them: one layer, the rendered Markdown.
+    fn notes(store: &dyn Store, component: &str, markdown: &[u8]) -> Artifact {
+        let layer = store.put_bytes(markdown).unwrap().digest;
+        let meta = ArtifactMeta::new(
+            Ecosystem::new(NOTES),
+            EcosystemName::new(component),
+            Version::new("1.3.0"),
+        )
+        .unwrap();
+        let manifest = Manifest::Artifact {
+            meta: meta.clone(),
+            layers: vec![layer],
+        };
+        let digest = store.put_artifact(&manifest).unwrap().digest;
+        Artifact { digest, meta }
+    }
+
+    /// The index `digest` names, as a target reads it.
+    fn read_index(store: &dyn Store, digest: Digest) -> IndexMeta {
+        let verified = Verified::new(digest, Version::new("1.3.0"), "dashboards-v1.3.0");
+        index(store, &verified, &source()).unwrap()
+    }
+
+    #[test]
+    fn the_notes_the_index_names_are_found() {
+        let store = FakeStore::default();
+        let noted = notes(&store, "dashboards", b"## 1.3.0\n");
+        let file = artifact(&store, Vec::new());
+        let digest = put_index(&store, "1.3.0", vec![file, noted.clone()]);
+        let meta = read_index(&store, digest);
+        assert_eq!(notes_of(&meta, NOTED, &source()), Ok(&noted));
+    }
+
+    #[test]
+    fn an_index_naming_no_notes_is_refused_naming_the_version() {
+        let store = FakeStore::default();
+        let file = artifact(&store, Vec::new());
+        let digest = put_index(&store, "1.3.0", vec![file]);
+        let meta = read_index(&store, digest);
+        assert_eq!(
+            refused_said(notes_of(&meta, NOTED, &source())),
+            "version 1.3.0 of dashboards names no notes artifact of dashboards, so it carries \
+             no notes"
+        );
+    }
+
+    #[test]
+    fn notes_of_another_components_name_are_not_taken() {
+        let store = FakeStore::default();
+        let theirs = notes(&store, "site", b"## 1.3.0\n");
+        let digest = put_index(&store, "1.3.0", vec![theirs]);
+        let meta = read_index(&store, digest);
+        assert!(
+            refused_said(notes_of(&meta, NOTED, &source())).contains("names no notes artifact"),
+            "another component's notes were taken"
+        );
+    }
+
+    #[test]
+    fn the_notes_bytes_are_read_by_their_one_layer() {
+        let store = FakeStore::default();
+        let markdown = b"## 1.3.0\n\n### Features\n\n- dashboards grow\n";
+        let noted = notes(&store, "dashboards", markdown);
+        let digest = put_index(&store, "1.3.0", vec![noted]);
+        let meta = read_index(&store, digest);
+        let found = notes_of(&meta, NOTED, &source()).unwrap();
+        assert_eq!(
+            bytes(&store, found, NOTED, &source()),
+            Ok(markdown.to_vec())
         );
     }
 }

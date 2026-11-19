@@ -118,6 +118,16 @@ impl Store for Aliased {
     fn versions(&self, ecosystem: &Ecosystem, name: &EcosystemName) -> Answer<Vec<Version>> {
         self.store.versions(ecosystem, name)
     }
+    fn cache_entries(&self) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+        self.store.cache_entries()
+    }
+    fn remove_cache_entry(
+        &self,
+        build: &timber_seams::BuildId,
+        at: &timber_seams::Digest,
+    ) -> Answer<()> {
+        self.store.remove_cache_entry(build, at)
+    }
 }
 
 /// A store, a scripted Dash0 and the target over them.
@@ -184,7 +194,11 @@ impl World {
         .unwrap()
         .with(Some(timber_seams::Revision::new("4f2a9c1")), repository);
         let digest = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-        Verified::new(digest, Version::new(version))
+        Verified::new(
+            digest,
+            Version::new(version),
+            format!("{COMPONENT}-v{version}"),
+        )
     }
 
     /// Version `version` whose one output, `dashboards`, holds a dashboard
@@ -893,7 +907,7 @@ mod group {
             let published = self.world.version("1.4.0", &["overview", "sluice"]);
             let mut aliases = self.world.store.aliases.borrow_mut();
             aliases.insert(digest.clone(), published.index().clone());
-            Verified::new(digest.clone(), published.version().clone())
+            Verified::new(digest.clone(), published.version().clone(), published.tag())
         }
 
         /// The target is pushed to, handed the head at desired, so `head`

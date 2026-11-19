@@ -1489,3 +1489,56 @@ two places answers the same and names neither place (49).
 
 - **WHEN** a projection that serves renders one set of the rig's artifacts at two places, and serves the rig's request for one version from each under one base
 - **THEN** the two responses are the same, and neither names either place
+
+### Requirement: The GitHub release target runs the target group
+
+The target group SHALL run over the GitHub release target, in its own
+tests against a scripted GitHub, declaring that its target holds a
+marker, the release GitHub marks latest. It SHALL also run by hand
+against one repository, under `check-github-release` (93, 119, rule
+core.38).
+
+#### Scenario: The scripted GitHub
+
+- **WHEN** the GitHub release target's tests run
+- **THEN** the target group passes over the GitHub release target with the scripted GitHub
+
+### Requirement: The Nix cache target on Cachix runs the target group
+
+The target group SHALL run over the Nix cache target naming a Cachix
+cache, in its own tests with a stand-in `cachix` and `nix-store`,
+declaring that its target holds no marker, its foreign settings a
+`token` key. It SHALL also run by hand against one cache, under
+`check-cachix` (93, 119; rule core.38).
+
+#### Scenario: The stand-in Cachix
+
+- **WHEN** the Nix cache target's tests run
+- **THEN** the target group passes over the Nix cache target naming a Cachix cache, and "converged and reported" is reported not applicable
+
+### Requirement: The store's group lists and removes cache entries
+
+The store group SHALL hold, below its line, scenarios citing 145, 54
+and 100: an entry listed with its push moment between the moments
+before and after it was made; an entry removed, another entry and an
+artifact of the same bytes left; a removal from where the name is not
+refused; and a removal of no entry absent. Every store rig SHALL bind
+its store for a build profile, the registry's for `moon` (rule core.33).
+
+#### Scenario: The group over the fake store
+
+- **WHEN** the store group runs over the fake store
+- **THEN** every cache scenario passes and names 145 among its clauses
+
+### Requirement: Prune over the fakes
+
+The core's cache group SHALL hold, below its line, scenarios citing
+145, 22, 34 and 54: an entry past its time removed and one within kept;
+an entry with no moment removed; the keeping time read from the policy
+at the landed revision; and a version published, accepted and promoted
+read back whole after its entries are removed.
+
+#### Scenario: The cache group over the fakes
+
+- **WHEN** the core's cache group runs over the fakes
+- **THEN** every prune scenario passes, and none cites a clause outside Parts A and B

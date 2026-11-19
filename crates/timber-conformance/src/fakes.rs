@@ -472,6 +472,7 @@ impl PolicyRig for FakePolicyRig {
                 PolicyOp::PolicyFor,
                 PolicyOp::Channels,
                 PolicyOp::Environments,
+                PolicyOp::CacheKept,
             ],
         )
     }
@@ -705,7 +706,7 @@ impl TargetRig for FakeTargetRig {
     fn verified(&self, digest: &Digest) -> Verified {
         // The suite stands in the core's place here, which makes a
         // `Verified` after its verify (42); no profile makes one.
-        Verified::new(digest.clone(), Version::new("1.0.0"))
+        Verified::new(digest.clone(), Version::new("1.0.0"), "v1.0.0")
     }
 
     /// The fake answers desired with the head the suite hands it, so the

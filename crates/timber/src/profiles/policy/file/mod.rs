@@ -189,6 +189,15 @@
 //! signers alone where the file names one for it (C.10). Only a revision
 //! holding no policy file is absent for a layout (design D11).
 //!
+//! How long the repository keeps its cache entries is `[cache]`'s
+//! `keep_days`, a whole number of days from 0, the repository's and none
+//! of a component's; the fragment gives `keep_days = 30` beneath it, and
+//! a revision whose file writes none, or that holds no file, answers the
+//! fragment's, marked given (145, C.10). `[cache]` holds `keep_days`
+//! alone: another key, or a `keep_days` that is no whole number from 0
+//! within 2^32, is unreadable naming the key and the file, read when the
+//! keeping time is asked, as an audience's table is.
+//!
 //! Every operation begins by reading the fragment and resolving the
 //! revision in the repository, so a fragment or a repository that cannot
 //! be read answers unreadable with the parser's or git's words before any
@@ -201,9 +210,9 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use timber_seams::{
     Answer, AskedOf, Audience, ChannelId, ChannelName, Check, ClaimKind, ComponentName,
-    DeclaredChannel, DeclaredEnvironment, EnvironmentName, HeldChannel, Moves, NamedSigner, Not,
-    Policy, PolicyChannels, Required, RequiredClaim, Revision, Seam, SignerId, Source,
-    TargetProfile, TargetTable, Why,
+    DeclaredChannel, DeclaredEnvironment, EnvironmentName, HeldChannel, Keeping, Moves,
+    NamedSigner, Not, Policy, PolicyChannels, Required, RequiredClaim, Revision, Seam, SignerId,
+    Source, TargetProfile, TargetTable, Why,
 };
 use toml::Spanned;
 
@@ -257,10 +266,12 @@ pub struct PolicyFile {
     givens: Result<Givens, String>,
 }
 
-/// C.10: the fragment's channels' tables, by name, each as written there.
+/// C.10: the fragment's channels' tables, by name, each as written there,
+/// and the days it keeps cache entries, none where it gives none (145).
 #[derive(Clone, Debug)]
 struct Givens {
     channels: toml::Table,
+    keep_days: Option<u32>,
 }
 
 /// What this profile reads of the file: the signers, each name with
@@ -275,6 +286,7 @@ struct File {
     signers: BTreeMap<Spanned<String>, toml::Table>,
     acceptance: Option<toml::Table>,
     layout: Option<toml::Table>,
+    cache: Option<toml::Table>,
     #[serde(default)]
     channels: toml::Table,
     #[serde(default)]
@@ -437,7 +449,8 @@ impl PolicyFile {
     fn git<S: AsRef<OsStr>>(&self, args: &[S], allowed: &[i32]) -> Answer<Ran> {
         let mut all = vec![OsStr::new("-C"), self.repository.as_os_str()];
         all.extend(args.iter().map(AsRef::as_ref));
-        self.git.output(None, &all, GIT_REPOSITORY_ENV, allowed)
+        self.git
+            .output(None, &all, GIT_REPOSITORY_ENV, &[], allowed)
     }
 
     /// The commit `revision` names, resolved before anything is read at
@@ -687,15 +700,22 @@ fn tables<T: serde::de::DeserializeOwned>(
 impl Givens {
     /// C.10: `text` read as the givens' fragment: only channels' tables,
     /// `[channels.<name>]`, each naming only the keys a given's table
-    /// names, `held` among them; otherwise the parser's words or the
-    /// table that breaks it.
+    /// names, `held` among them, and `[cache]` as the file writes it
+    /// (145); otherwise the parser's words or the table that breaks it.
     fn read(text: &str) -> Result<Givens, String> {
         let mut top: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
-        if let Some(key) = top.keys().find(|key| *key != "channels") {
+        if let Some(key) = top.keys().find(|key| *key != "channels" && *key != "cache") {
             return Err(format!(
-                "the givens hold {key}, and they hold only channels' tables, [channels.<name>]"
+                "the givens hold {key}, and they hold only channels' tables, [channels.<name>], and [cache]"
             ));
         }
+        let keep_days = match top.remove("cache") {
+            None => None,
+            Some(toml::Value::Table(cache)) => {
+                keep_days(&cache).map_err(|said| format!("the givens' {said}"))?
+            }
+            Some(_) => return Err("the givens' cache is not a table".into()),
+        };
         let channels = match top.remove("channels") {
             None => toml::Table::new(),
             Some(toml::Value::Table(channels)) => channels,
@@ -715,7 +735,10 @@ impl Givens {
                 .try_into::<ChannelTable>()
                 .map_err(|e| format!("the givens' [channels.{name}]: {}", e.message()))?;
         }
-        Ok(Givens { channels })
+        Ok(Givens {
+            channels,
+            keep_days,
+        })
     }
 
     /// Whether the fragment marks `name` held, so it is in force only
@@ -726,6 +749,30 @@ impl Givens {
             .and_then(|t| t.get("held"))
             .and_then(toml::Value::as_bool)
             == Some(true)
+    }
+}
+
+/// 145, C.10: `[cache]`'s `keep_days`, none where it writes none;
+/// otherwise the key that breaks it, another key than `keep_days` or a
+/// `keep_days` that is no whole number of days from 0 within 2^32.
+fn keep_days(cache: &toml::Table) -> Result<Option<u32>, String> {
+    if let Some(key) = cache.keys().find(|key| *key != "keep_days") {
+        return Err(format!(
+            "[cache] names {key}, and [cache] holds keep_days alone"
+        ));
+    }
+    match cache.get("keep_days") {
+        None => Ok(None),
+        Some(toml::Value::Integer(days)) => u32::try_from(*days).map(Some).map_err(|_| {
+            format!(
+                "[cache] keep_days is {days}, and it is a whole number of days from 0 to {}",
+                u32::MAX
+            )
+        }),
+        Some(other) => Err(format!(
+            "[cache] keep_days is {other}, and it is a whole number of days from 0 to {}",
+            u32::MAX
+        )),
     }
 }
 
@@ -1682,6 +1729,29 @@ impl Policy for PolicyFile {
             .map_err(|said| self.unreadable(revision, said))?;
         Ok(resolved.environments)
     }
+
+    /// 145, C.10: `[cache]`'s `keep_days` at `revision`, written; the
+    /// fragment's, given, where the file writes none or the revision
+    /// holds no file. Unreadable naming the key and the file where
+    /// `[cache]` breaks its form, and naming the fragment where neither
+    /// gives a time.
+    fn cache_kept(&self, revision: &Revision) -> Answer<Keeping> {
+        let given = self.givens()?.keep_days;
+        let read = self.read(revision)?;
+        let written = match read.as_ref().and_then(|r| r.file.cache.as_ref()) {
+            Some(cache) => keep_days(cache).map_err(|said| self.unreadable(revision, said))?,
+            None => None,
+        };
+        match (written, given) {
+            (Some(days), _) => Ok(Keeping { days, given: false }),
+            (None, Some(days)) => Ok(Keeping { days, given: true }),
+            (None, None) => Err(Not::unreadable(
+                self.source(),
+                GIVENS_NAME,
+                Some("the givens give no [cache] keep_days".into()),
+            )),
+        }
+    }
 }
 
 impl File {
@@ -1691,6 +1761,7 @@ impl File {
             signers: BTreeMap::new(),
             acceptance: None,
             layout: None,
+            cache: None,
             channels: toml::Table::new(),
             environments: toml::Table::new(),
             component: Vec::new(),

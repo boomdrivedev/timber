@@ -385,8 +385,8 @@ names, or absent when the channel is empty (88), given the head the core
 read from the channel's chain, which a target that is pushed to answers
 and a target that pulls answers by its own reading (44, rule core.50);
 current with the digest the environment runs, or unreadable with the
-reason (89); and apply, given a version the reconciler has verified,
-with the environment converged or what stopped it (90).
+reason (89); and apply, given a verified version, its index, version and
+tag, with the environment converged or what stopped it (22, 90).
 
 #### Scenario: An environment that cannot be read
 
@@ -402,6 +402,11 @@ with the environment converged or what stopped it (90).
 
 - **WHEN** a version is applied to an environment whose target can hold no marker, and current and report are asked
 - **THEN** each answers unreadable with the reason, and neither names the digest applied
+
+#### Scenario: The verified version names its tag
+
+- **WHEN** the fake target is asked to apply a verified version made with the index `A`, the version `1.2.0` and the tag `v1.2.0`
+- **THEN** it records `A`, `1.2.0` and `v1.2.0`, and the verified version round-trips through JSON with all three
 
 ### Requirement: The keeper's contract
 
@@ -1044,3 +1049,49 @@ core.48).
 
 - **WHEN** the mark naming `Acme/Site` is written and read back
 - **THEN** its bytes are `{"moved_to":"acme/site"}`, and reading them answers `acme/site`
+
+### Requirement: The store lists and removes cache entries
+
+The store seam SHALL list every cache entry it holds for the repository
+and build profile it is bound for, each by its build identity with the
+digest its name is at and its push moment where the store holds one,
+and an entry it cannot read answered on its own. It SHALL remove one
+entry by its build identity, only where its name is at the digest
+given, and no other name or bytes another name reaches (145, 54, 100).
+
+#### Scenario: An entry listed
+
+- **WHEN** a store holds a cache entry made at some bytes
+- **THEN** the listing names its build identity, the bytes' digest and its push moment
+
+#### Scenario: A removal from where the name is not
+
+- **WHEN** a cache entry's removal names a digest the entry's name is not at
+- **THEN** it is refused naming the digest the name is at, and the entry is still listed
+
+#### Scenario: A removal of no entry
+
+- **WHEN** a removal names a build identity the store holds no entry for
+- **THEN** it is absent naming the entry
+
+### Requirement: The policy answers how long cache entries are kept
+
+The policy seam SHALL answer, for a landed revision, how many days the
+repository keeps its cache entries from their push, and whether that is
+the givens' time, which is thirty days (145, C.10, rule core.43).
+
+#### Scenario: No time written
+
+- **WHEN** the policy at a revision writes no keeping time
+- **THEN** it answers thirty days, given
+
+### Requirement: A cache entry's store name is spelled once
+
+A cache entry's store name SHALL be `cache/` and its build identity,
+made by the seams' one function, which the core and every store profile
+call (52, rule core.48).
+
+#### Scenario: The name of an entry
+
+- **WHEN** the seams spell the name of the cache entry of build identity `b7e1`
+- **THEN** it is `cache/b7e1`

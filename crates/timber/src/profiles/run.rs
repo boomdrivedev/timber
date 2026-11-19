@@ -30,6 +30,10 @@ pub(crate) struct Tool {
     source: Source,
 }
 
+/// Variables set for one run alone, each a name and its value, set after
+/// those the run removes, so one set under a removed prefix is seen.
+pub(crate) type EnvSet<'a> = &'a [(&'a str, &'a OsStr)];
+
 /// What a tool's run printed, and the exit it ended with, `None` when a
 /// signal ended it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,9 +59,10 @@ impl Tool {
     }
 
     /// The tool run with `args`, in `dir` where one is given, stdin from
-    /// `/dev/null`, and every variable of timber's own environment that
+    /// `/dev/null`, every variable of timber's own environment that
     /// `env_drop` names removed, a name ending `*` naming every variable
-    /// it begins. A run that exits with one of `allowed` answers what it
+    /// it begins, and then each of `env_set` set for this run alone. A
+    /// run that exits with one of `allowed` answers what it
     /// printed; one that cannot start is unreadable carrying the
     /// operating system's words, and one that exits otherwise is
     /// unreadable carrying its stderr, trimmed, or its exit where it
@@ -67,9 +72,10 @@ impl Tool {
         dir: Option<&Path>,
         args: &[S],
         env_drop: &[&str],
+        env_set: EnvSet<'_>,
         allowed: &[i32],
     ) -> Answer<Ran> {
-        let ran = self.ran(dir, args, env_drop)?;
+        let ran = self.ran(dir, args, env_drop, env_set)?;
         if ran.code.is_some_and(|code| allowed.contains(&code)) {
             return Ok(ran);
         }
@@ -83,8 +89,9 @@ impl Tool {
         dir: Option<&Path>,
         args: &[S],
         env_drop: &[&str],
+        env_set: EnvSet<'_>,
     ) -> Answer<Ran> {
-        self.spawn(dir, args, env_drop, None)
+        self.spawn(dir, args, env_drop, env_set, None)
     }
 
     /// The tool run as [`ran`](Tool::ran) runs it, with `input` on its
@@ -94,9 +101,10 @@ impl Tool {
         dir: Option<&Path>,
         args: &[S],
         env_drop: &[&str],
+        env_set: EnvSet<'_>,
         input: &[u8],
     ) -> Answer<Ran> {
-        self.spawn(dir, args, env_drop, Some(input))
+        self.spawn(dir, args, env_drop, env_set, Some(input))
     }
 
     fn spawn<S: AsRef<OsStr>>(
@@ -104,6 +112,7 @@ impl Tool {
         dir: Option<&Path>,
         args: &[S],
         env_drop: &[&str],
+        env_set: EnvSet<'_>,
         input: Option<&[u8]>,
     ) -> Answer<Ran> {
         let mut command = Command::new(&self.program);
@@ -128,6 +137,9 @@ impl Tool {
             if dropped {
                 command.env_remove(&name);
             }
+        }
+        for (name, value) in env_set {
+            command.env(name, value);
         }
         let mut child = command
             .spawn()
@@ -175,6 +187,30 @@ impl Tool {
     }
 }
 
+/// What `f` answers with each of `set` set in timber's own environment,
+/// as a host's may set them; one such test at a time, since the
+/// variables are the process's, and each as it was after.
+#[cfg(test)]
+pub(crate) fn under_env<T>(set: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
+    static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _environment = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    let before: Vec<_> = set
+        .iter()
+        .map(|(name, _)| (*name, std::env::var_os(name)))
+        .collect();
+    for (name, value) in set {
+        std::env::set_var(name, value);
+    }
+    let answer = f();
+    for (name, value) in before {
+        match value {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
+    }
+    answer
+}
+
 #[cfg(test)]
 mod tests {
     use timber_seams::Seam;
@@ -199,7 +235,7 @@ mod tests {
     fn a_program_that_does_not_exist_carries_the_operating_systems_words() {
         let dir = tempfile::TempDir::new().unwrap();
         let gone = dir.path().join("moon");
-        let words = said(tool(gone.to_str().unwrap()).output(None, &["--version"], &[], &[0]));
+        let words = said(tool(gone.to_str().unwrap()).output(None, &["--version"], &[], &[], &[0]));
         assert_eq!(words, "No such file or directory (os error 2)");
     }
 
@@ -215,7 +251,7 @@ mod tests {
         ];
         let theirs = Command::new("git").args(args).output().unwrap();
         assert!(!theirs.status.success());
-        let words = said(tool("git").output(None, &args, &[], &[0]));
+        let words = said(tool("git").output(None, &args, &[], &[], &[0]));
         assert_eq!(words, String::from_utf8_lossy(&theirs.stderr).trim());
         assert!(words.starts_with("fatal: cannot change to"), "{words}");
     }
@@ -224,17 +260,17 @@ mod tests {
     fn an_exit_the_caller_allows_answers_its_output() {
         let script = "echo printed; echo warned >&2; exit 3";
         let ran = tool("sh")
-            .output(None, &["-c", script], &[], &[0, 3])
+            .output(None, &["-c", script], &[], &[], &[0, 3])
             .unwrap();
         assert_eq!(ran.code, Some(3));
         assert_eq!(ran.stdout, b"printed\n");
         assert_eq!(ran.stderr, b"warned\n");
         assert_eq!(
-            said(tool("sh").output(None, &["-c", script], &[], &[0])),
+            said(tool("sh").output(None, &["-c", script], &[], &[], &[0])),
             "warned"
         );
         assert_eq!(
-            said(tool("sh").output(None, &["-c", "exit 4"], &[], &[0])),
+            said(tool("sh").output(None, &["-c", "exit 4"], &[], &[], &[0])),
             "exit status: 4"
         );
     }
@@ -242,10 +278,10 @@ mod tests {
     #[test]
     fn what_it_is_fed_is_its_stdin() {
         let ran = tool("sh")
-            .fed(None, &["-c", "tr a-z A-Z"], &[], b"fed\n")
+            .fed(None, &["-c", "tr a-z A-Z"], &[], &[], b"fed\n")
             .unwrap();
         assert_eq!(ran.stdout, b"FED\n");
-        let empty = tool("sh").ran(None, &["-c", "cat"], &[]).unwrap();
+        let empty = tool("sh").ran(None, &["-c", "cat"], &[], &[]).unwrap();
         assert_eq!(empty.stdout, b"");
     }
 
@@ -256,6 +292,7 @@ mod tests {
                 Some(Path::new("/")),
                 &["-c", "pwd; env"],
                 &["LOGNAME", "HOM*"],
+                &[],
                 &[0],
             )
             .unwrap();
@@ -267,5 +304,47 @@ mod tests {
                 "{printed}"
             );
         }
+    }
+
+    #[test]
+    fn a_run_is_handed_variables_of_its_own() {
+        let print = ["-c", "printf %s \"${TIMBER_RUN_OWN-unset}\""];
+        let own = [("TIMBER_RUN_OWN", OsStr::new("its own"))];
+        let ran = tool("sh").output(None, &print, &[], &own, &[0]).unwrap();
+        assert_eq!(ran.stdout, b"its own");
+        let ran = tool("sh").ran(None, &print, &[], &own).unwrap();
+        assert_eq!(ran.stdout, b"its own");
+        let ran = tool("sh").fed(None, &print, &[], &own, b"").unwrap();
+        assert_eq!(ran.stdout, b"its own");
+        let none = tool("sh").output(None, &print, &[], &[], &[0]).unwrap();
+        assert_eq!(none.stdout, b"unset");
+    }
+
+    #[test]
+    fn a_variable_set_outlives_a_dropped_prefix() {
+        let hosts = [
+            ("GH_HOST", "the host's own"),
+            ("GH_TOKEN", "the host's token"),
+        ];
+        let ran = under_env(&hosts, || {
+            tool("sh").output(
+                None,
+                &["-c", "env"],
+                &["GH_*"],
+                &[("GH_TOKEN", OsStr::new("the run's own"))],
+                &[0],
+            )
+        })
+        .unwrap();
+        let printed = String::from_utf8(ran.stdout).unwrap();
+        assert!(
+            printed.lines().any(|l| l == "GH_TOKEN=the run's own"),
+            "{printed}"
+        );
+        assert!(
+            !printed.lines().any(|l| l.starts_with("GH_HOST=")),
+            "{printed}"
+        );
+        assert!(!printed.contains("the host's token"), "{printed}");
     }
 }

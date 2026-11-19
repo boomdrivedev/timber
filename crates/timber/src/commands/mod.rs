@@ -4,6 +4,7 @@
 pub mod apply;
 pub mod policy;
 pub mod promote;
+pub mod prune;
 pub mod publish;
 pub mod push;
 pub mod rebuild;
