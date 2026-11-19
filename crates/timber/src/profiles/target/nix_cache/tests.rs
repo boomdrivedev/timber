@@ -785,3 +785,114 @@ mod cachix {
         assert_eq!(programs.ran(), Vec::<String>::new());
     }
 }
+
+mod group {
+    //! Requirement: The Nix cache target on Cachix runs the target group
+    //! (93, 119; the Cachix change's design D8).
+
+    use std::cell::Cell;
+
+    use timber_conformance::seams::target::{self, TargetRig};
+    use timber_conformance::Rig;
+
+    use super::cachix::host;
+    use super::*;
+
+    /// The target group's rig over the Nix cache target naming a Cachix
+    /// cache, with the stand-in cachix and nix-store: the target holds no
+    /// marker, every environment names the closure the version
+    /// published, and its foreign settings add a `token` (119, 45).
+    struct CachixRig {
+        store: FakeStore,
+        programs: Programs,
+        target: NixCache,
+        _credentials: TempDir,
+        environments: Cell<u32>,
+    }
+
+    impl CachixRig {
+        fn new() -> CachixRig {
+            let (store, programs, dir) =
+                (FakeStore::new(), Programs::new(), TempDir::new().unwrap());
+            let target = programs.target_with(&store, &host(&dir));
+            CachixRig {
+                store,
+                programs,
+                target,
+                _credentials: dir,
+                environments: Cell::new(0),
+            }
+        }
+
+        fn next(&self) -> Environment {
+            self.environments.set(self.environments.get() + 1);
+            let mut environment = super::cachix::boomdrive();
+            environment.name = EnvironmentName::new(format!("cachix-{}", self.environments.get()));
+            environment
+        }
+    }
+
+    impl Rig for CachixRig {
+        fn profile(&self) -> String {
+            PROFILE.into()
+        }
+    }
+
+    impl TargetRig for CachixRig {
+        fn target(&self) -> &dyn Target {
+            &self.target
+        }
+
+        /// The closure's file published into the fake store, whatever
+        /// `digest` the suite names: a store holds an index only at its
+        /// own digest.
+        fn verified(&self, _digest: &Digest) -> Verified {
+            publish(&self.store, &[("file", COMPONENT, &closure_of(&[root()]))])
+        }
+
+        /// The cache is pushed to, handed the head at desired, so `head`
+        /// is left unread.
+        fn environment(&self, _head: Option<&Digest>) -> Environment {
+            self.next()
+        }
+
+        /// No environment of a cache can be read, for the cache keeps no
+        /// marker of what was pushed to it.
+        fn unreadable_environment(&self) -> (Environment, String) {
+            (
+                self.next(),
+                "the Nix binary cache boomdrive on Cachix holds store paths by their hash and \
+                 keeps no marker of what was pushed to it"
+                    .into(),
+            )
+        }
+
+        fn holds_marker(&self) -> bool {
+            false
+        }
+
+        fn foreign_settings(&self) -> (Environment, String) {
+            let mut environment = self.next();
+            environment.settings["token"] = json!("a credential");
+            (environment, "token".into())
+        }
+    }
+
+    #[test]
+    fn the_target_group_passes_over_the_stand_in_cachix_holding_no_marker() {
+        let report = timber_conformance::run(target::GROUP, &target::scenarios(), &|| {
+            Box::new(CachixRig::new()) as Box<dyn TargetRig>
+        });
+        report.assert();
+        let inapplicable: Vec<&str> = report.not_applicable.iter().map(|n| n.scenario).collect();
+        assert_eq!(inapplicable, ["converged and reported"], "{report}");
+    }
+
+    #[test]
+    fn the_rig_pushes_through_the_stand_in_cachix() {
+        let rig = CachixRig::new();
+        let version = rig.verified(&index(1));
+        assert_eq!(rig.target.apply(&rig.environment(None), &version), Ok(()));
+        assert_eq!(rig.programs.ran(), ["nix-store", "cachix"]);
+    }
+}
