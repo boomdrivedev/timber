@@ -9,16 +9,19 @@
 //! subject is the digest it is about and whose one layer is the envelope,
 //! and lists a subject's referrers in a referrers index (design D5, D6);
 //! and it names bytes through a cache manifest, an image manifest whose
-//! one layer is the bytes, since a tag names only a manifest (design
-//! D14).
+//! one layer is the bytes, since a tag names only a manifest, annotated
+//! with the name it was made for and the moment it was put, so each name
+//! has a manifest of its own and a cache entry says when it was pushed
+//! (145; design D14).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use timber_seams::{
-    canonical, Answer, Artifact, ArtifactMeta, ComponentName, Digest, Ecosystem, EcosystemName,
-    Envelope, IndexMeta, Manifest, Not, RepositoryName, Revision, Source, Version, Why, IN_TOTO,
+    canonical, utc, utc_seconds, Answer, Artifact, ArtifactMeta, ComponentName, Digest, Ecosystem,
+    EcosystemName, Envelope, IndexMeta, Manifest, Name, Not, RepositoryName, Revision, Source,
+    Version, Why, IN_TOTO,
 };
 
 pub(super) const IMAGE_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
@@ -59,6 +62,13 @@ const REPOSITORY: &str = "io.github.agentplot.timber.repository";
 /// A referrer's annotation: the predicate type of the in-toto statement
 /// its envelope holds, which no media type can carry (design D5).
 pub(super) const PREDICATE_TYPE: &str = "in-toto.io/predicate-type";
+/// A cache manifest's annotation: the store name it was made for,
+/// `cache/<build>` for a cache entry, or `moved` for a root's mark (145).
+pub(super) const STORE_NAME: &str = "io.github.agentplot.timber.store-name";
+/// When a cache manifest was put, or a layout's name made, as `utc`
+/// writes it: the key the OCI image specification defines for a
+/// creation time (145).
+pub(super) const CREATED: &str = "org.opencontainers.image.created";
 
 /// An OCI descriptor: what a manifest, an index or `index.json` names a
 /// blob by.
@@ -82,6 +92,8 @@ struct ImageManifest {
     artifact_type: String,
     config: Descriptor,
     layers: Vec<Descriptor>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    annotations: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -195,6 +207,7 @@ pub(super) fn write(
                     annotations: BTreeMap::new(),
                 },
                 layers,
+                annotations: BTreeMap::new(),
             });
             Ok(Written {
                 media_type: IMAGE_MANIFEST,
@@ -405,11 +418,13 @@ pub(super) fn referred(bytes: &[u8]) -> Result<Descriptor, String> {
 }
 
 /// The cache manifest of the bytes held under `digest`, `size` bytes
-/// long: an image manifest of the cache-entry type, its config the empty
-/// descriptor and its one layer the bytes, with no annotation and no
-/// subject, so the same bytes always write the same manifest (design
-/// D14).
-pub(super) fn cache(digest: &Digest, size: u64) -> Vec<u8> {
+/// long, for the store name `name` and put at `at`, in seconds since the
+/// Unix epoch: an image manifest of the cache-entry type, its config the
+/// empty descriptor and its one layer the bytes, with no subject,
+/// annotated with the name and the moment, so each name made at bytes
+/// has a manifest of its own, which deleting it removes alone (145;
+/// design D14).
+pub(super) fn cache(digest: &Digest, size: u64, name: &Name, at: u64) -> Vec<u8> {
     canonical(&ImageManifest {
         schema_version: 2,
         media_type: IMAGE_MANIFEST.into(),
@@ -422,6 +437,30 @@ pub(super) fn cache(digest: &Digest, size: u64) -> Vec<u8> {
             artifact_type: None,
             annotations: BTreeMap::new(),
         }],
+        annotations: BTreeMap::from([
+            (STORE_NAME.into(), name.to_string()),
+            (CREATED.into(), utc(at)),
+        ]),
+    })
+}
+
+/// 145: when a cache manifest's `bytes` say it was put, in seconds since
+/// the Unix epoch; none where it carries no moment, as one written before
+/// moments were; the parser's or timber's words where they hold no JSON,
+/// or a moment not written `YYYY-MM-DDTHH:MM:SSZ`.
+#[allow(dead_code)]
+pub(super) fn cache_pushed(bytes: &[u8]) -> Result<Option<u64>, String> {
+    #[derive(Deserialize)]
+    struct Annotated {
+        #[serde(default)]
+        annotations: BTreeMap<String, String>,
+    }
+    let annotated: Annotated = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let Some(created) = annotated.annotations.get(CREATED) else {
+        return Ok(None);
+    };
+    utc_seconds(created).map(Some).ok_or_else(|| {
+        format!("its annotation {CREATED} is \"{created}\", and a moment is written YYYY-MM-DDTHH:MM:SSZ")
     })
 }
 
@@ -903,17 +942,34 @@ mod tests {
         assert!(named(b"not json").is_err());
     }
 
-    #[test]
-    fn the_same_bytes_write_the_same_cache_manifest() {
-        let digest = Digest::of(b"a cache entry");
-        assert_eq!(cache(&digest, 13), cache(&digest, 13));
-        assert_ne!(cache(&digest, 13), cache(&Digest::of(b"other bytes"), 11));
+    /// The moment a cache manifest is put at in these tests.
+    const AT: u64 = 1_793_000_000;
+
+    fn entry() -> Name {
+        Name::new("cache/b7e1")
     }
 
     #[test]
-    fn a_cache_manifest_names_the_empty_config_and_the_bytes() {
+    fn each_name_and_moment_writes_a_cache_manifest_of_its_own() {
         let digest = Digest::of(b"a cache entry");
-        let json: Value = serde_json::from_slice(&cache(&digest, 13)).unwrap();
+        assert_eq!(
+            cache(&digest, 13, &entry(), AT),
+            cache(&digest, 13, &entry(), AT)
+        );
+        for other in [
+            cache(&Digest::of(b"other bytes"), 11, &entry(), AT),
+            cache(&digest, 13, &Name::new("cache/c9d2"), AT),
+            cache(&digest, 13, &entry(), AT + 1),
+        ] {
+            assert_ne!(cache(&digest, 13, &entry(), AT), other);
+        }
+    }
+
+    #[test]
+    fn a_cache_manifest_names_its_entry_and_the_moment_it_was_put() {
+        let digest = Digest::of(b"a cache entry");
+        let bytes = cache(&digest, 13, &entry(), AT);
+        let json: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             json,
             json!({
@@ -922,15 +978,45 @@ mod tests {
                 "artifactType": "application/vnd.agentplot.timber.cache.v1",
                 "config": {"mediaType": EMPTY, "digest": Digest::of(b"{}"), "size": 2},
                 "layers": [{"mediaType": OCTETS, "digest": digest, "size": 13}],
+                "annotations": {
+                    "io.github.agentplot.timber.store-name": "cache/b7e1",
+                    "org.opencontainers.image.created": "2026-10-26T07:33:20Z",
+                },
             })
         );
+        assert_eq!(cache_pushed(&bytes), Ok(Some(AT)));
+        assert_eq!(cached(&bytes), Ok(Some(digest.clone())));
+        let mark: Value =
+            serde_json::from_slice(&cache(&digest, 13, &Name::new("moved"), AT)).unwrap();
+        assert_eq!(mark["annotations"][STORE_NAME], "moved");
         assert!(!is_timbers(CACHE));
+    }
+
+    #[test]
+    fn a_cache_manifest_with_no_moment_reads_none() {
+        let digest = Digest::of(b"a cache entry");
+        let before = json!({
+            "schemaVersion": 2,
+            "mediaType": IMAGE_MANIFEST,
+            "artifactType": CACHE,
+            "config": {"mediaType": EMPTY, "digest": Digest::of(b"{}"), "size": 2},
+            "layers": [{"mediaType": OCTETS, "digest": digest, "size": 13}],
+        });
+        let bytes = serde_json::to_vec(&before).unwrap();
+        assert_eq!(cache_pushed(&bytes), Ok(None));
+        assert_eq!(cached(&bytes), Ok(Some(digest)), "still read for its bytes");
+
+        let mut other_form = before.clone();
+        other_form["annotations"] = json!({ CREATED: "2026-10-26 05:33:20" });
+        let words = cache_pushed(&serde_json::to_vec(&other_form).unwrap()).unwrap_err();
+        assert!(words.contains("2026-10-26 05:33:20"), "{words}");
+        assert!(cache_pushed(b"not json").is_err());
     }
 
     #[test]
     fn only_a_cache_manifest_answers_the_bytes_it_names() {
         let digest = Digest::of(b"a cache entry");
-        assert_eq!(cached(&cache(&digest, 13)), Ok(Some(digest)));
+        assert_eq!(cached(&cache(&digest, 13, &entry(), AT)), Ok(Some(digest)));
         for written in [artifact(), index()] {
             let written = write(&written, &source(), &size).unwrap();
             assert_eq!(cached(&written.bytes), Ok(None));

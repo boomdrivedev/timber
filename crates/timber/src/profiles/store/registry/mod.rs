@@ -2,7 +2,9 @@
 //! distribution protocol (C.1, ADR 0003): bytes as blobs, an artifact or
 //! an index as a manifest put by its own digest in the bytes the layout
 //! writes, an attestation as a referrer of its subject, and a name as a
-//! tag, at bytes through a cache manifest (design D2 to D8, D14).
+//! tag, at bytes through a cache manifest of its own, naming the name and
+//! the moment the store put it by the store's clock (145; design D2 to
+//! D8, D14).
 //!
 //! The host names a registry and a root, `<host>[:<port>]/<root>`, and
 //! every name of the store is a tag of a repository under the root (C.1
@@ -51,7 +53,7 @@ pub(crate) mod stub;
 
 use std::cell::RefCell;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use timber_seams::{
@@ -105,6 +107,14 @@ pub struct Registry {
     named_for: Option<RepositoryName>,
     carrying: Option<RepositoryName>,
     mark: RefCell<Option<Answer<()>>>,
+    clock: Box<dyn Fn() -> u64>,
+}
+
+/// The system's clock, in seconds since the Unix epoch.
+fn system_clock() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// The space of repositories under the root an artifact's names are held
@@ -201,6 +211,7 @@ impl Registry {
             named_for: None,
             carrying: None,
             mark: RefCell::new(None),
+            clock: Box::new(system_clock),
         })
     }
 
@@ -253,6 +264,14 @@ impl Registry {
     pub fn bound_for(mut self, build: &str, push: bool) -> Registry {
         self.build = Some(build.to_string());
         self.push = push;
+        self
+    }
+
+    /// The store's clock set to `clock`, in seconds since the Unix epoch,
+    /// in place of the system's: the moment each cache manifest is
+    /// annotated as put at, so a test fixes it (145).
+    pub fn with_clock(mut self, clock: Box<dyn Fn() -> u64>) -> Registry {
+        self.clock = clock;
         self
     }
 
@@ -644,11 +663,11 @@ impl Registry {
     }
 
     /// The cache manifest of the bytes held under `digest`, `size` bytes
-    /// long, held in the repository: the empty config put, and the
-    /// manifest put by its digest unless it is held already (design
-    /// D14).
-    fn cache(&self, repository: &str, digest: &Digest, size: u64) -> Answer<Vec<u8>> {
-        let bytes = oci::cache(digest, size);
+    /// long, for `name` and put now by the store's clock, held in the
+    /// repository: the empty config put, and the manifest put by its
+    /// digest unless it is held already (145; design D14).
+    fn cache(&self, repository: &str, name: &Name, digest: &Digest, size: u64) -> Answer<Vec<u8>> {
+        let bytes = oci::cache(digest, size, name, (self.clock)());
         let at = Digest::of(&bytes);
         if self.manifest_head(repository, at.as_str())?.is_none() {
             self.put_bytes_in(repository, EMPTY_JSON)?;
@@ -1015,14 +1034,14 @@ impl Registry {
     /// The manifest `place`'s tag is put at for `to`, with what it names
     /// held in `place`'s repository: `to`'s own where `to` is a manifest,
     /// held as [`Registry::hold`] holds it; and where `to` is bytes, the
-    /// cache manifest of them, the bytes held as [`Registry::mount`]
-    /// holds them (design D8, D14). `to` is asked of each repository it
+    /// cache manifest of them made for `name`, the bytes held as
+    /// [`Registry::mount`] holds them (145; design D8, D14). `to` is asked of each repository it
     /// was reached in, the repository's own and then the cache
     /// repository, as a read is, and of the cache repository alone by a
     /// push's store, which asks nothing of the repository's own its
     /// credential may not read (135; design D4, D9). Absent where `to` is
     /// neither.
-    fn named_at(&self, place: &Place, to: &Digest) -> Answer<(String, Vec<u8>)> {
+    fn named_at(&self, name: &Name, place: &Place, to: &Digest) -> Answer<(String, Vec<u8>)> {
         let asked = if self.push && place.space == Space::Cache {
             vec![place.repository.clone()]
         } else {
@@ -1059,7 +1078,7 @@ impl Registry {
                 self.mount(&place.repository, to, repository)?;
                 return Ok((
                     IMAGE_MANIFEST.to_string(),
-                    self.cache(&place.repository, to, size)?,
+                    self.cache(&place.repository, name, to, size)?,
                 ));
             }
         }
@@ -1534,7 +1553,7 @@ impl Store for Registry {
         if at.as_ref() != expected {
             return Err(Not::refused(&self.source, Why::NameAt { at }, None));
         }
-        let (media_type, bytes) = self.named_at(&place, to)?;
+        let (media_type, bytes) = self.named_at(name, &place, to)?;
         self.put_manifest(repository, tag, &media_type, &bytes)?;
         let found = self.shown(repository, tag, at.as_ref(), to)?;
         if found.as_ref() == Some(to) {
@@ -2137,6 +2156,92 @@ mod tests {
             sync.read(&resolved),
             Ok(Held::Bytes(b"a cache entry".to_vec()))
         );
+    }
+
+    /// The moment a fixed clock answers in these tests.
+    const AT: u64 = 1_793_000_000;
+
+    /// The manifest a tag of `repository` names, as `stub` holds it.
+    fn tagged(stub: &Stub, repository: &str, tag: &str) -> (Digest, Vec<u8>) {
+        let held = stub.held(repository).unwrap();
+        let at = held.tags.get(tag).expect("the tag").clone();
+        let bytes = held.manifests[&at].1.clone();
+        (at, bytes)
+    }
+
+    #[test]
+    fn two_names_of_the_same_bytes_each_have_a_cache_manifest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let push = store(&stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(|| AT));
+        let bytes = push.put_bytes(b"an empty output").unwrap().digest;
+        for entry in ["cache/b7e1", "cache/c9d2"] {
+            push.name(&Name::new(entry), &bytes, None).unwrap();
+            assert_eq!(push.resolve(&Name::new(entry)), Ok(bytes.clone()));
+        }
+        let cache = "acme/store/acme/site/cache/moon";
+        let (first, first_bytes) = tagged(&stub, cache, "b7e1");
+        let (second, second_bytes) = tagged(&stub, cache, "c9d2");
+        assert_ne!(first, second, "one cache manifest for two names");
+        for (bytes_of, entry) in [(&first_bytes, "cache/b7e1"), (&second_bytes, "cache/c9d2")] {
+            let json: serde_json::Value = serde_json::from_slice(bytes_of).unwrap();
+            assert_eq!(json["annotations"][oci::STORE_NAME], entry);
+            assert_eq!(oci::cached(bytes_of), Ok(Some(bytes.clone())));
+            assert_eq!(oci::cache_pushed(bytes_of), Ok(Some(AT)));
+        }
+    }
+
+    #[test]
+    fn a_name_found_held_puts_no_cache_manifest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let push = store(&stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(|| AT));
+        let bytes = push.put_bytes(b"a cache entry").unwrap().digest;
+        let entry = Name::new("cache/b7e1");
+        push.name(&entry, &bytes, None).unwrap();
+        let cache = "acme/store/acme/site/cache/moon";
+        let manifests = stub.held(cache).unwrap().manifests.len();
+        let since = stub.asked().len();
+
+        let later = store(&stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(|| AT + 60));
+        let other = later.put_bytes(b"another host's entry").unwrap().digest;
+        let since_put = stub.asked().len();
+        match later.name(&entry, &other, None) {
+            Err(Not::Refused(r)) => assert_eq!(r.why, Why::NameAt { at: Some(bytes) }),
+            answered => panic!("a name held was answered {answered:?}"),
+        }
+        assert_eq!(stub.held(cache).unwrap().manifests.len(), manifests);
+        let asked = &stub.asked()[since_put..];
+        assert!(
+            asked
+                .iter()
+                .all(|a| a.method == "GET" || a.method == "HEAD"),
+            "{asked:#?}"
+        );
+        assert!(since_put > since);
+    }
+
+    #[test]
+    fn the_mark_is_written_through_a_cache_manifest_naming_moved() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let to = repository("acme", "site");
+        let carrying = store_for(&stub, "acme", "app")
+            .carrying_to(to.clone())
+            .with_clock(Box::new(|| AT));
+        let bytes = carrying
+            .put_bytes(&MovedTo { to }.to_bytes())
+            .unwrap()
+            .digest;
+        carrying.name(&moved_name(), &bytes, None).unwrap();
+        let (_, manifest) = tagged(&stub, "acme/store/acme/app", "moved");
+        let json: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        assert_eq!(json["annotations"][oci::STORE_NAME], "moved");
+        assert_eq!(oci::cache_pushed(&manifest), Ok(Some(AT)));
+        assert_eq!(oci::cached(&manifest), Ok(Some(bytes)));
     }
 
     #[test]

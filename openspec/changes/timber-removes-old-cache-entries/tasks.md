@@ -66,7 +66,7 @@ Read these before starting:
 
 ## 4. The stores
 
-- [ ] 4.1 Name each cache manifest's entry and moment, in `crates/timber/src/profiles/store/oci.rs` and `registry/mod.rs` (design D2; registry-store spec, "A cache entry's bytes are named through a cache manifest").
+- [x] 4.1 Name each cache manifest's entry and moment, in `crates/timber/src/profiles/store/oci.rs` and `registry/mod.rs` (design D2; registry-store spec, "A cache entry's bytes are named through a cache manifest").
   - `oci::cache(digest, size, name, at)` writes the annotations `io.github.agentplot.timber.store-name` and `org.opencontainers.image.created`, the second by `utc`; its comment no longer says the same bytes write the same manifest. `oci::cache_pushed(bytes) -> Result<Option<u64>, String>` reads the moment as design D2 says.
   - The registry passes the name it makes and its clock's moment. `Registry::with_clock(Box<dyn Fn() -> u64>)` sets the clock, the system's by default. Where name's check before its put finds the name held, no cache manifest is put. The root's mark `moved` is written the same way.
   - Update the module tests that expected one cache manifest for two names of the same bytes. Add: `a_cache_manifest_names_its_entry_and_the_moment_it_was_put` and `a_cache_manifest_with_no_moment_reads_none` in `oci.rs`; `two_names_of_the_same_bytes_each_have_a_cache_manifest`, `a_name_found_held_puts_no_cache_manifest` and `the_mark_is_written_through_a_cache_manifest_naming_moved` in the registry's tests.
