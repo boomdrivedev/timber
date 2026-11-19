@@ -11,7 +11,7 @@ is not a store (73). Exactly one store is written by a publish (92).
 
 ## The contract
 
-The seam is eight operations (66 to 72, 138). **put-bytes** takes bytes and
+The seam is ten operations (66 to 72, 138, 145). **put-bytes** takes bytes and
 their digest and says whether the store held them already; the same
 bytes put twice are held once. **put-artifact** takes an artifact's
 metadata and the digests of its bytes and answers the artifact's digest,
@@ -25,7 +25,13 @@ names nothing. **read** answers a digest's bytes, or that the digest is
 not held. **versions**, given an ecosystem and a name, answers every
 version the store names that name at, the empty list where it names
 none, and unreadable only where the listing cannot be read, never an
-empty list for a read that failed (138).
+empty list for a read that failed (138). **cache-entries** answers every
+cache entry the store holds for its repository and build profile, each
+by its build identity with the digest its name is at and when it was
+pushed, an entry it cannot read answered on its own; and
+**remove-cache-entry** removes one entry by its build identity, only
+where its name is at the digest given, refusing otherwise and naming
+where it is. No operation removes any other name (145).
 
 ## Names
 
@@ -159,12 +165,16 @@ read can lag a put, as ECR's do, so nothing rests on the check: a
 channel's name found elsewhere is repaired from the ledger (109). A tag names only a manifest, so a
 cache entry's bytes are named through a cache manifest whose one layer
 is the bytes, held in the cache repository, and resolve answers the
-bytes' digest (100); a cache
+bytes' digest (100); the manifest is annotated with the name it was made
+for, `io.github.agentplot.timber.store-name`, and the moment the store
+put it, `org.opencontainers.image.created`, so each name has a cache
+manifest of its own (145). A cache
 manifest is no artifact, and claims-of never lists it. The credential is
 the host's, from its Docker configuration and the credential helpers it
 names, reached when the registry asks for one and kept nowhere (64). A
 read asks the registry's token service for the scope its challenge
-names, and a write for pulling and pushing its repository, whatever the
+names, a delete for pulling and deleting in its repository, and any
+other write for pulling and pushing its repository, whatever the
 challenge names. Bytes a registry answers held and will not serve, as
 GitHub's registry does in a package that holds no manifest yet, are
 unreadable in the registry's words, never absent (59).
@@ -202,6 +212,46 @@ asks the store makes none;
 verify and status never make or write one, and answer a layout that is
 not there unreadable naming its path; nothing makes a registry's
 repository.
+
+## Keeping cache entries
+
+A repository's cache entries are kept for as long as its policy says,
+thirty days from their push unless its `.config/timber.toml` writes
+`[cache] keep_days`, a whole number of days from 0, read at a landed
+revision; `timber policy` shows the time in force (145). `timber prune`
+lists the store's cache entries and removes each one pushed longer ago,
+at the digest it was listed at, and keeps every other; it removes
+nothing but cache entries, and nothing accepted or released (54), the
+record of claimed versions (22) or the ledger (34). timber never starts
+it: a scheduled workflow of the repository's own runs it (see
+[self-hosting](/timber/guides/self-hosting/)). A build whose entry is
+gone builds again (54).
+
+Each member says when an entry was pushed and removes one its own way
+(record 0045, beside records 0040 to 0042):
+
+- **A registry** reads the moment from the entry's cache manifest, and
+  removes the entry by deleting that manifest by its digest in the
+  build profile's cache repository, through the distribution protocol's
+  delete, as ECR, zot and the reference distribution take it. The
+  delete takes every tag at the manifest, and each name has a manifest
+  of its own, so the entry's name alone goes. Nothing outside the cache
+  repository, and no untagged manifest, is deleted (record 0039), and a
+  removal reads no mark of a root left.
+- **GitHub's registry** documents no delete through the distribution
+  protocol, so there the entry's cache manifest is deleted through
+  GitHub's REST API: the package version named by the manifest's digest,
+  in the cache repository's package of the root's namespace, with the
+  token the host's Docker sign-in for `ghcr.io` holds.
+- **The layout** reads the moment its index entry was stamped with when
+  the name was made, and removes the entry from `index.json`.
+
+An entry pushed before cache manifests named their moment lists with
+none, and is removed at the first prune. A removed entry's bytes are the
+registry's to collect once nothing names them: GitHub's registry and ECR
+collect them on their own, zot by its own collection, and the reference
+distribution when its operator runs its garbage collection. A layout
+keeps them on disk.
 
 ## Adding one
 
