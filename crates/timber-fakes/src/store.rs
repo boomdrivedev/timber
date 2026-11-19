@@ -1,12 +1,15 @@
 //! The fake store (B.1): what it holds by digest, the attestations beside
-//! each, and its names, in memory.
+//! each, its names, and when each cache entry's name was made or moved,
+//! in memory. A cache entry is listed with that moment and removed by its
+//! build identity, its bytes kept (145, 54; design D6).
 
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use timber_seams::{
-    artifact_name, canonical, Answer, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held,
-    Manifest, Name, Not, Pushed, Put, Seam, Source, Store, Version, Why,
+    artifact_name, cache_name, canonical, Answer, BuildId, Digest, Ecosystem, EcosystemName,
+    Envelope, Held, Manifest, Name, Not, Pushed, Put, Seam, Store, Version, Why, CACHE,
 };
 
 use crate::Fake;
@@ -22,6 +25,8 @@ pub enum StoreOp {
     Resolve,
     Read,
     Versions,
+    CacheEntries,
+    RemoveCacheEntry,
 }
 
 /// Everything the fake store holds.
@@ -33,6 +38,12 @@ pub struct StoreState {
     /// attached.
     pub attached: BTreeMap<Digest, Vec<Envelope>>,
     pub names: BTreeMap<Name, Digest>,
+    /// 145: when each name under `cache/` was made or last moved, in
+    /// seconds since the Unix epoch; a name with none here has no moment.
+    pub pushed: BTreeMap<Name, u64>,
+    /// The moment a test set the store's clock to, the system's where
+    /// none.
+    pub clock: Option<u64>,
 }
 
 impl StoreState {
@@ -43,6 +54,15 @@ impl StoreState {
             digest,
             held_already,
         }
+    }
+
+    /// The store's clock: the moment a test set, or the system's.
+    fn now(&self) -> u64 {
+        self.clock.unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs())
+        })
     }
 }
 
@@ -69,11 +89,33 @@ impl FakeStore {
             .insert(digest.clone(), Held::Bytes(bytes.to_vec()));
     }
 
-    /// 54: `name` removed and what it named left held, as a store's own
-    /// retention removes a cache entry's name; no operation of the store
-    /// seam removes anything.
+    /// 54: `name` removed and what it named left held, standing in for a
+    /// store's own retention, which removes a cache entry's name behind
+    /// timber's back; timber's own removal is
+    /// [`Store::remove_cache_entry`], which names a build identity and is
+    /// recorded.
     pub fn forget(&self, name: &Name) {
-        self.state().names.remove(name);
+        let mut state = self.state();
+        state.names.remove(name);
+        state.pushed.remove(name);
+    }
+
+    /// 145: the store's clock set to `seconds` since the Unix epoch, the
+    /// moment every cache entry's name made or moved from now on is
+    /// stamped with.
+    pub fn clock(&self, seconds: u64) {
+        self.state().clock = Some(seconds);
+    }
+
+    /// 145: the cache entry of `build` stamped with `at`, or with no
+    /// moment, as an entry pushed before moments were written lists.
+    pub fn pushed(&self, build: &BuildId, at: Option<u64>) {
+        let name = cache_name(build);
+        let mut state = self.state();
+        match at {
+            Some(at) => state.pushed.insert(name, at),
+            None => state.pushed.remove(&name),
+        };
     }
 
     /// Everything the store holds now.
@@ -152,6 +194,10 @@ impl Store for FakeStore {
                     return Err(Not::refused(source, Why::NameAt { at }, None));
                 }
                 s.names.insert(name.clone(), to.clone());
+                if name.as_str().starts_with(CACHE) {
+                    let now = s.now();
+                    s.pushed.insert(name.clone(), now);
+                }
                 Ok(())
             },
         )
@@ -205,18 +251,54 @@ impl Store for FakeStore {
         )
     }
 
+    /// 145: every name under `cache/`, in the order of its names, with
+    /// the digest it is at and its moment, none where it has none.
     fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
-        Err(Not::absent(
-            &Source::new(Seam::Store, "fake"),
-            "cache entries",
-        ))
+        self.ask(
+            StoreOp::CacheEntries,
+            json!({}),
+            "the cache entries",
+            |s, _| {
+                Ok(s.names
+                    .iter()
+                    .filter_map(|(name, digest)| {
+                        let build = name.as_str().strip_prefix(CACHE)?;
+                        let pushed = Pushed {
+                            digest: digest.clone(),
+                            at: s.pushed.get(name).copied(),
+                        };
+                        Some((BuildId::new(build), Ok(pushed)))
+                    })
+                    .collect())
+            },
+        )
     }
 
-    fn remove_cache_entry(&self, _: &BuildId, _: &Digest) -> Answer<()> {
-        Err(Not::absent(
-            &Source::new(Seam::Store, "fake"),
-            "cache entries",
-        ))
+    /// 145, 54: the name of `build`'s entry removed where it is at `at`,
+    /// its moment with it, and the bytes it named kept.
+    fn remove_cache_entry(&self, build: &BuildId, at: &Digest) -> Answer<()> {
+        let name = cache_name(build);
+        let given = json!({ "build": build, "at": at });
+        self.ask(
+            StoreOp::RemoveCacheEntry,
+            given,
+            format!("the name {name}"),
+            |s, source| match s.names.get(&name) {
+                None => Err(Not::absent(source, format!("cache entry {build}"))),
+                Some(held) if held != at => Err(Not::refused(
+                    source,
+                    Why::NameAt {
+                        at: Some(held.clone()),
+                    },
+                    None,
+                )),
+                Some(_) => {
+                    s.names.remove(&name);
+                    s.pushed.remove(&name);
+                    Ok(())
+                }
+            },
+        )
     }
 }
 
@@ -558,6 +640,8 @@ mod tests {
             StoreOp::Resolve,
             StoreOp::Read,
             StoreOp::Versions,
+            StoreOp::CacheEntries,
+            StoreOp::RemoveCacheEntry,
         ];
         for op in ops {
             store.fault(op, Fault::Refused("no".into()), Times::Once);
@@ -573,6 +657,10 @@ mod tests {
             store
                 .versions(&Ecosystem::new("eco"), &EcosystemName::new("x"))
                 .map(drop),
+            store.cache_entries().map(drop),
+            store
+                .remove_cache_entry(&BuildId::new("b7e1"), &d)
+                .map(drop),
         ];
         for answer in answers {
             assert_eq!(
@@ -582,5 +670,143 @@ mod tests {
         }
         assert_eq!(store.calls().iter().map(|c| c.op).collect::<Vec<_>>(), ops);
         assert_eq!(store.contents(), StoreState::default());
+    }
+
+    /// A store at a fixed clock holding `bytes` under the cache entry of
+    /// `build`.
+    fn with_entry(build: &str, bytes: &[u8], at: u64) -> (FakeStore, Digest) {
+        let store = FakeStore::new();
+        store.clock(at);
+        let d = store.put_bytes(bytes).unwrap().digest;
+        store
+            .name(&cache_name(&BuildId::new(build)), &d, None)
+            .unwrap();
+        (store, d)
+    }
+
+    fn now() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn the_fake_store_lists_a_cache_entry_with_its_moment() {
+        let before = now();
+        let store = FakeStore::new();
+        let d = store.put_bytes(b"archive").unwrap().digest;
+        store
+            .name(&cache_name(&BuildId::new("b7e1")), &d, None)
+            .unwrap();
+        let after = now();
+        store.name(&Name::new("channel/stable"), &d, None).unwrap();
+        let listed = store.cache_entries().unwrap();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        let (build, pushed) = &listed[0];
+        assert_eq!(build, &BuildId::new("b7e1"));
+        let pushed = pushed.clone().unwrap();
+        assert_eq!(pushed.digest, d);
+        let at = pushed.at.expect("a moment");
+        assert!(before <= at && at <= after, "{before} {at} {after}");
+    }
+
+    #[test]
+    fn the_fake_store_removes_an_entry_and_keeps_its_bytes() {
+        let (store, d) = with_entry("b7e1", b"archive", 1_793_000_000);
+        store
+            .name(&cache_name(&BuildId::new("c9d2")), &d, None)
+            .unwrap();
+        assert_eq!(store.remove_cache_entry(&BuildId::new("b7e1"), &d), Ok(()));
+        assert_eq!(
+            store.resolve(&cache_name(&BuildId::new("b7e1"))),
+            Err(Not::absent(&source(), "name cache/b7e1"))
+        );
+        assert_eq!(
+            store.resolve(&cache_name(&BuildId::new("c9d2"))),
+            Ok(d.clone())
+        );
+        assert_eq!(store.read(&d), Ok(Held::Bytes(b"archive".to_vec())));
+        let listed: Vec<BuildId> = store
+            .cache_entries()
+            .unwrap()
+            .into_iter()
+            .map(|(build, _)| build)
+            .collect();
+        assert_eq!(listed, [BuildId::new("c9d2")]);
+        assert!(!store
+            .contents()
+            .pushed
+            .contains_key(&cache_name(&BuildId::new("b7e1"))));
+    }
+
+    #[test]
+    fn the_fake_store_refuses_a_removal_from_where_the_name_is_not() {
+        let (store, d) = with_entry("b7e1", b"archive", 1_793_000_000);
+        let held = store.contents();
+        assert_eq!(
+            store.remove_cache_entry(&BuildId::new("b7e1"), &Digest::of(b"other")),
+            Err(Not::refused(&source(), Why::NameAt { at: Some(d) }, None))
+        );
+        assert_eq!(store.contents(), held);
+    }
+
+    #[test]
+    fn the_fake_store_answers_a_removal_of_no_entry_absent() {
+        let (store, d) = with_entry("b7e1", b"archive", 1_793_000_000);
+        store.name(&Name::new("c9d2"), &d, None).unwrap();
+        let held = store.contents();
+        assert_eq!(
+            store.remove_cache_entry(&BuildId::new("c9d2"), &d),
+            Err(Not::absent(&source(), "cache entry c9d2"))
+        );
+        assert_eq!(store.contents(), held, "a name outside cache/ is no entry");
+    }
+
+    #[test]
+    fn a_moment_a_test_sets_is_listed() {
+        let (store, d) = with_entry("b7e1", b"archive", 1_793_000_000);
+        let listed = |store: &FakeStore| store.cache_entries().unwrap();
+        assert_eq!(
+            listed(&store),
+            [(
+                BuildId::new("b7e1"),
+                Ok(Pushed {
+                    digest: d.clone(),
+                    at: Some(1_793_000_000)
+                })
+            )]
+        );
+        store.pushed(&BuildId::new("b7e1"), Some(1_700_000_000));
+        assert_eq!(listed(&store)[0].1.clone().unwrap().at, Some(1_700_000_000));
+        store.pushed(&BuildId::new("b7e1"), None);
+        assert_eq!(
+            listed(&store),
+            [(
+                BuildId::new("b7e1"),
+                Ok(Pushed {
+                    digest: d,
+                    at: None
+                })
+            )]
+        );
+    }
+
+    #[test]
+    fn the_fake_store_records_its_cache_operations() {
+        let (store, d) = with_entry("b7e1", b"archive", 1_793_000_000);
+        store.cache_entries().unwrap();
+        store.remove_cache_entry(&BuildId::new("b7e1"), &d).unwrap();
+        let calls = store.calls();
+        let ours: Vec<_> = calls
+            .iter()
+            .filter(|c| matches!(c.op, StoreOp::CacheEntries | StoreOp::RemoveCacheEntry))
+            .collect();
+        assert_eq!(ours.len(), 2, "{calls:?}");
+        assert_eq!(ours[0].op, StoreOp::CacheEntries);
+        assert_eq!(ours[1].op, StoreOp::RemoveCacheEntry);
+        assert_eq!(ours[1].given["build"], "b7e1");
+        assert_eq!(ours[1].given["at"], json!(d));
+        assert_eq!(ours[1].answer, Ok(json!(null)));
     }
 }

@@ -43,7 +43,7 @@ Read these before starting:
 
 ## 2. The fakes
 
-- [ ] 2.1 List and remove cache entries in the fake store, `crates/timber-fakes/src/store.rs` (design D6; seam-fakes spec, "The fake store lists and removes cache entries with when each was pushed").
+- [x] 2.1 List and remove cache entries in the fake store, `crates/timber-fakes/src/store.rs` (design D6; seam-fakes spec, "The fake store lists and removes cache entries with when each was pushed").
   - `StoreState` keeps a moment per name made or moved under `cache/`, from the store's clock: the system's, unless a test sets one with `FakeStore::clock(seconds)`. `FakeStore::pushed(build, Option<u64>)` sets an entry's moment, or none.
   - `cache_entries` lists every name under `cache/` with its digest and moment; `remove_cache_entry` removes the name where it is at the digest given, refused `NameAt` naming where it is otherwise, absent where there is none, and keeps the bytes.
   - `StoreOp` gains `CacheEntries` and `RemoveCacheEntry`, recorded and scriptable as the other operations are. `forget`'s comment says it stands in for a store's own retention beside `remove_cache_entry`.
