@@ -175,10 +175,14 @@ impl Server {
                 } else {
                     String::new()
                 };
+                // Deletes on: a cache entry is removed by deleting its
+                // cache manifest, which the reference distribution
+                // answers UNSUPPORTED while deletes are off, its default
+                // (145).
                 let config = format!(
                     "version: 0.1\nlog:\n  level: error\n  accesslog:\n    disabled: true\n\
-                     storage:\n  filesystem:\n    rootdirectory: {}\n{auth}\
-                     http:\n  addr: 127.0.0.1:{port}\n",
+                     storage:\n  filesystem:\n    rootdirectory: {}\n  delete:\n    enabled: true\n\
+                     {auth}http:\n  addr: 127.0.0.1:{port}\n",
                     root.display()
                 );
                 let path = dir.path().join("config.yml");

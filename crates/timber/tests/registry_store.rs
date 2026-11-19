@@ -219,6 +219,7 @@ on_both!(
     cache_entries_are_tags_of_the_build_profiles_cache_repository,
     a_pins_claims_are_read_from_its_artifacts_repository_by_a_store_of_another_repository,
     a_moved_repositorys_history_is_carried_to_its_new_root,
+    a_prune_removes_an_entry_past_its_time_and_leaves_a_released_version,
 );
 
 /// The tags `store`'s repository `under` its root holds, sorted; none
@@ -1401,4 +1402,109 @@ fn the_check_before_the_put_refuses_a_move_from_where_the_name_is_not(kind: Kind
 fn a_moved_repositorys_history_is_carried_to_its_new_root(kind: Kind) {
     let server = Server::start(kind);
     registry::carried_between(&server.repository(), ("acme", "app"), ("acme", "site"), "");
+}
+
+/// Seconds since the Unix epoch by this host's clock.
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// 145, 54, 22, 34: under `acme/site`, a store bound for `moon` with a
+/// fixed clock writes one entry forty days ago and one a day ago; a
+/// version is published, a claim attached and a channel's name made
+/// through a store bound for the same repository; prune over a store
+/// bound as prune's is and the fake landing and policy removes the first
+/// entry alone, and the version, its claims and the channel's name read
+/// as before.
+fn a_prune_removes_an_entry_past_its_time_and_leaves_a_released_version(kind: Kind) {
+    const DAY: u64 = 86_400;
+    let server = Server::start(kind);
+    let repository = server.repository();
+    let (old, recent) = (now() - 40 * DAY, now() - DAY);
+    for (build, at, bytes) in [
+        ("b7e1", old, &b"an old entry"[..]),
+        ("c9d2", recent, &b"a recent entry"[..]),
+    ] {
+        let push = site(&repository)
+            .bound_for("moon", true)
+            .with_clock(Box::new(move || at));
+        let digest = push.put_bytes(bytes).unwrap().digest;
+        push.name(&Name::new(format!("cache/{build}")), &digest, None)
+            .unwrap();
+    }
+
+    let publish = site(&repository).bound_for("moon", false);
+    let index = index_of(&publish, "repository", "site", b"a released artifact");
+    let (version, channel, pointer) = (
+        Name::new("v1.3.0"),
+        Name::new("channel/beta"),
+        timber_seams::artifact_name(
+            &Ecosystem::new("npm"),
+            &EcosystemName::new("site"),
+            &Version::new("1.3.0"),
+        ),
+    );
+    for name in [&pointer, &version, &channel] {
+        publish.name(name, &index, None).unwrap();
+    }
+    publish
+        .attach(&index, &attestation(&index, "accepted"))
+        .unwrap();
+    let claims = publish.claims_of(&index).unwrap();
+    assert_eq!(claims.len(), 2, "{claims:?}");
+
+    let fakes = timber_fakes::Fakes::new();
+    let (main, revision) = (timber_seams::Branch::new("main"), Revision::new("4f2a9c1"));
+    fakes.landing.land(&main, &revision);
+    let mut seams = fakes.seams();
+    seams.store = Box::new(site(&repository).bound_for("moon", true));
+    let pruned = timber_core::prune(
+        &seams,
+        &timber_core::PruneAsk {
+            branch: main,
+            revision,
+            now: now(),
+        },
+    )
+    .unwrap();
+    let fates: Vec<(String, Answer<timber_core::Fate>)> = pruned
+        .entries
+        .iter()
+        .map(|(build, fate)| (build.as_str().to_string(), fate.clone()))
+        .collect();
+    assert_eq!(
+        fates,
+        [
+            (
+                "b7e1".to_string(),
+                Ok(timber_core::Fate::Removed { pushed: Some(old) })
+            ),
+            (
+                "c9d2".to_string(),
+                Ok(timber_core::Fate::Kept {
+                    pushed: recent,
+                    until: recent + 30 * DAY
+                })
+            ),
+        ],
+        "{}",
+        kind.name()
+    );
+    assert_eq!(
+        tags_of(&publish, "acme/site/cache/moon"),
+        Some(vec!["c9d2".into()]),
+        "{}",
+        kind.name()
+    );
+    for name in [&pointer, &version, &channel] {
+        assert_eq!(publish.resolve(name), Ok(index.clone()), "{name}");
+    }
+    assert_eq!(publish.claims_of(&index), Ok(claims));
+    assert!(matches!(
+        publish.read(&index),
+        Ok(Held::Manifest(Manifest::Index(_)))
+    ));
 }

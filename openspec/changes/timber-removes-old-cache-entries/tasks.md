@@ -124,7 +124,7 @@ Read these before starting:
 
 ## 8. The proof on registries
 
-- [ ] 8.1 Prune on zot and the reference distribution in the tools layer (design D9; registry-store spec, "Removal passes against real registries").
+- [x] 8.1 Prune on zot and the reference distribution in the tools layer (design D9; registry-store spec, "Removal passes against real registries").
   - Start the reference distribution in `crates/timber/tests/registry/mod.rs` with `storage: delete: enabled: true`, saying why in a comment.
   - Add `a_prune_removes_an_entry_past_its_time_and_leaves_a_released_version` to `on_both!` in `crates/timber/tests/registry_store.rs`: under `acme/site`, a store bound for `moon` with a fixed clock writes one entry forty days ago and one a day ago; a version is published, a claim attached and a channel's name made through a store bound for the same repository; `prune` over that store and the fake landing and policy removes the first entry alone, and the version, its claim and the channel's name read as before.
   - Verify with `devenv shell -- cargo test -p timber --features tools --test registry_store a_prune_removes`, where it passes on zot and on the reference distribution, and `devenv shell -- cargo test -p timber --features tools --test registry_store keeps_the_stores_contract`, where the store group's cache scenarios pass on both.
