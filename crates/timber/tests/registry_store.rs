@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use registry::{cache_manifest, site, Kind, Proxy, RegistryRig, Server, PASSWORD, USER};
+use registry::{cache_manifest, site, Kind, Proxy, RegistryRig, Server, PASSWORD, PUT_AT, USER};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use timber::profiles::store::layout::Layout;
@@ -1014,28 +1014,23 @@ fn cache_of(store: &Registry) -> (String, String) {
 fn bytes_are_named_through_a_cache_manifest(kind: Kind) {
     let server = Server::start(kind);
     let proxy = Proxy::before(&server);
-    let store = proxy.store(&server.repository()).bound_for("moon", false);
-    registry::cache_entries(&store, store.bound());
+    let store = proxy
+        .store(&server.repository())
+        .bound_for("moon", false)
+        .with_clock(Box::new(|| PUT_AT));
+    registry::cache_entries(&store, store.bound(), "");
 
+    // Each name of the same bytes has a cache manifest of its own, naming
+    // it and the moment it was put (145).
     let entry = b"a cache entry under two names";
     let bytes = store.put_bytes(entry).unwrap().digest;
-    let manifest = cache_manifest(entry);
     let (cache, base) = cache_of(&store);
-    for (name, tag, writes) in [
-        (
-            "cache/site",
-            "site",
-            vec![
-                format!("PUT /v2/{cache}/manifests/{}", Digest::of(&manifest)),
-                format!("PUT /v2/{cache}/manifests/site"),
-            ],
-        ),
-        (
-            "cache/server",
-            "server",
-            vec![format!("PUT /v2/{cache}/manifests/server")],
-        ),
-    ] {
+    for (name, tag) in [("cache/site", "site"), ("cache/server", "server")] {
+        let manifest = cache_manifest(entry, name, PUT_AT);
+        let writes = vec![
+            format!("PUT /v2/{cache}/manifests/{}", Digest::of(&manifest)),
+            format!("PUT /v2/{cache}/manifests/{tag}"),
+        ];
         proxy.passed();
         store.name(&Name::new(name), &bytes, None).unwrap();
         let wrote: Vec<String> = proxy

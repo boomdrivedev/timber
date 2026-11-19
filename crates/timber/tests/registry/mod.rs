@@ -656,15 +656,21 @@ fn pass(
     client.flush()
 }
 
-/// The cache manifest the registry store names `bytes` through, written
-/// out here apart from the profile's own form, so a test that finds these
-/// bytes in a registry proves the form (design D14).
-pub fn cache_manifest(bytes: &[u8]) -> Vec<u8> {
+/// The moment a store whose clock is fixed for the cache manifest's
+/// scenarios puts each cache manifest at.
+pub const PUT_AT: u64 = 1_793_000_000;
+
+/// The cache manifest the registry store names `bytes` through for the
+/// store name `name`, put at `at`, written out here apart from the
+/// profile's own form, so a test that finds these bytes in a registry
+/// proves the form (145; design D14).
+pub fn cache_manifest(bytes: &[u8], name: &str, at: u64) -> Vec<u8> {
     format!(
-        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.agentplot.timber.cache.v1","config":{{"mediaType":"application/vnd.oci.empty.v1+json","digest":"{}","size":2}},"layers":[{{"mediaType":"application/octet-stream","digest":"{}","size":{}}}]}}"#,
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.agentplot.timber.cache.v1","config":{{"mediaType":"application/vnd.oci.empty.v1+json","digest":"{}","size":2}},"layers":[{{"mediaType":"application/octet-stream","digest":"{}","size":{}}}],"annotations":{{"io.github.agentplot.timber.store-name":"{name}","org.opencontainers.image.created":"{}"}}}}"#,
         Digest::of(b"{}"),
         Digest::of(bytes),
-        bytes.len()
+        bytes.len(),
+        timber_seams::utc(at)
     )
     .into_bytes()
 }
@@ -679,8 +685,11 @@ pub fn cache_manifest(bytes: &[u8]) -> Vec<u8> {
 /// as the store group reads one (C.1, 36). A move from bytes the name has
 /// left is refused only by the check's best effort, so it is proven
 /// where every read shows a move at once, in `registry_store.rs`, and
-/// never against ECR (C.1, ADR 0015).
-pub fn cache_entries(store: &dyn Store, within: Duration) {
+/// never against ECR (C.1, ADR 0015). The store's clock answers
+/// [`PUT_AT`], and it writes each cache entry's name with `prefix` before
+/// its build identity, as [`Prefixed`] does, so the cache manifest's
+/// own digest is known (145).
+pub fn cache_entries(store: &dyn Store, within: Duration, prefix: &str) {
     let (entry, other): (&[u8], &[u8]) = (b"a cache entry", b"another cache entry");
     let bytes = store.put_bytes(entry).unwrap().digest;
     let moved = store.put_bytes(other).unwrap().digest;
@@ -702,7 +711,7 @@ pub fn cache_entries(store: &dyn Store, within: Duration) {
     let was = [None, Some(&bytes)];
     assert_eq!(resolved(&two, &moved, &was).as_ref(), Ok(&moved));
 
-    let manifest = cache_manifest(entry);
+    let manifest = cache_manifest(entry, &format!("cache/{prefix}one"), PUT_AT);
     let own = Digest::of(&manifest);
     assert_eq!(store.read(&own), Ok(Held::Bytes(manifest)));
     assert_eq!(store.claims_of(&bytes), Ok(vec![]));
