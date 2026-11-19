@@ -8,6 +8,13 @@
 runner = "moon"
 toolchain = ["devenv", "print-dev-env"]
 
+# The one signer whose runs the gates count: deneb, where the sessions run
+# and submit, signing as sessions with its own key, as sluice's own policy
+# names it. A branch whose policy takes pull requests names its signers
+# (sluice record 0125, D22), so main's pull requests are taken in.
+[signers.sessions]
+ssh = "deneb ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHGx/Ip3yodP/Rg3DdMAjJXoYuBmMxTLpPrka3ei69M/ sluice deneb"
+
 [branches."bolt/*"]
 required = ["#check-fast", "#check-tools"]
 parallel = 2
@@ -15,6 +22,7 @@ batch = false
 flaky = "fail"
 timeout = "20m"
 remote = "origin"
+trust = ["sessions"]
 
 [branches.main]
 required = ["#check-fast", "#check-tools"]
@@ -23,6 +31,7 @@ batch = true
 flaky = "fail"
 timeout = "20m"
 remote = "origin"
+trust = ["sessions"]
 
 [branches.main.pull_requests]
 reviews = 0
