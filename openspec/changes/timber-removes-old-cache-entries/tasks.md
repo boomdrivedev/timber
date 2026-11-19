@@ -136,6 +136,7 @@ Read these before starting:
 ## 9. The specs
 
 - [x] 9.1 Archive the change once groups 1 to 8 are done: `devenv shell -- openspec archive timber-removes-old-cache-entries --yes`. Then commit the archived change and the ten specs it writes. Verify with `devenv shell -- openspec validate cache-keeping --type spec --strict`.
+- [x] 9.2 #50 conflicted on `bolt/timber-publishes-github-releases-and-to-cachix` at 995a1af6 in `openspec/specs/conformance-suite/spec.md`: #49 and #48 had landed there, adding "The GitHub release target runs the target group" and "The Nix cache target on Cachix runs the target group" at the spec's end, where 9.1's archive added "The store's group lists and removes cache entries" and "Prune over the fakes". Take 995a1af6 in by a merge, the spec holding both sides' requirements, and move the change back out of the archive with the ten specs as 995a1af6 has them, so it archives again over the bolt's specs. The GitHub release target's two aliasing stores, `Aliased` in `crates/timber/src/profiles/target/github_release/tests.rs` and in `crates/timber/tests/github_release.rs`, implement the store seam as #48 left it: each passes `cache_entries` and `remove_cache_entry` through to its fake store, as the change gave dash0's and the Nix fleet's. Verify with `devenv shell -- moon run root:changes`, where the change archives alone onto the bolt's specs and every spec it writes passes `openspec validate --strict`, and `devenv shell -- cargo test -p timber --lib profiles::target::github_release`.
 
 ## Workflow follow-up
 
