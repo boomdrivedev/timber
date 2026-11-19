@@ -24,6 +24,18 @@
 //! as its binding answered the repository, and reads the artifact space
 //! as any store does.
 //!
+//! The bound build profile's cache repository is listed and its entries
+//! removed one by one (145): each tag's cache manifest read for the bytes
+//! it names and the moment it was put, none where it carries none, and a
+//! removal checking the tag's cache manifest names the bytes given before
+//! deleting that manifest by its digest, which takes every tag at it, so
+//! the name alone goes and the bytes stay for the registry to collect
+//! once nothing names them. Nothing outside the cache repository is
+//! listed or deleted, nor any untagged manifest, nor a tag at any other
+//! manifest; the listing and the removal read no mark and ask nothing of
+//! the repository's own, cache entries being no history (record 0039,
+//! record 0042).
+//!
 //! A root the repository left holds the mark `moved` in its own, at
 //! bytes naming the root its history moved to (C.1 as amended at
 //! `boomdrivedev/blueprints` e8700c8; record 0042). The store reads the
@@ -909,6 +921,97 @@ impl Registry {
             .transpose()
     }
 
+    /// 145: the bound build profile's cache repository, as its entries
+    /// are listed and removed: under the repository's own as the binding
+    /// answered it, with no mark read, since cache entries are no history
+    /// (record 0042); the binding's answer where the store is bound for
+    /// no repository, and refused where it is bound for no build profile.
+    fn cache_space(&self) -> Answer<String> {
+        let own = self.own.as_deref().map_err(Clone::clone)?;
+        let Some(build) = self.build.as_deref() else {
+            return Err(Not::refused(
+                &self.source,
+                Why::Said,
+                Some(
+                    "cache entries are held in a build profile's cache repository, and this \
+                     store is bound for no build profile"
+                        .into(),
+                ),
+            ));
+        };
+        tag::repository(
+            &self.host,
+            own,
+            &[CACHE_SPACE, build],
+            &format!("the cache of the build profile {build}"),
+        )
+        .map_err(|words| Not::refused(&self.source, Why::Said, Some(words)))
+    }
+
+    /// The manifest `tag` of `repository` names, by the digest of the
+    /// bytes the registry answered, and those bytes; none where the
+    /// repository holds no such tag.
+    fn tagged(&self, repository: &str, tag: &str) -> Answer<Option<(Digest, Vec<u8>)>> {
+        let url = self.url_in(repository, &format!("manifests/{tag}"));
+        let answered = self.send(
+            repository,
+            Method::GET,
+            &url,
+            &[("accept", MANIFESTS)],
+            None,
+        )?;
+        match answered.status {
+            StatusCode::OK => Ok(Some((Digest::of(&answered.body), answered.body))),
+            StatusCode::NOT_FOUND => Ok(None),
+            _ => Err(self.other(&url, &answered)),
+        }
+    }
+
+    /// 145: the cache entry `tag` of `repository` names: its cache
+    /// manifest's bytes and moment. Absent where the tag is gone since it
+    /// was listed; unreadable naming the tag where it names another
+    /// manifest or one that cannot be read, in the registry's or the
+    /// parser's words.
+    fn cache_entry(&self, repository: &str, tag: &str) -> Answer<Pushed> {
+        let what = format!("the cache entry {tag} of {}/{repository}", self.host);
+        let unreadable = |said: String| Not::unreadable(&self.source, what.clone(), Some(said));
+        let found = self.tagged(repository, tag).map_err(|not| match not {
+            Not::Absent(_) => not,
+            Not::Refused(r) => unreadable(r.said.unwrap_or_else(|| r.why.to_string())),
+            Not::Unreadable(u) => unreadable(u.said.unwrap_or(u.what)),
+        })?;
+        let Some((manifest, bytes)) = found else {
+            return Err(Not::absent(&self.source, what));
+        };
+        let digest = match oci::cached(&bytes) {
+            Ok(Some(layer)) => layer,
+            Ok(None) => {
+                return Err(unreadable(format!(
+                    "the tag {tag} names {manifest}, which is no cache manifest"
+                )))
+            }
+            Err(words) => return Err(unreadable(words)),
+        };
+        let at = oci::cache_pushed(&bytes).map_err(unreadable)?;
+        Ok(Pushed { digest, at })
+    }
+
+    /// 145: the cache manifest `manifest` of `repository`, which the
+    /// entry of `build` names, deleted by its digest through the
+    /// distribution protocol, every tag at it with it: done where the
+    /// registry takes it, absent naming the entry where it answers 404,
+    /// and refused in its words, or unreadable for a 5xx, otherwise (58,
+    /// 59).
+    fn delete_manifest(&self, repository: &str, manifest: &Digest, build: &BuildId) -> Answer<()> {
+        let url = self.url_in(repository, &format!("manifests/{manifest}"));
+        let answered = self.send(repository, Method::DELETE, &url, &[], None)?;
+        match answered.status {
+            status if status.is_success() => Ok(()),
+            StatusCode::NOT_FOUND => Err(Not::absent(&self.source, format!("cache entry {build}"))),
+            _ => Err(self.other(&url, &answered)),
+        }
+    }
+
     /// The manifest `digest` held in `repository` with everything it
     /// names and timber's attestations on each, each asked after by a
     /// `HEAD` first and only what the repository lacks written: the
@@ -1404,7 +1507,10 @@ fn next(link: &str) -> Option<String> {
 /// to, with nothing written; an artifact's name, and the digests it
 /// reaches, are read as before. A push's store reads no mark, and writes
 /// its cache entries at a root left as at any root (C.1 as amended at
-/// `boomdrivedev/blueprints` e8700c8; design D4; record 0042).
+/// `boomdrivedev/blueprints` e8700c8; design D4; record 0042). The
+/// listing and the removal of cache entries read no mark either, and
+/// reach the bound build profile's cache repository alone (145; record
+/// 0039).
 impl Store for Registry {
     /// The blob asked after first, and uploaded only when it is not held,
     /// in the repository's own, or, for a store bound for a push, its
@@ -1664,12 +1770,97 @@ impl Store for Registry {
         }
     }
 
+    /// 145: a cache entry for each tag of the bound build profile's cache
+    /// repository, read page by page as the registry's `Link` header
+    /// leads, a subject's referrers tag passed over; each its cache
+    /// manifest's bytes and moment, or its own answer where the tag names
+    /// another manifest or one that cannot be read. A repository the
+    /// registry does not hold lists none.
     fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
-        Err(Not::absent(&self.source, "cache entries"))
+        #[derive(Deserialize)]
+        struct Tags {
+            #[serde(default)]
+            tags: Option<Vec<String>>,
+        }
+        let repository = self.cache_space()?;
+        let mut url = self.url_in(&repository, "tags/list");
+        let mut entries = Vec::new();
+        let mut first = true;
+        loop {
+            let answered = self.send(&repository, Method::GET, &url, &[], None)?;
+            match answered.status {
+                StatusCode::OK => {}
+                StatusCode::NOT_FOUND if first => return Ok(entries),
+                StatusCode::NOT_FOUND => {
+                    return Err(Not::unreadable(
+                        &self.source,
+                        &url,
+                        Some(format!(
+                            "{}/{repository} answered a page of its tag list and then not the \
+                             next, so its cache entries were not all read: {}",
+                            self.host,
+                            answered.words()
+                        )),
+                    ))
+                }
+                _ => return Err(self.other(&url, &answered)),
+            }
+            let page: Tags = serde_json::from_slice(&answered.body)
+                .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
+            for written in page.tags.unwrap_or_default() {
+                if tag::is_referrers(&written) {
+                    continue;
+                }
+                let build = BuildId::new(tag::read(&written).unwrap_or_else(|| written.clone()));
+                entries.push((build, self.cache_entry(&repository, &written)));
+            }
+            match answered.header("link").and_then(next) {
+                Some(link) => url = self.absolute(&link),
+                None => return Ok(entries),
+            }
+            first = false;
+        }
     }
 
-    fn remove_cache_entry(&self, _: &BuildId, _: &Digest) -> Answer<()> {
-        Err(Not::absent(&self.source, "cache entries"))
+    /// 145, 54: the entry of `build` removed by deleting the cache
+    /// manifest its tag names, once that manifest is found to name `at`;
+    /// refused naming the bytes it names otherwise, or naming the tag
+    /// where it names no cache manifest, and absent where the repository
+    /// holds no such tag, with nothing deleted. A delete the registry
+    /// answers 404 is absent, and any other answer it does not take is
+    /// refused in its words, or unreadable for a 5xx (58, 59).
+    fn remove_cache_entry(&self, build: &BuildId, at: &Digest) -> Answer<()> {
+        let repository = self.cache_space()?;
+        let tag = self.tag(&Name::new(build.as_str()))?;
+        let absent = || Not::absent(&self.source, format!("cache entry {build}"));
+        let Some((manifest, bytes)) = self.tagged(&repository, &tag)? else {
+            return Err(absent());
+        };
+        let url = self.url_in(&repository, &format!("manifests/{tag}"));
+        match oci::cached(&bytes) {
+            Ok(Some(layer)) if &layer == at => {}
+            Ok(Some(layer)) => {
+                return Err(Not::refused(
+                    &self.source,
+                    Why::NameAt { at: Some(layer) },
+                    None,
+                ))
+            }
+            Ok(None) => {
+                return Err(Not::refused(
+                    &self.source,
+                    Why::Said,
+                    Some(format!(
+                        "the tag {tag} of {}/{repository} names {manifest}, which is no cache \
+                         manifest, and a cache entry is removed only by deleting its cache \
+                         manifest",
+                        self.host
+                    )),
+                ))
+            }
+            Err(words) => return Err(Not::unreadable(&self.source, url, Some(words))),
+        }
+        self.delete_manifest(&repository, &manifest, build)
     }
 }
 
@@ -2242,6 +2433,338 @@ mod tests {
         assert_eq!(json["annotations"][oci::STORE_NAME], "moved");
         assert_eq!(oci::cache_pushed(&manifest), Ok(Some(AT)));
         assert_eq!(oci::cached(&manifest), Ok(Some(bytes)));
+    }
+
+    /// The cache repository of `acme/site` for `moon` under `acme/store`.
+    const CACHE_OF_SITE: &str = "acme/store/acme/site/cache/moon";
+
+    /// A push's store for `acme/site` whose clock answers `at`.
+    fn pushing_at(stub: &Stub, at: u64) -> Registry {
+        store(stub)
+            .bound_for("moon", true)
+            .with_clock(Box::new(move || at))
+    }
+
+    /// The entry of `build` written at `bytes` by a push at `at`.
+    fn entry_at(stub: &Stub, build: &str, bytes: &[u8], at: u64) -> Digest {
+        let push = pushing_at(stub, at);
+        let digest = push.put_bytes(bytes).unwrap().digest;
+        push.name(&Name::new(format!("cache/{build}")), &digest, None)
+            .unwrap();
+        digest
+    }
+
+    /// A cache manifest of `bytes` as one was written before moments,
+    /// with no annotation, held in `repository` and tagged `tag`.
+    fn entry_from_before(stub: &Stub, repository: &str, tag: &str, bytes: &Digest) {
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": IMAGE_MANIFEST,
+            "artifactType": oci::CACHE,
+            "config": {"mediaType": oci::EMPTY, "digest": Digest::of(b"{}"), "size": 2},
+            "layers": [{"mediaType": OCTETS, "digest": bytes, "size": 13}],
+        });
+        let at = stub.manifest(repository, &serde_json::to_vec(&manifest).unwrap());
+        stub.tag(repository, tag, &at);
+    }
+
+    /// The entries `store` lists, by build identity.
+    fn listed(store: &Registry) -> std::collections::BTreeMap<String, Answer<Pushed>> {
+        store
+            .cache_entries()
+            .unwrap()
+            .into_iter()
+            .map(|(build, entry)| (build.as_str().to_string(), entry))
+            .collect()
+    }
+
+    #[test]
+    fn a_cache_repositorys_entries_are_listed_with_their_moments() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let first = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let second = entry_at(&stub, "c9d2", b"another entry", AT + 60);
+        let lister = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            listed(&lister),
+            std::collections::BTreeMap::from([
+                (
+                    "b7e1".to_string(),
+                    Ok(Pushed {
+                        digest: first,
+                        at: Some(AT)
+                    })
+                ),
+                (
+                    "c9d2".to_string(),
+                    Ok(Pushed {
+                        digest: second,
+                        at: Some(AT + 60)
+                    })
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn an_entry_written_before_moments_lists_none() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let now = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let before = Digest::of(b"an older entry");
+        entry_from_before(&stub, CACHE_OF_SITE, "c9d2", &before);
+        let entries = listed(&store(&stub).bound_for("moon", true));
+        assert_eq!(
+            entries["b7e1"],
+            Ok(Pushed {
+                digest: now,
+                at: Some(AT)
+            })
+        );
+        assert_eq!(
+            entries["c9d2"],
+            Ok(Pushed {
+                digest: before,
+                at: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_tag_at_another_manifest_is_listed_unreadable_naming_it() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let other = stub.manifest(
+            CACHE_OF_SITE,
+            br#"{"schemaVersion":2,"artifactType":"application/vnd.other.v1"}"#,
+        );
+        stub.tag(CACHE_OF_SITE, "x1", &other);
+        let entries = listed(&store(&stub).bound_for("moon", true));
+        assert_eq!(
+            entries["b7e1"],
+            Ok(Pushed {
+                digest: bytes,
+                at: Some(AT)
+            })
+        );
+        match &entries["x1"] {
+            Err(Not::Unreadable(u)) => {
+                assert!(u.what.contains("x1"), "{u:?}");
+                assert!(
+                    u.said.as_deref().unwrap().contains("no cache manifest"),
+                    "{u:?}"
+                );
+            }
+            other => panic!("a tag at another manifest was listed {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_cache_repository_never_made_lists_no_entries() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        assert_eq!(
+            store(&stub).bound_for("moon", true).cache_entries(),
+            Ok(vec![])
+        );
+        assert!(stub.repositories().is_empty(), "the listing made one");
+    }
+
+    #[test]
+    fn the_listing_reads_every_page_of_tags() {
+        let stub = Stub::start(
+            Behaviour {
+                page: 2,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        for build in ["a1", "b2", "c3", "d4", "e5"] {
+            entry_at(&stub, build, build.as_bytes(), AT);
+        }
+        let entries = listed(&store(&stub).bound_for("moon", true));
+        assert_eq!(
+            entries.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a1", "b2", "c3", "d4", "e5"]
+        );
+        assert!(entries.values().all(Result::is_ok), "{entries:?}");
+        let pages = stub
+            .asked()
+            .iter()
+            .filter(|a| a.path.contains("/tags/list"))
+            .count();
+        assert_eq!(pages, 3);
+    }
+
+    #[test]
+    fn an_entry_removed_deletes_its_cache_manifest_alone() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"an empty output", AT);
+        entry_at(&stub, "c9d2", b"an empty output", AT);
+        let (manifest, _) = tagged(&stub, CACHE_OF_SITE, "b7e1");
+        let prune = store(&stub).bound_for("moon", true);
+        let since = stub.asked().len();
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Ok(())
+        );
+        let deletes: Vec<_> = stub.asked()[since..]
+            .iter()
+            .filter(|a| a.method == "DELETE")
+            .cloned()
+            .collect();
+        assert_eq!(
+            deletes.iter().map(|a| a.path.as_str()).collect::<Vec<_>>(),
+            [format!("/v2/{CACHE_OF_SITE}/manifests/{manifest}")]
+        );
+        let held = stub.held(CACHE_OF_SITE).unwrap();
+        assert!(!held.tags.contains_key("b7e1"));
+        assert!(!held.manifests.contains_key(&manifest));
+        assert!(held.blobs.contains_key(&bytes), "the bytes went too");
+        assert_eq!(prune.resolve(&Name::new("cache/c9d2")), Ok(bytes.clone()));
+        assert_eq!(
+            prune.read(&bytes),
+            Ok(Held::Bytes(b"an empty output".to_vec()))
+        );
+        assert_eq!(
+            listed(&prune)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["c9d2"]
+        );
+    }
+
+    #[test]
+    fn a_removal_at_another_digest_is_refused_naming_the_layer() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &Digest::of(b"other bytes")),
+            Err(Not::refused(
+                prune.source(),
+                Why::NameAt {
+                    at: Some(bytes.clone())
+                },
+                None
+            ))
+        );
+        assert!(stub.asked().iter().all(|a| a.method != "DELETE"));
+        assert_eq!(prune.resolve(&Name::new("cache/b7e1")), Ok(bytes));
+    }
+
+    #[test]
+    fn a_removal_of_a_tag_not_held_is_absent() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("c9d2"), &bytes),
+            Err(Not::absent(prune.source(), "cache entry c9d2"))
+        );
+        let never = Stub::start(Behaviour::default(), &[]);
+        let prune = store(&never).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("c9d2"), &bytes),
+            Err(Not::absent(prune.source(), "cache entry c9d2"))
+        );
+        assert!(stub.asked().iter().all(|a| a.method != "DELETE"));
+    }
+
+    #[test]
+    fn a_delete_the_registry_refuses_is_refused_in_its_words() {
+        let stub = Stub::start(
+            Behaviour {
+                refuses_deletes: true,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        let bytes = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Err(Not::refused(
+                prune.source(),
+                Why::Said,
+                Some(stub::UNSUPPORTED.into())
+            ))
+        );
+        assert_eq!(prune.resolve(&Name::new("cache/b7e1")), Ok(bytes));
+    }
+
+    #[test]
+    fn a_removal_at_a_root_marked_moved_reads_no_mark() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        marked(&stub, ("acme", "site"), ("acme", "web"));
+        let bytes = entry_at(&stub, "b7e1", b"a pre-move build's entry", AT);
+        let since = stub.asked().len();
+        let prune = store(&stub).bound_for("moon", false);
+        assert_eq!(listed(&prune).len(), 1);
+        assert_eq!(
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes),
+            Ok(())
+        );
+        let asked = &stub.asked()[since..];
+        assert!(
+            asked.iter().all(|a| a.repository() == Some(CACHE_OF_SITE)),
+            "{asked:#?}"
+        );
+        assert!(!asked.iter().any(|a| a.path.ends_with("/manifests/moved")));
+    }
+
+    #[test]
+    fn nothing_outside_the_cache_repository_is_listed_or_deleted() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let site = store(&stub).bound_for("moon", false);
+        let version = published(&site, "web", &[("eco", "site")]);
+        let names = [
+            named("eco", "site", "1.3.0"),
+            Name::new("web:web-v1.3.0"),
+            Name::new("channel/web/beta"),
+        ];
+        for name in &names {
+            site.name(name, &version.index, None).unwrap();
+        }
+        let first = entry_at(&stub, "b7e1", b"a cache entry", AT);
+        let second = entry_at(&stub, "c9d2", b"another entry", AT);
+        let before: Vec<(String, stub::Held)> = stub
+            .repositories()
+            .into_iter()
+            .filter(|r| r != CACHE_OF_SITE)
+            .map(|r| (r.clone(), stub.held(&r).unwrap()))
+            .collect();
+        let since = stub.asked().len();
+
+        let prune = store(&stub).bound_for("moon", true);
+        assert_eq!(
+            listed(&prune)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["b7e1", "c9d2"]
+        );
+        for (build, bytes) in [("b7e1", &first), ("c9d2", &second)] {
+            prune
+                .remove_cache_entry(&BuildId::new(build), bytes)
+                .unwrap();
+        }
+        let asked = &stub.asked()[since..];
+        assert!(
+            asked.iter().all(|a| a.repository() == Some(CACHE_OF_SITE)),
+            "{asked:#?}"
+        );
+        for (repository, held) in before {
+            let now = stub.held(&repository).unwrap();
+            assert_eq!(now.tags, held.tags, "{repository}");
+            assert_eq!(
+                now.manifests.keys().collect::<Vec<_>>(),
+                held.manifests.keys().collect::<Vec<_>>(),
+                "{repository}"
+            );
+        }
+        for name in &names {
+            assert_eq!(site.resolve(name), Ok(version.index.clone()));
+        }
+        assert_eq!(site.claims_of(&version.index).unwrap().len(), 1);
     }
 
     #[test]

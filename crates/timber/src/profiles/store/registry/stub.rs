@@ -2,8 +2,9 @@
 //! tests (design D17): repositories of blobs, manifests and tags spoken
 //! to over the distribution protocol as far as the store speaks it, every
 //! request kept, a mount it may decline, repositories it may make on
-//! push or hold only where made, a tag list it pages, and a blob it may
-//! serve only beside a manifest.
+//! push or hold only where made, a tag list it pages, a blob it may
+//! serve only beside a manifest, and a manifest deleted by its digest
+//! with every tag at it, or a delete it refuses.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -72,6 +73,9 @@ pub(crate) struct Behaviour {
     /// holds no manifest, while a `HEAD` answers the blob held, as
     /// GitHub's registry does in a package its push made (record 0039).
     pub serves_blobs_beside_a_manifest_alone: bool,
+    /// It answers a manifest's `DELETE` `UNSUPPORTED`, as the reference
+    /// distribution does where deletes are not enabled.
+    pub refuses_deletes: bool,
 }
 
 impl Default for Behaviour {
@@ -82,6 +86,7 @@ impl Default for Behaviour {
             page: 100,
             loses_later_pages: false,
             serves_blobs_beside_a_manifest_alone: false,
+            refuses_deletes: false,
         }
     }
 }
@@ -96,6 +101,11 @@ pub(crate) struct Stub {
 /// The registry's words for a repository it does not hold.
 pub(crate) const NAME_UNKNOWN: &str =
     r#"{"errors":[{"code":"NAME_UNKNOWN","message":"repository name not known to registry"}]}"#;
+
+/// The reference distribution's words for a delete where deletes are
+/// not enabled.
+pub(crate) const UNSUPPORTED: &str =
+    r#"{"errors":[{"code":"UNSUPPORTED","message":"The operation is unsupported."}]}"#;
 
 /// GitHub's registry's words for a `GET` of a blob in a package that
 /// holds no manifest, verbatim as it answered on 2026-11-17 (record 0039).
@@ -155,6 +165,27 @@ impl Stub {
             .or_default()
             .tags
             .insert(tag.to_string(), digest.clone());
+    }
+
+    /// `bytes` held as a manifest of `repository`, untagged, as another
+    /// tool or an earlier timber would have put it; answers its digest.
+    pub(crate) fn manifest(&self, repository: &str, bytes: &[u8]) -> Digest {
+        let digest = Digest::of(bytes);
+        self.state
+            .lock()
+            .unwrap()
+            .repositories
+            .entry(repository.to_string())
+            .or_default()
+            .manifests
+            .insert(
+                digest.clone(),
+                (
+                    "application/vnd.oci.image.manifest.v1+json".into(),
+                    bytes.to_vec(),
+                ),
+            );
+        digest
     }
 
     /// Every repository the stub holds.
@@ -415,6 +446,21 @@ fn handle(
     }
     if let Some(reference) = bare.strip_prefix("/manifests/") {
         let held = state.repositories.get_mut(&repository).unwrap();
+        if method == "DELETE" {
+            if behaviour.refuses_deletes {
+                return Reply::new(405)
+                    .header("content-type", "application/json")
+                    .body(UNSUPPORTED);
+            }
+            let Ok(digest) = Digest::parse(reference) else {
+                return Reply::error(400, "UNSUPPORTED", "a manifest is deleted by its digest");
+            };
+            if held.manifests.remove(&digest).is_none() {
+                return Reply::error(404, "MANIFEST_UNKNOWN", "manifest unknown");
+            }
+            held.tags.retain(|_, at| *at != digest);
+            return Reply::new(202);
+        }
         if method == "PUT" {
             let media_type = headers
                 .iter()

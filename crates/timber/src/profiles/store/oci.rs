@@ -448,7 +448,6 @@ pub(super) fn cache(digest: &Digest, size: u64, name: &Name, at: u64) -> Vec<u8>
 /// the Unix epoch; none where it carries no moment, as one written before
 /// moments were; the parser's or timber's words where they hold no JSON,
 /// or a moment not written `YYYY-MM-DDTHH:MM:SSZ`.
-#[allow(dead_code)]
 pub(super) fn cache_pushed(bytes: &[u8]) -> Result<Option<u64>, String> {
     #[derive(Deserialize)]
     struct Annotated {

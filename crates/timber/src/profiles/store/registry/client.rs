@@ -4,11 +4,13 @@
 //! registry challenges answered once with the host's Docker credential,
 //! reached at that moment through the host's Docker configuration and
 //! the helper it names, as `Basic` or as a `Bearer` token asked of the
-//! challenge's realm: a read for the scope the challenge names, a write,
-//! any method but `GET` and `HEAD`, for `repository:<repository>:pull,push`
-//! whatever the challenge names, as a registry that names `pull` alone
-//! for a write would answer a token that cannot push (64, C.1; record
-//! 0039). `service` is the challenge's either way. What authorizes the next
+//! challenge's realm: a read for the scope the challenge names, a delete
+//! for `repository:<repository>:pull,delete`, and any other write, any
+//! method but `GET`, `HEAD` and `DELETE`, for
+//! `repository:<repository>:pull,push`, whatever the challenge names, as
+//! a registry that names `pull` alone for a write would answer a token
+//! that cannot push (64, 145, C.1; record 0039). `service` is the
+//! challenge's either way. What authorizes the next
 //! request to each repository is held in memory by the one handle and
 //! written nowhere, so a token scoped to one repository is kept beside
 //! another's (64, rule core.21; design D8).
@@ -290,7 +292,8 @@ impl Client {
     /// What authorizes a `method` request for `repository` that
     /// `challenge` was answered to: the host's credential as `Basic`, or a
     /// token the realm answers for it, a read's for the scope the
-    /// challenge names and a write's for pulling and pushing `repository`;
+    /// challenge names, a delete's for pulling and deleting in
+    /// `repository` and another write's for pulling and pushing it;
     /// none where the host holds no credential for the registry, so the
     /// challenge is the answer.
     fn authorize(
@@ -313,8 +316,9 @@ impl Client {
                 service,
                 scope,
             } => {
-                let write = ![Method::GET, Method::HEAD].contains(method);
-                let scope = if write {
+                let scope = if *method == Method::DELETE {
+                    Some(format!("repository:{repository}:pull,delete"))
+                } else if ![Method::GET, Method::HEAD].contains(method) {
                     Some(format!("repository:{repository}:pull,push"))
                 } else {
                     scope.clone()
@@ -526,6 +530,57 @@ mod tests {
                 ("one/tags".to_string(), "Bearer one".to_string()),
                 ("two".to_string(), "Bearer two".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn a_delete_asks_to_pull_and_delete_in_its_repository() {
+        use std::sync::{Arc, Mutex, OnceLock};
+        let at: Arc<OnceLock<u16>> = Arc::new(OnceLock::new());
+        let asked: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (port_of, queries) = (at.clone(), asked.clone());
+        let port = stub(3, move |head| {
+            let first = head.lines().next().unwrap_or_default().to_string();
+            let reply = |status: &str, headers: &str, body: &str| {
+                format!(
+                    "HTTP/1.1 {status}\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            if let Some(path) = first.split(' ').nth(1).filter(|p| p.starts_with("/token")) {
+                let query = path.split_once('?').map(|(_, q)| q).unwrap_or_default();
+                queries.lock().unwrap().push(query.to_string());
+                return reply("200 OK", "", r#"{"token":"deleting"}"#);
+            }
+            if head
+                .to_lowercase()
+                .contains("authorization: bearer deleting")
+            {
+                return reply("202 Accepted", "", "");
+            }
+            let port = port_of.get().copied().unwrap();
+            reply(
+                "401 Unauthorized",
+                &format!(
+                    "www-authenticate: Bearer realm=\"http://127.0.0.1:{port}/token\",service=\"stub\",scope=\"repository:one:pull\"\r\n"
+                ),
+                "",
+            )
+        });
+        at.set(port).unwrap();
+        let source = Source::new(timber_seams::Seam::Store, "OCI registry stub");
+        let url = format!("http://127.0.0.1:{port}/v2/one/manifests/sha256:00");
+        let none = tempfile::TempDir::new().unwrap();
+        let client = Client::new(&format!("127.0.0.1:{port}"), &source);
+        let deleted = under_docker_config(none.path(), || {
+            client.send("one", Method::DELETE, &url, &[], None)
+        })
+        .unwrap();
+        assert_eq!(deleted.status, StatusCode::ACCEPTED, "{}", deleted.words());
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["service=stub&scope=repository%3Aone%3Apull%2Cdelete"],
+            "a delete asked a token that cannot delete"
         );
     }
 
