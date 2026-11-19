@@ -25,7 +25,7 @@ Read these before starting:
 
 ## 1. The seams
 
-- [ ] 1.1 Spell a cache entry's name in the seams, and read back a time (design D2, D3; seam-contracts spec, "A cache entry's store name is spelled once").
+- [x] 1.1 Spell a cache entry's name in the seams, and read back a time (design D2, D3; seam-contracts spec, "A cache entry's store name is spelled once").
   - Move `CACHE` and `cache_name(build: &BuildId) -> Name` from `crates/timber-core/src/cache.rs` into `crates/timber-seams`, beside `channel_name`, exported from `lib.rs`, citing 52 and rule core.48. `timber_core::cache` re-exports both, so every caller compiles unchanged.
   - Add `utc_seconds(text: &str) -> Option<u64>` to `answer.rs`, reading `YYYY-MM-DDTHH:MM:SSZ` back to seconds since the Unix epoch, `None` for text of any other form.
   - Tests in the modules they test: `a_cache_name_is_cache_and_the_build_identity`, `utc_seconds_reads_back_what_utc_writes`, `utc_seconds_reads_nothing_of_another_form`.

@@ -132,6 +132,43 @@ pub fn utc(seconds: u64) -> String {
     )
 }
 
+/// [`utc`] read back: `YYYY-MM-DDTHH:MM:SSZ` as seconds since the Unix
+/// epoch; none for text of any other form, a date or a time that is no
+/// such day or moment, or one before the epoch.
+pub fn utc_seconds(text: &str) -> Option<u64> {
+    let bytes = text.as_bytes();
+    let form = b"dddd-dd-ddTdd:dd:ddZ";
+    if bytes.len() != form.len()
+        || !bytes.iter().zip(form).all(|(byte, want)| match want {
+            b'd' => byte.is_ascii_digit(),
+            _ => byte == want,
+        })
+    {
+        return None;
+    }
+    let number = |from: usize, to: usize| -> i64 {
+        text[from..to]
+            .bytes()
+            .fold(0, |n, digit| n * 10 + i64::from(digit - b'0'))
+    };
+    let (year, month, day) = (number(0, 4), number(5, 7), number(8, 10));
+    let (hour, minute, second) = (number(11, 13), number(14, 16), number(17, 19));
+    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let shifted_year = year - i64::from(month <= 2);
+    let era = shifted_year.div_euclid(400);
+    let year_of_era = shifted_year.rem_euclid(400);
+    let shifted_month = if month > 2 { month - 3 } else { month + 9 };
+    let of_year = (153 * shifted_month + 2) / 5 + day - 1;
+    let of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + of_year;
+    let days = era * 146_097 + of_era - 719_468;
+    let seconds = u64::try_from(days * 86_400 + hour * 3_600 + minute * 60 + second).ok()?;
+    // A day past its month's end counts on into the next; only a text
+    // `utc` writes back the same is one.
+    (utc(seconds) == text).then_some(seconds)
+}
+
 /// The seam and the profile bound to it that answered.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Source {
@@ -837,6 +874,47 @@ mod tests {
         assert_eq!(utc(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(utc(1_709_251_199), "2024-02-29T23:59:59Z");
         assert_eq!(utc(1_709_251_200), "2024-03-01T00:00:00Z");
+    }
+
+    #[test]
+    fn utc_seconds_reads_back_what_utc_writes() {
+        for seconds in [
+            0,
+            951_782_400,
+            1_709_251_199,
+            1_709_251_200,
+            1_793_000_000,
+            4_102_444_800,
+        ] {
+            assert_eq!(utc_seconds(&utc(seconds)), Some(seconds), "{seconds}");
+        }
+    }
+
+    #[test]
+    fn utc_seconds_reads_nothing_of_another_form() {
+        for text in [
+            "",
+            "2026-11-18",
+            "2026-11-18T10:00:00",
+            "2026-11-18T10:00:00+00:00",
+            "2026-11-18T10:00:00.5Z",
+            "2026-11-18 10:00:00Z",
+            "2026-11-18t10:00:00z",
+            " 2026-11-18T10:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-00-01T00:00:00Z",
+            "2026-02-29T00:00:00Z",
+            "2026-11-31T00:00:00Z",
+            "2026-11-00T00:00:00Z",
+            "2026-11-18T24:00:00Z",
+            "2026-11-18T10:60:00Z",
+            "2026-11-18T10:00:60Z",
+            "1969-12-31T23:59:59Z",
+            "２026-11-18T10:00:00Z",
+            "-026-11-18T10:00:00Z",
+        ] {
+            assert_eq!(utc_seconds(text), None, "{text:?}");
+        }
     }
 
     #[test]
