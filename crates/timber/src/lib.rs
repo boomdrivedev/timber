@@ -104,9 +104,14 @@ pub enum Command {
     /// the version.
     Apply(commands::apply::ApplyArgs),
     /// The policy in force at the branch's landed head: what acceptance
-    /// and a layout require, and every channel, the givens among them,
-    /// with how each moves, its claims and its promoters.
+    /// and a layout require, how long cache entries are kept, and every
+    /// channel, the givens among them, with how each moves, its claims and
+    /// its promoters.
     Policy(commands::policy::PolicyArgs),
+    /// Remove each cache entry pushed longer ago than the keeping time
+    /// the policy gives at a landed revision, thirty days unless it says
+    /// otherwise.
+    Prune(commands::prune::PruneArgs),
     /// The host's one serving process: every repository a checkout named,
     /// each as a page and as JSON, at the core's address, until idle.
     Serve(commands::serve::ServeArgs),
@@ -143,6 +148,7 @@ pub fn run(cli: &Cli, binding: &Answer<Binding>, at: &Path, out: &mut dyn Write)
         Command::Promote(args) => commands::promote::run(args, binding, at, out),
         Command::Apply(args) => commands::apply::run(args, binding, at, out),
         Command::Policy(args) => commands::policy::run(args, binding, at, out),
+        Command::Prune(args) => commands::prune::run(args, binding, at, out),
         Command::Serve(args) => commands::serve::run(args, out),
     }
 }
