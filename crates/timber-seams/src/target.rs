@@ -29,19 +29,26 @@ pub struct Environment {
 /// what its own reading of the channel gives (44).
 pub type Head<'a> = &'a dyn Fn() -> Answer<Digest>;
 
-/// 42: an index and its version, which the core made once it verified
-/// the claims it was told to require (rule core.29); a profile is handed
-/// one and never makes one.
+/// 42: an index, its version, and the version's tag, which the core
+/// made once it verified the claims it was told to require (rule
+/// core.29); a profile is handed one and never makes one. The tag is the
+/// version's name in the shared history, the component's prefix followed
+/// by the version, as its publish claimed it (22, 90).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verified {
     index: Digest,
     version: Version,
+    tag: String,
 }
 
 impl Verified {
     /// Made by the core alone, after its verify (42, rule core.29).
-    pub fn new(index: Digest, version: Version) -> Self {
-        Verified { index, version }
+    pub fn new(index: Digest, version: Version, tag: impl Into<String>) -> Self {
+        Verified {
+            index,
+            version,
+            tag: tag.into(),
+        }
     }
 
     pub fn index(&self) -> &Digest {
@@ -50,6 +57,12 @@ impl Verified {
 
     pub fn version(&self) -> &Version {
         &self.version
+    }
+
+    /// 22, 90: the version's name in the shared history, the tag its
+    /// publish claimed.
+    pub fn tag(&self) -> &str {
+        &self.tag
     }
 }
 
@@ -103,9 +116,10 @@ mod tests {
             waits: true,
             settings: json!({ "at": "a place of its own", "outputs": ["site"] }),
         });
-        let verified = Verified::new(Digest::of(b"index"), Version::new("1.0.0"));
+        let verified = Verified::new(Digest::of(b"index"), Version::new("1.0.0"), "v1.0.0");
         assert_eq!(verified.index(), &Digest::of(b"index"));
         assert_eq!(verified.version(), &Version::new("1.0.0"));
+        assert_eq!(verified.tag(), "v1.0.0");
         round_trip(verified);
         round_trip(Running {
             digest: Digest::of(b"index"),

@@ -253,7 +253,8 @@ pub fn apply(seams: &Seams, history: &History, ask: &ApplyAsk) -> Answer<Applied
                 other => other,
             })?;
         judge(seams, &required, &index)?;
-        target.apply(&environment, &Verified::new(index.clone(), version.clone()))?;
+        let verified = Verified::new(index.clone(), version.clone(), tag(component, &version));
+        target.apply(&environment, &verified)?;
     }
 
     // 6: what the target reports the environment runs after (91), and
@@ -377,10 +378,16 @@ fn reported(
     Ok(envelope.digest())
 }
 
+/// 22, 123: the version's name in the shared history, the component's
+/// prefix followed by the version, as its publish claimed it.
+fn tag(component: &Component, version: &Version) -> String {
+    format!("{}{}", component.prefix, version)
+}
+
 /// 13: the revision the tag of `c`'s version names, reached from the
 /// branch's landed head; absent naming the tag where none is.
 fn tagged(c: &Converged<'_>) -> Answer<Revision> {
-    let tag = format!("{}{}", c.component.prefix, c.version);
+    let tag = tag(c.component, c.version);
     c.history
         .tags(c.at_head, &c.component.prefix)?
         .into_iter()

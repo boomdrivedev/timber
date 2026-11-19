@@ -111,6 +111,7 @@ fn common_dir(repository: &Path) -> Answer<PathBuf> {
             "--git-common-dir",
         ],
         GIT_REPOSITORY_ENV,
+        &[],
         &[0],
     )?;
     Ok(PathBuf::from(

@@ -133,14 +133,14 @@ impl GitRef {
     /// with one of `allowed`.
     fn git<S: AsRef<OsStr>>(&self, args: &[S], allowed: &[i32]) -> Answer<Ran> {
         self.git
-            .output(None, &self.args(args), GIT_REPOSITORY_ENV, allowed)
+            .output(None, &self.args(args), GIT_REPOSITORY_ENV, &[], allowed)
     }
 
     /// git run with `input` on its stdin, answering what it printed,
     /// trimmed, when it exits 0.
     fn fed<S: AsRef<OsStr>>(&self, args: &[S], input: &[u8]) -> Answer<String> {
         let all = self.args(args);
-        let ran = self.git.fed(None, &all, GIT_REPOSITORY_ENV, input)?;
+        let ran = self.git.fed(None, &all, GIT_REPOSITORY_ENV, &[], input)?;
         if ran.code != Some(0) {
             return Err(self.git.failed(&all, &ran));
         }

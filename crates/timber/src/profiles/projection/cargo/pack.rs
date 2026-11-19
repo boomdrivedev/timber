@@ -192,7 +192,7 @@ impl CargoProjection {
         ];
         let ran = self
             .cargo
-            .output(manifest.parent(), &args, GIT_REPOSITORY_ENV, &[0])?;
+            .output(manifest.parent(), &args, GIT_REPOSITORY_ENV, &[], &[0])?;
         let metadata: Metadata = serde_json::from_slice(&ran.stdout)
             .map_err(|e| self.cargo.unreadable(&args, e.to_string()))?;
         let wanted = canonical(manifest);
@@ -355,8 +355,13 @@ impl CargoProjection {
             OsStr::new("--target-dir"),
             target.path().as_os_str(),
         ];
-        self.cargo
-            .output(found.manifest.parent(), &args, GIT_REPOSITORY_ENV, &[0])?;
+        self.cargo.output(
+            found.manifest.parent(),
+            &args,
+            GIT_REPOSITORY_ENV,
+            &[],
+            &[0],
+        )?;
         let packed = target
             .path()
             .join("package")
