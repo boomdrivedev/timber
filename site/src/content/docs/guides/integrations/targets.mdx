@@ -53,7 +53,7 @@ credential has nowhere in the repository's file to sit (45).
 | Kubernetes, via Flux or Argo | pull: the channel's tag, verified by Flux or Argo against the gate's signature; current reported by a watcher | designed |
 | a Nix fleet, via Clan, pushed | push: one machine switched with `clan machines update` to the one root its version's closure names, checked against the revision's flake and realised from substituters alone, from the host that holds the machine's key; a marker on the machine, and a report claim beside the version; see below | built, `clan` |
 | a Nix fleet, via Clan, pulled | pull: each machine verifies and applies the release assigned to it, realising store paths from the cache | designed |
-| a Nix binary cache, through Attic | push: the version's closures pushed to the cache with `attic push`, from the host that built them, with attic's own credential; current and report unread, since a cache keeps no marker; see below | built, `nix_cache` |
+| a Nix binary cache, through Attic or Cachix | push: the version's closures pushed to the cache with `attic push` or `cachix push`, from the host that built them, with the cache's own credential; current and report unread, since a cache keeps no marker; see below | built, `nix_cache` |
 | Dash0's dashboards | push: each dashboard the version holds applied to one dataset by its fixed identifier with Dash0's own CLI, from the host that holds the dataset's write token, and each one an earlier version applied that this one does not hold removed; a marker dashboard in the dataset; see below | built, `dash0` |
 | a GitHub release | push: the release of the version's tag made or updated in the checkout's repository with `gh`, GitHub's own CLI, its notes as the release's text and the outputs the table names as its assets, from the host that holds a token that may write its releases; current is the release GitHub marks latest; see below | built, `github_release` |
 
@@ -63,16 +63,17 @@ from a file, the host's bindings file names that file's path in
 `[credentials]`, by the name the environment's table gives it, and
 timber hands the path to the tool, which alone reads it (118; see
 [the host's bindings](/timber/guides/self-hosting/#the-hosts-bindings)).
-Where the tool takes a credential only in a variable, as `gh` does, the
-target reads the file when it runs and hands the credential to that
+Where the tool takes a credential only in a variable, as `gh` and
+`cachix` do, the target reads the file when it runs and hands the credential to that
 operation's runs of the tool alone, writing it nowhere (64).
 
 ## The Nix binary cache
 
-The Nix cache target, `nix_cache`, pushes a version's closures to the
-fleet's Nix binary cache with [attic](https://github.com/zhaofengli/attic),
-so a closure built on one host is realised on another from the cache
-alone (C.12).
+The Nix cache target, `nix_cache`, pushes a version's closures to a Nix
+binary cache, the fleet's own with
+[attic](https://github.com/zhaofengli/attic) or one on
+[Cachix](https://www.cachix.org) with `cachix`, so a closure built on one
+host is realised on another from the cache alone (C.12).
 
 A closure is one artifact naming its roots. A machine's build task
 leaves one file naming its closure's root store paths, one absolute
@@ -95,16 +96,33 @@ and the references among them, are the cache's, kept and collected by
 the cache; a machine that misses a path the cache has collected builds
 it again (54).
 
-The environment's `nix_cache` table names two keys and no others:
+The environment's `nix_cache` table names one cache, by `attic`, or by
+`cachix` with `credential`, and `closures`, and no other key:
 
 | key | what |
 |---|---|
-| `attic` | the cache as attic's own command names it, `<server>:<cache>` |
+| `attic` | an attic cache, as attic's own command names it, `<server>:<cache>` |
+| `cachix` | a cache on Cachix, by its name, as `cachix push` takes it: one or more lowercase letters, digits and `-`, beginning with no `-`, and never its address |
+| `credential` | with `cachix` alone: the name of the host's credential, which its bindings file's `[credentials]` gives the path of, a file holding a token that may push to that cache |
 | `closures` | one or more of the component's outputs whose artifacts name closures |
 
-Any other key, an empty `closures`, or an `attic` that is not
-`<server>:<cache>` is unreadable naming the environment and the key, and
-nothing is pushed. There is no key for a token. attic's own
+Boomdrive's cache on Cachix, for one system:
+
+```toml
+[environments.boomdrive.cachix-x86_64-linux]
+channel = "beta"
+target.nix_cache = { cachix = "boomdrive", credential = "cachix-boomdrive", closures = ["boomdrive-x86_64-linux"] }
+```
+
+Any other key, both caches or neither, a `credential` beside `attic`, a
+`cachix` with no `credential`, an empty `closures`, an `attic` that is
+not `<server>:<cache>`, or a `cachix` or `credential` of another form is
+unreadable naming the environment and the key, or the table where it
+names no cache, and nothing is pushed. There is no key for a token.
+
+### Attic
+
+An attic cache's token is not the host's credential. attic's own
 configuration holds it, on the host that pushes,
 `$XDG_CONFIG_HOME/attic/config.toml`, with the server's address and a
 token that may push and pull on the cache:
@@ -117,6 +135,59 @@ token = "…"
 
 timber passes attic no token, sets none of its variables and reads
 nothing of its configuration: attic reads it at the push (45).
+
+### Cachix
+
+A Cachix cache's token is the host's. The host's bindings file names
+the path of a file holding only it, under the name the table's
+`credential` gives, a token that may push to that cache alone:
+
+```toml
+[credentials]
+cachix-boomdrive = "~/.local/share/secrets/cachix-boomdrive"
+```
+
+`cachix` reads no token file, so apply looks the credential up once the
+table is read, before the store is asked anything, reads the file when
+it pushes, once every root is held, trims its trailing whitespace, and
+hands the token to that one run of `cachix` alone, in
+`CACHIX_AUTH_TOKEN`: in no argument, no answer and no file (64). A
+credential the host's file does not name is unreadable, naming it and
+the bindings file; a file that cannot be read is unreadable, naming the
+credential and the path in the operating system's words; a file of
+whitespace alone is unreadable, naming the credential. cachix runs in
+none of them. current, report and desired read no credential.
+
+The run takes nothing of the host's own `cachix`: every `CACHIX_*`
+variable of the host's is removed from its environment, its signing key
+among them, and it runs
+
+```sh
+cachix --config <run>/cachix.dhall push boomdrive <root> <root>…
+```
+
+with `--config` naming a file never made, in an empty folder of the
+run's own under the system's temporary directory, removed when apply
+answers. So the host's `~/.config/cachix/cachix.dhall`, which
+`cachix authtoken` writes and which holds a token for every cache its
+owner holds, is never read. `cachix push` pushes each root with its
+closure, at `cachix.org`, with Cachix's own defaults, and skips what the
+cache holds already.
+
+The `cachix` run is the one on `PATH`. Run `timber apply` in the
+repository's own shell, so the `cachix` it runs is the one the
+repository pins.
+
+A cache whose owner holds its signing key, rather than Cachix, also
+wants that key, which the table has no key for: such a cache is not
+pushed to, and cachix refuses the push in its own words.
+
+A host pushes only the closures it holds, so a repository releasing for
+several systems declares a cache environment per system, each naming
+that system's closure output, and applies each from a host of that
+system.
+
+### Apply
 
 `timber apply <environment>` converges the environment on its channel's
 head, with `--component <name>` where the repository declares
@@ -131,11 +202,12 @@ Run it from the host that built the closure. The target reads the
 version's index and each closure's file through the store by digest,
 checks every root valid in this host's Nix store with `nix-store
 --check-validity`, and only then runs `attic push <server>:<cache>
-<roots…>`, which pushes each root with its closure and skips what the
-cache holds already. A root this host's store does not hold refuses the
-apply, naming the root and the host, and nothing is pushed: the target
-builds nothing, substitutes nothing and fetches nothing (15). attic's
-words on a failure are the answer, unread, as attic wrote them.
+<roots…>`, or `cachix push` as above, which pushes each root with its
+closure and skips what the cache holds already. A root this host's store
+does not hold refuses the apply, naming the root and the host, and
+nothing is pushed: the target builds nothing, substitutes nothing and
+fetches nothing (15). attic's or cachix's words on a failure are the
+answer, unread, as the tool wrote them.
 
 ```sh
 timber apply cache --component swancloud-srv
@@ -156,7 +228,8 @@ the Nix binary cache fleet:swancloud holds store paths by their hash and keeps n
 
 A Nix binary cache holds store paths by their hash and keeps no name a
 marker could be held under, so current and report are always unread,
-saying so, never the digest last pushed and never converged (119, 89).
+saying so and naming the cache, `fleet:swancloud` or `boomdrive on
+Cachix`, never the digest last pushed and never converged (119, 89).
 Apply therefore runs whenever it is asked, and an apply of a version
 already pushed uploads nothing. With no report, no report claim is
 signed and no gate is told, and the apply exits as unreadable, 3, after
