@@ -1,0 +1,37 @@
+{
+  "schema": "sluice/submission@1",
+  "id": 1,
+  "branch": "main",
+  "head": "40bd1cd86f5b60ef11d9267b5146c83c59618ba5",
+  "from": {
+    "agent": "bolt/timber-publishes-github-releases-and-to-cachix",
+    "worktree": "pull/59",
+    "head": "bolt/timber-publishes-github-releases-and-to-cachix"
+  },
+  "submitted": "2026-11-19T12:09:44Z",
+  "after": [],
+  "priority": 0,
+  "attempt": 1,
+  "state": "withdrawn",
+  "tested": {
+    "combination": "cc59c22ed31a3c5dd772a572c6483572ffae9925",
+    "on": "c02c62d97feda7738216c73ae7fd9fa661550d4e",
+    "submissions": [
+      1
+    ]
+  },
+  "result": "failed",
+  "failed": [
+    {
+      "task": "root:format",
+      "hash": "55240275a2cb4cf852447e7f88414110885189720420c1e943a7a5c6d7ee62b1",
+      "log": "/Users/chuck/.local/share/boomdrive/repositories/boomdrivedev/timber/timber.git/sluice-remote/origin/.logs/main/c1/root:format.log",
+      "unsigned": "root:format: .claude/settings.json is not in the tree"
+    }
+  ],
+  "withdrawn": {
+    "by": "resubmission",
+    "at": "2026-11-19T19:08:48Z"
+  },
+  "subject": "bolt/timber-publishes-github-releases-and-to-cachix"
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "sluice/submission@1",
+  "id": 4,
+  "branch": "main",
+  "head": "763a0d47e3104650e4f9fe60f437866bbae72ae9",
+  "from": {
+    "agent": "boomdrive-design",
+    "worktree": "pull/61",
+    "head": "design/a-credential-may-be-a-secretspec-secret"
+  },
+  "submitted": "2026-11-19T21:10:10Z",
+  "after": [],
+  "priority": 0,
+  "attempt": 1,
+  "state": "landed",
+  "tested": {
+    "combination": "d7b5d37540e1986a505d7715d5bc45a5bbc48910",
+    "on": "677c8502b6a45f40f95814fb07ce606fb45d76a1",
+    "submissions": [
+      4
+    ]
+  },
+  "result": "passed",
+  "landed_as": "fbc917e17eb63be3480f0f351b47cdaa56d2bb31",
+  "subject": "design/a-credential-may-be-a-secretspec-secret"
+}
