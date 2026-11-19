@@ -36,6 +36,18 @@
 //! the repository's own, cache entries being no history (record 0039,
 //! record 0042).
 //!
+//! GitHub's registry documents no delete through the distribution
+//! protocol, so on `ghcr.io` the cache manifest is deleted through
+//! GitHub's REST API, the one service beside the registry this profile
+//! speaks to, and no code outside it names (rule core.1): the root's
+//! namespace read once as an organization's or a user's, the cache
+//! repository's package's versions read page by page for the one the
+//! cache manifest's digest names, and that version deleted by its id,
+//! with the token the host's Docker credential for the registry holds,
+//! reached at use (145, rule core.21; design D5; record 0015). The listing
+//! stays on the distribution protocol, which GitHub's registry serves
+//! (record 0039).
+//!
 //! A root the repository left holds the mark `moved` in its own, at
 //! bytes naming the root its history moved to (C.1 as amended at
 //! `boomdrivedev/blueprints` e8700c8; record 0042). The store reads the
@@ -120,6 +132,26 @@ pub struct Registry {
     carrying: Option<RepositoryName>,
     mark: RefCell<Option<Answer<()>>>,
     clock: Box<dyn Fn() -> u64>,
+    github: Option<String>,
+    namespace: RefCell<Option<Namespace>>,
+}
+
+/// Where GitHub's REST API is, which GitHub's registry removes through
+/// (design D5).
+const GITHUB_API: &str = "https://api.github.com";
+
+/// GitHub's registry's host.
+const GHCR: &str = "ghcr.io";
+
+/// The API version every request to GitHub's API names (design D5).
+const GITHUB_API_VERSION: &str = "2022-11-28";
+
+/// What GitHub's API answers a namespace as: an organization's packages
+/// are under `/orgs/`, a user's under `/users/` (design D5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Namespace {
+    Organization,
+    User,
 }
 
 /// The system's clock, in seconds since the Unix epoch.
@@ -224,6 +256,8 @@ impl Registry {
             carrying: None,
             mark: RefCell::new(None),
             clock: Box::new(system_clock),
+            github: (host == GHCR).then(|| GITHUB_API.to_string()),
+            namespace: RefCell::new(None),
         })
     }
 
@@ -284,6 +318,15 @@ impl Registry {
     /// annotated as put at, so a test fixes it (145).
     pub fn with_clock(mut self, clock: Box<dyn Fn() -> u64>) -> Registry {
         self.clock = clock;
+        self
+    }
+
+    /// The store removing its cache entries through GitHub's API at
+    /// `origin`, as it does on `ghcr.io` at `https://api.github.com`, so a
+    /// test plays the API (145; design D5).
+    #[doc(hidden)]
+    pub fn with_github_api(mut self, origin: &str) -> Registry {
+        self.github = Some(origin.trim_end_matches('/').to_string());
         self
     }
 
@@ -1008,6 +1051,118 @@ impl Registry {
         match answered.status {
             status if status.is_success() => Ok(()),
             StatusCode::NOT_FOUND => Err(Not::absent(&self.source, format!("cache entry {build}"))),
+            _ => Err(self.other(&url, &answered)),
+        }
+    }
+
+    /// A request to GitHub's API: `method` of `url` with the headers
+    /// every request names and `bearer`, where the host holds a token
+    /// (design D5).
+    fn github_send(&self, method: Method, url: &str, bearer: Option<&str>) -> Answer<Answered> {
+        self.client.plain(
+            method,
+            url,
+            &[
+                ("accept", "application/vnd.github+json"),
+                ("x-github-api-version", GITHUB_API_VERSION),
+            ],
+            bearer,
+        )
+    }
+
+    /// The root's namespace as GitHub's API answers it, an organization
+    /// or a user, read once in the store's life and answered the same
+    /// after (design D5).
+    fn namespace(&self, api: &str, namespace: &str, bearer: Option<&str>) -> Answer<Namespace> {
+        if let Some(kind) = *self.namespace.borrow() {
+            return Ok(kind);
+        }
+        #[derive(Deserialize)]
+        struct Account {
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        let url = format!("{api}/users/{namespace}");
+        let answered = self.github_send(Method::GET, &url, bearer)?;
+        if !answered.status.is_success() {
+            return Err(self.other(&url, &answered));
+        }
+        let account: Account = serde_json::from_slice(&answered.body)
+            .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
+        let kind = match account.kind.as_str() {
+            "Organization" => Namespace::Organization,
+            "User" => Namespace::User,
+            other => {
+                return Err(Not::unreadable(
+                    &self.source,
+                    &url,
+                    Some(format!(
+                        "GitHub's API answers {namespace} of the type {other}, which is neither \
+                         an organization nor a user"
+                    )),
+                ))
+            }
+        };
+        *self.namespace.borrow_mut() = Some(kind);
+        Ok(kind)
+    }
+
+    /// 145: the cache manifest `manifest` of `repository` deleted through
+    /// GitHub's API: the package the repository is under the root's
+    /// namespace, its path past the namespace with each `/` written
+    /// `%2F`; its versions read page by page for the one named the
+    /// manifest's digest, and that version deleted by its id. Absent
+    /// naming the package and the digest where no version is, or GitHub
+    /// answers 404; refused in GitHub's words for a 401 or a 403, and
+    /// unreadable for a 5xx or a body that cannot be read (design D5).
+    fn delete_version(&self, api: &str, repository: &str, manifest: &Digest) -> Answer<()> {
+        #[derive(Deserialize)]
+        struct Version {
+            id: u64,
+            name: String,
+        }
+        let namespace = self.root.split('/').next().unwrap_or(&self.root);
+        let path = repository
+            .strip_prefix(&format!("{namespace}/"))
+            .unwrap_or(repository);
+        let package = path.replace('/', "%2F");
+        let absent = || {
+            Not::absent(
+                &self.source,
+                format!("version {manifest} of the package {path} of {namespace}"),
+            )
+        };
+        let bearer = self.client.token()?.map(|token| format!("Bearer {token}"));
+        let bearer = bearer.as_deref();
+        let owner = match self.namespace(api, namespace, bearer)? {
+            Namespace::Organization => format!("{api}/orgs/{namespace}"),
+            Namespace::User => format!("{api}/users/{namespace}"),
+        };
+        let versions = format!("{owner}/packages/container/{package}/versions");
+        let mut page = 1;
+        let id = loop {
+            let url = format!("{versions}?per_page=100&page={page}");
+            let answered = self.github_send(Method::GET, &url, bearer)?;
+            match answered.status {
+                StatusCode::OK => {}
+                StatusCode::NOT_FOUND => return Err(absent()),
+                _ => return Err(self.other(&url, &answered)),
+            }
+            let listed: Vec<Version> = serde_json::from_slice(&answered.body)
+                .map_err(|e| Not::unreadable(&self.source, &url, Some(e.to_string())))?;
+            if let Some(version) = listed.iter().find(|v| v.name == manifest.as_str()) {
+                break version.id;
+            }
+            if listed.is_empty() {
+                return Err(absent());
+            }
+            page += 1;
+        };
+        let url = format!("{versions}/{id}");
+        let answered = self.github_send(Method::DELETE, &url, bearer)?;
+        match answered.status {
+            status if status.is_success() => Ok(()),
+            StatusCode::NOT_FOUND => Err(absent()),
             _ => Err(self.other(&url, &answered)),
         }
     }
@@ -1860,7 +2015,10 @@ impl Store for Registry {
             }
             Err(words) => return Err(Not::unreadable(&self.source, url, Some(words))),
         }
-        self.delete_manifest(&repository, &manifest, build)
+        match &self.github {
+            Some(api) => self.delete_version(api, &repository, &manifest),
+            None => self.delete_manifest(&repository, &manifest, build),
+        }
     }
 }
 
@@ -2765,6 +2923,238 @@ mod tests {
             assert_eq!(site.resolve(name), Ok(version.index.clone()));
         }
         assert_eq!(site.claims_of(&version.index).unwrap().len(), 1);
+    }
+
+    /// A Docker configuration holding `token` as the password of the
+    /// stub's host, as `docker login` writes one.
+    fn docker_login(stub: &Stub, token: &str) -> tempfile::TempDir {
+        use base64::Engine as _;
+        let dir = tempfile::TempDir::new().unwrap();
+        let basic = base64::engine::general_purpose::STANDARD.encode(format!("someone:{token}"));
+        let config = format!(
+            r#"{{"auths":{{"127.0.0.1:{}":{{"auth":"{basic}"}}}}}}"#,
+            stub.port
+        );
+        std::fs::write(dir.path().join("config.json"), config).unwrap();
+        dir
+    }
+
+    /// What `f` answers with the Docker configuration `login` makes.
+    fn logged_in<T>(login: &tempfile::TempDir, f: impl FnOnce() -> T) -> T {
+        client::tests::under_docker_config(login.path(), f)
+    }
+
+    /// `stub` playing GitHub's API with `acme` of type `kind`, the entry
+    /// `b7e1` written, and a store removing through the stub's API.
+    fn on_github(stub: &Stub, kind: &str) -> (Registry, Digest) {
+        stub.plays_github("acme", kind);
+        let bytes = entry_at(stub, "b7e1", b"a cache entry", AT);
+        let prune = store(stub)
+            .bound_for("moon", true)
+            .with_github_api(&stub.origin());
+        (prune, bytes)
+    }
+
+    /// The package of `acme/site`'s cache under the root `acme/store`.
+    const PACKAGE: &str = "store%2Facme%2Fsite%2Fcache%2Fmoon";
+
+    #[test]
+    fn ghcr_removes_an_organizations_package_version_by_the_manifests_digest() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        entry_at(&stub, "c9d2", b"a cache entry", AT);
+        let (manifest, _) = tagged(&stub, CACHE_OF_SITE, "b7e1");
+        let login = docker_login(&stub, "ghp_token");
+        let removed = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(removed, Ok(()));
+        let api = stub.api_asked();
+        let calls: Vec<(&str, &str)> = api
+            .iter()
+            .map(|a| (a.method.as_str(), a.path.as_str()))
+            .collect();
+        let versions = format!("/orgs/acme/packages/container/{PACKAGE}/versions");
+        assert_eq!(calls[0], ("GET", "/users/acme"));
+        assert_eq!(calls[1].0, "GET");
+        assert_eq!(calls[1].1, format!("{versions}?per_page=100&page=1"));
+        assert_eq!(calls[2].0, "DELETE");
+        assert!(calls[2].1.starts_with(&format!("{versions}/")), "{calls:?}");
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        let held = stub.held(CACHE_OF_SITE).unwrap();
+        assert!(!held.manifests.contains_key(&manifest));
+        assert!(!held.tags.contains_key("b7e1"));
+        assert!(held.tags.contains_key("c9d2"));
+        assert!(held.blobs.contains_key(&bytes));
+        assert!(
+            stub.asked()
+                .iter()
+                .all(|a| a.method != "DELETE" || !a.path.starts_with("/v2/")),
+            "the distribution protocol's delete was asked"
+        );
+    }
+
+    #[test]
+    fn ghcr_removes_a_users_package_version() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "User");
+        let login = docker_login(&stub, "ghp_token");
+        let removed = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(removed, Ok(()));
+        let api = stub.api_asked();
+        assert!(api[1..].iter().all(|a| a.path.starts_with(&format!(
+            "/users/acme/packages/container/{PACKAGE}/versions"
+        ))));
+        assert_eq!(api.last().unwrap().method, "DELETE");
+        assert!(!stub.held(CACHE_OF_SITE).unwrap().tags.contains_key("b7e1"));
+    }
+
+    #[test]
+    fn ghcr_reads_every_page_of_versions() {
+        let stub = Stub::start(
+            Behaviour {
+                page: 2,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        stub.plays_github("acme", "Organization");
+        for build in ["a1", "b2", "c3", "d4", "e5"] {
+            entry_at(&stub, build, build.as_bytes(), AT);
+        }
+        let held = stub.held(CACHE_OF_SITE).unwrap();
+        let last = held.manifests.keys().last().unwrap().clone();
+        let (build, _) = held.tags.iter().find(|(_, at)| **at == last).unwrap();
+        let bytes = Digest::of(build.as_bytes());
+        let prune = store(&stub)
+            .bound_for("moon", true)
+            .with_github_api(&stub.origin());
+        let login = docker_login(&stub, "ghp_token");
+        let removed = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new(build.as_str()), &bytes)
+        });
+        assert_eq!(removed, Ok(()));
+        let pages: Vec<String> = stub
+            .api_asked()
+            .iter()
+            .filter(|a| a.method == "GET" && a.path.contains("/versions?"))
+            .map(|a| a.path.clone())
+            .collect();
+        assert_eq!(pages.len(), 3, "{pages:?}");
+        assert!(pages[2].ends_with("page=3"), "{pages:?}");
+    }
+
+    #[test]
+    fn ghcr_sends_the_docker_credentials_token_as_the_bearer() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let login = docker_login(&stub, "ghp_token");
+        logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        })
+        .unwrap();
+        let api = stub.api_asked();
+        assert_eq!(api.len(), 3);
+        for asked in api {
+            assert_eq!(asked.header("authorization"), Some("Bearer ghp_token"));
+            assert_eq!(asked.header("accept"), Some("application/vnd.github+json"));
+            assert_eq!(asked.header("x-github-api-version"), Some("2022-11-28"));
+        }
+    }
+
+    #[test]
+    fn ghcr_answers_no_version_of_the_digest_absent() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let (manifest, _) = tagged(&stub, CACHE_OF_SITE, "b7e1");
+        stub.github_hides(&manifest);
+        let login = docker_login(&stub, "ghp_token");
+        let answered = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(
+            answered,
+            Err(Not::absent(
+                prune.source(),
+                format!("version {manifest} of the package store/acme/site/cache/moon of acme")
+            ))
+        );
+        assert!(stub.api_asked().iter().all(|a| a.method == "GET"));
+        assert!(stub.held(CACHE_OF_SITE).unwrap().tags.contains_key("b7e1"));
+    }
+
+    #[test]
+    fn ghcr_answers_a_403_refused_in_githubs_words() {
+        let stub = Stub::start(
+            Behaviour {
+                github_refuses_deletes: true,
+                ..Behaviour::default()
+            },
+            &[],
+        );
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let login = docker_login(&stub, "ghp_token");
+        let answered = logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        });
+        assert_eq!(
+            answered,
+            Err(Not::refused(
+                prune.source(),
+                Why::Said,
+                Some(stub::GITHUB_FORBIDDEN.into())
+            ))
+        );
+        assert_eq!(prune.resolve(&Name::new("cache/b7e1")), Ok(bytes));
+    }
+
+    #[test]
+    fn ghcr_reads_the_namespaces_type_once() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, first) = on_github(&stub, "Organization");
+        let second = entry_at(&stub, "c9d2", b"another entry", AT);
+        let login = docker_login(&stub, "ghp_token");
+        logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &first)?;
+            prune.remove_cache_entry(&BuildId::new("c9d2"), &second)
+        })
+        .unwrap();
+        let namespaces = stub
+            .api_asked()
+            .iter()
+            .filter(|a| a.path == "/users/acme")
+            .count();
+        assert_eq!(namespaces, 1);
+    }
+
+    #[test]
+    fn ghcr_escapes_the_package_name() {
+        let stub = Stub::start(Behaviour::default(), &[]);
+        let (prune, bytes) = on_github(&stub, "Organization");
+        let login = docker_login(&stub, "ghp_token");
+        logged_in(&login, || {
+            prune.remove_cache_entry(&BuildId::new("b7e1"), &bytes)
+        })
+        .unwrap();
+        for asked in &stub.api_asked()[1..] {
+            let (_, package) = asked.path.split_once("/packages/container/").unwrap();
+            assert!(
+                package.starts_with(&format!("{PACKAGE}/versions")),
+                "{}",
+                asked.path
+            );
+        }
+        assert!(Registry::new("ghcr.io/boomdrivedev")
+            .unwrap()
+            .github
+            .as_deref()
+            .is_some_and(|api| api == "https://api.github.com"));
+        assert!(Registry::new("localhost:5000/acme")
+            .unwrap()
+            .github
+            .is_none());
     }
 
     #[test]

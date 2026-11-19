@@ -218,6 +218,30 @@ impl Client {
         self.once(&method, url, headers, body, Some(&authorization))
     }
 
+    /// `method` of `url`, a request to another service than the registry,
+    /// as GitHub's API, sent as asked with `authorization` where given and
+    /// no challenge answered, its answer read whole (145; design D5).
+    pub(super) fn plain(
+        &self,
+        method: Method,
+        url: &str,
+        headers: &[(&str, &str)],
+        authorization: Option<&str>,
+    ) -> Answer<Answered> {
+        self.once(&method, url, headers, None, authorization)
+    }
+
+    /// The token the host's Docker credential for the registry holds,
+    /// reached now and kept nowhere: its password, or its identity token;
+    /// none where the host holds no credential for the registry (64, rule
+    /// core.21; record 0015).
+    pub(super) fn token(&self) -> Answer<Option<String>> {
+        Ok(self.credential()?.map(|credential| match credential {
+            DockerCredential::UsernamePassword(_, password) => password,
+            DockerCredential::IdentityToken(token) => token,
+        }))
+    }
+
     /// `method` of `url` sent and its answer read whole. A read, `GET` or
     /// `HEAD`, whose connection closed before its whole answer arrived,
     /// as a kept connection the far side closed while it idled does, is
@@ -418,7 +442,7 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -671,7 +695,10 @@ mod tests {
     /// that configuration alone and never the host's or the helper it
     /// names (rule core.38); one test at a time, since the variable is the
     /// process's, and the variable as it was after.
-    fn under_docker_config<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
+    pub(in crate::profiles::store::registry) fn under_docker_config<T>(
+        dir: &std::path::Path,
+        f: impl FnOnce() -> T,
+    ) -> T {
         static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _environment = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
         let before = std::env::var_os("DOCKER_CONFIG");
