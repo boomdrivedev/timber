@@ -58,7 +58,7 @@ Read these before starting:
   - `File` reads `[cache]`. `cache_kept` answers the file's `keep_days`, written, or the fragment's, given, where the file writes none or the revision holds no file. Another key under `[cache]`, and a `keep_days` that is no whole number from 0 or past `u32`, is unreadable naming the key and the file.
   - Tests in `tests.rs`: `the_keeping_time_written_is_answered_written`, `no_cache_table_answers_the_givens_thirty_days`, `a_revision_with_no_file_answers_the_givens_thirty_days`, `keep_days_of_zero_is_answered`, `another_key_under_cache_is_unreadable_naming_it`, `keep_days_of_another_form_is_unreadable_naming_it`.
   - Verify with `devenv shell -- cargo test -p timber --lib profiles::policy::file`.
-- [ ] 3.2 Show the keeping time in `timber policy` (design D1; command-line spec, "Policy shows how long cache entries are kept").
+- [x] 3.2 Show the keeping time in `timber policy` (design D1; command-line spec, "Policy shows how long cache entries are kept").
   - `InForce` in `crates/timber-core/src/in_force.rs` gains `cache: Answer<Keeping>`, asked of the policy at the same revision, serialized as `cache` as every part of the answer is.
   - `crates/timber/src/commands/policy.rs` prints, beneath acceptance and the layout, `cache entries are kept <n> days from their push (given)` or `(written)`, or the answer that was not one. Say so in the module's comment.
   - Tests: `the_keeping_time_is_in_force` in `crates/timber-core/tests/in_force.rs`, and a test module in `commands/policy.rs` with `the_text_says_how_long_cache_entries_are_kept`.

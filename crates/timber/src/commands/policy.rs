@@ -6,7 +6,10 @@
 //! requires, its promoters and who may ask for it; and beneath them each
 //! given held off, with how it would move and the line that switches it
 //! on, from the same channels answer (82, 131, 32, C.10; design D11,
-//! D13). A claim asked of built artifacts alone is shown so (134). It is
+//! D13). Beneath what acceptance and a layout require it says how long
+//! cache entries are kept from their push, and whether that is the
+//! givens' time or the file's, or the answer that was not one (145). A
+//! claim asked of built artifacts alone is shown so (134). It is
 //! bound as status is, to the landing and the policy, binds no
 //! store and no signer, and writes nothing (60, rule core.32).
 
@@ -16,7 +19,7 @@ use std::path::Path;
 use clap::Args;
 use timber_core::{in_force, ChannelInForce, History, InForce, InForceAsk};
 use timber_seams::{
-    Answer, AskedOf, Branch, HeldChannel, Moves, NamedSigner, Not, Required, RequiredClaim,
+    Answer, AskedOf, Branch, HeldChannel, Keeping, Moves, NamedSigner, Not, Required, RequiredClaim,
 };
 
 use crate::{render, Binding};
@@ -64,6 +67,7 @@ fn text(out: &mut dyn Write, in_force: &InForce) -> io::Result<()> {
     required(out, &in_force.acceptance)?;
     writeln!(out, "layout")?;
     required(out, &in_force.layout)?;
+    cache(out, &in_force.cache)?;
     writeln!(out)?;
     writeln!(out, "channels")?;
     match &in_force.channels {
@@ -82,6 +86,23 @@ fn text(out: &mut dyn Write, in_force: &InForce) -> io::Result<()> {
             Ok(())
         }
         Err(not) => render::not(out, "  ", not),
+    }
+}
+
+/// 145: how long cache entries are kept from their push, and whether the
+/// givens or the file says so; or the answer that was not one (58).
+fn cache(out: &mut dyn Write, answer: &Answer<Keeping>) -> io::Result<()> {
+    match answer {
+        Ok(Keeping { days, given }) => writeln!(
+            out,
+            "cache entries are kept {days} {} from their push ({})",
+            if *days == 1 { "day" } else { "days" },
+            if *given { "given" } else { "written" }
+        ),
+        Err(not) => {
+            writeln!(out, "cache entries")?;
+            render::not(out, "  ", not)
+        }
     }
 }
 
@@ -182,4 +203,71 @@ fn signers(signers: &[NamedSigner]) -> String {
         .map(|s| s.id.as_str())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use timber_core::ChannelsInForce;
+    use timber_seams::{Revision, Seam, Source};
+
+    use super::*;
+
+    fn shown(cache: Answer<Keeping>) -> String {
+        let in_force = InForce {
+            branch: Branch::new("main"),
+            revision: Revision::new("4f2a9c1"),
+            acceptance: Ok(Required::Acceptance { claims: vec![] }),
+            layout: Err(Not::absent(
+                &Source::new(Seam::Policy, "policy file"),
+                "policy for layout in .config/timber.toml",
+            )),
+            cache,
+            channels: Ok(ChannelsInForce {
+                in_force: vec![],
+                held: vec![],
+            }),
+        };
+        let mut out = Vec::new();
+        text(&mut out, &in_force).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn the_text_says_how_long_cache_entries_are_kept() {
+        let given = shown(Ok(Keeping {
+            days: 30,
+            given: true,
+        }));
+        let (above, below) = given
+            .split_once("cache entries are kept 30 days from their push (given)\n")
+            .expect(&given);
+        assert!(
+            above.contains("acceptance") && above.contains("layout"),
+            "{given}"
+        );
+        assert!(below.contains("channels"), "{given}");
+
+        let written = shown(Ok(Keeping {
+            days: 1,
+            given: false,
+        }));
+        assert!(
+            written.contains("cache entries are kept 1 day from their push (written)\n"),
+            "{written}"
+        );
+
+        let not = Not::unreadable(
+            &Source::new(Seam::Policy, "policy file"),
+            ".config/timber.toml at 4f2a9c1",
+            Some("[cache] names keep, and [cache] holds keep_days alone".into()),
+        );
+        let unread = shown(Err(not.clone()));
+        let mut words = Vec::new();
+        render::not(&mut words, "  ", &not).unwrap();
+        let words = String::from_utf8(words).unwrap();
+        assert!(
+            unread.contains(&format!("cache entries\n{words}")),
+            "{unread}"
+        );
+    }
 }

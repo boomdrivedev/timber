@@ -10,8 +10,8 @@ use timber_core::{answer_json, in_force, ChannelInForce, ChannelsInForce, InForc
 use timber_fakes::{FakePolicy, LandingOp, PolicyOp, PROFILE};
 use timber_seams::{
     Answer, AskedOf, Audience, ChannelId, ChannelName, ClaimKind, ComponentName, DeclaredChannel,
-    DeclaredEnvironment, HeldChannel, Moves, Not, Policy, PolicyChannels, Required, RequiredClaim,
-    Revision, Seam, Seams, Source, TargetProfile, Why,
+    DeclaredEnvironment, HeldChannel, Keeping, Moves, Not, Policy, PolicyChannels, Required,
+    RequiredClaim, Revision, Seam, Seams, Source, TargetProfile, Why,
 };
 use world::World;
 
@@ -94,6 +94,64 @@ fn a_head_not_landed_is_refused_before_the_policy_is_asked() {
         world.fakes.policy.calls().is_empty(),
         "the policy was asked before the landing said yes"
     );
+}
+
+#[test]
+fn the_keeping_time_is_in_force() {
+    let world = World::new();
+    declare(&world.fakes.policy);
+    let answer = asked(&world, &world.fakes.seams()).unwrap();
+    assert_eq!(
+        answer.cache,
+        Ok(Keeping {
+            days: 30,
+            given: true
+        })
+    );
+
+    world.fakes.policy.keeps_at(&world.head, 7);
+    let answer = asked(&world, &world.fakes.seams()).unwrap();
+    assert_eq!(
+        answer.cache,
+        Ok(Keeping {
+            days: 7,
+            given: false
+        }),
+        "asked at the landed head"
+    );
+    let asked_at: Vec<_> = world
+        .fakes
+        .policy
+        .calls()
+        .into_iter()
+        .filter(|c| c.op == PolicyOp::CacheKept)
+        .map(|c| c.given["revision"].clone())
+        .collect();
+    assert_eq!(
+        asked_at,
+        [serde_json::json!(world.head), serde_json::json!(world.head)]
+    );
+
+    let json = answer_json(&Ok::<_, Not>(answer));
+    assert_eq!(json["value"]["cache"]["answer"], "ok", "{json}");
+    assert_eq!(
+        json["value"]["cache"]["value"],
+        serde_json::json!({ "days": 7, "given": false }),
+        "{json}"
+    );
+
+    world.fakes.policy.fault(
+        PolicyOp::CacheKept,
+        timber_fakes::Fault::Unreadable("[cache] names keep".into()),
+        timber_fakes::Times::Once,
+    );
+    let answer = asked(&world, &world.fakes.seams()).unwrap();
+    assert!(
+        matches!(&answer.cache, Err(Not::Unreadable(u)) if u.said.as_deref() == Some("[cache] names keep")),
+        "{:?}",
+        answer.cache
+    );
+    assert_eq!(answer.acceptance, Ok(acceptance()), "the rest stands");
 }
 
 #[test]
