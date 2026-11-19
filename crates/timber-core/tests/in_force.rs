@@ -306,13 +306,15 @@ fn the_policy_in_force_asks_the_landing_and_the_policy_alone_and_writes_nothing(
     assert_eq!(landing, [LandingOp::Landed]);
     let asked_of_policy = &world.fakes.policy.calls()[policy..];
     assert!(
-        asked_of_policy
-            .iter()
-            .all(|c| matches!(c.op, PolicyOp::PolicyFor | PolicyOp::Channels)),
+        asked_of_policy.iter().all(|c| matches!(
+            c.op,
+            PolicyOp::PolicyFor | PolicyOp::Channels | PolicyOp::CacheKept
+        )),
         "the policy was asked to do other than answer"
     );
-    // Acceptance, a layout, the channels and each of the three channels.
-    assert_eq!(asked_of_policy.len(), 6);
+    // Acceptance, a layout, the keeping time of cache entries, the
+    // channels and each of the three channels.
+    assert_eq!(asked_of_policy.len(), 7);
 }
 
 #[test]

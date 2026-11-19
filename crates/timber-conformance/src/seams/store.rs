@@ -644,13 +644,20 @@ fn a_cache_entry_listed_with_when_it_was_pushed(rig: &dyn StoreRig) {
 
 /// 145, 54, 100: an entry removed at the digest it is at is gone, while
 /// another entry of the same bytes still resolves, and an artifact
-/// holding those bytes still reads, its bytes with it.
+/// holding those bytes still reads, its bytes with it. The bytes read
+/// after the removal are those the store held before it: whether they
+/// are the bytes put is `bytes read back`'s to say (1, 73), so a store
+/// holding other bytes under a digest fails there and not here.
 fn a_cache_entry_removed_its_bytes_other_names_left(rig: &dyn StoreRig) {
     let store = rig.store();
     let artifact = artifact(store, "1.0.0");
     let (removed, kept) = (BuildId::new("b7e1"), BuildId::new("c9d2"));
     let bytes = cache_entry(rig, &removed);
     assert_eq!(cache_entry(rig, &kept), bytes);
+    let before = match ok(store.read(&bytes), "read of the bytes before the removal") {
+        Held::Bytes(held) => held,
+        held => panic!("read of the bytes before the removal answered {held:?}"),
+    };
     ok(
         store.remove_cache_entry(&removed, &bytes),
         "remove-cache-entry",
@@ -678,7 +685,10 @@ fn a_cache_entry_removed_its_bytes_other_names_left(rig: &dyn StoreRig) {
         "another entry of the same bytes went with it"
     );
     match ok(store.read(&bytes), "read of the bytes") {
-        Held::Bytes(held) => assert!(held == BYTES, "the bytes read back are others"),
+        Held::Bytes(held) => assert!(
+            held == before,
+            "the bytes read back after the removal are others than before it"
+        ),
         held => panic!("read of the bytes answered {held:?}"),
     }
     match ok(store.read(&artifact), "read of the artifact") {
