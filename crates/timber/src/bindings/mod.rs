@@ -55,9 +55,11 @@
 //! `[credentials]` names each credential a target's own tool reads, by
 //! the name an environment's target table gives it, as the path of a
 //! file holding only that credential: the file never holds a credential,
-//! and timber never opens the file a path names, handing the path to the
-//! target, which hands it to its tool (45, 64, rule core.21; the Dash0
-//! target's design D3). A path is
+//! and the binding never opens the file a path names, handing the path to
+//! the target, which hands it to its tool, or, where its tool takes a
+//! credential only in a variable, reads it at the moment of use for that
+//! operation's runs alone (45, 64, rule core.21; the Dash0 target's
+//! design D3; record 0043). A path is
 //! absolute or begins `~/`, expanded against the home directory. This
 //! module reads each table generically and names no
 //! tool or service (rule core.1): the key of each seam's table is
@@ -204,8 +206,10 @@ pub struct Bindings {
 /// path of the file that holds only it, `~/` expanded; none where the file
 /// holds no `[credentials]`. `file` is the bindings file's path, which a
 /// target names where a table names a credential the file does not. No
-/// credential is here, and nothing opens the file a path names but the
-/// target's own tool (64, rule core.21).
+/// credential is here, and the binding opens no file a path names: a
+/// target reaches it at use, its own tool reading it, or, where that tool
+/// takes a credential only in a variable, the target reading it for that
+/// operation's runs alone (64, rule core.21; record 0043).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Credentials {
     pub file: PathBuf,

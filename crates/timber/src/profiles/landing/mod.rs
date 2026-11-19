@@ -94,6 +94,7 @@ fn set_up_for_sluice(repository: &Path) -> Answer<bool> {
             &object,
         ],
         GIT_REPOSITORY_ENV,
+        &[],
         &[0, 1],
     )?;
     Ok(held.code == Some(0))
@@ -112,6 +113,7 @@ fn remote_of(file: &Path, repository: &Path, source: &Source) -> Answer<Option<S
         None,
         &["-C", &repository.display().to_string(), "remote"],
         GIT_REPOSITORY_ENV,
+        &[],
         &[0],
     )?;
     let remotes: Vec<String> = String::from_utf8_lossy(&listed.stdout)

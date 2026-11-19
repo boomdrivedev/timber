@@ -465,6 +465,20 @@ in
   # The Dash0 target's proof by hand runs this CLI, never the `dash0` on a
   # person's path, which on deneb is swancloud's wrapper.
   env.TIMBER_TOOLS_DASH0_CLI = "${dash0}/bin/dash0";
+  # The GitHub release target's proof by hand (crates/timber/tests/
+  # github_release.rs, `check-github-release`) runs nixpkgs' gh at
+  # devenv.lock's pin by this path, never the `gh` on a person's path, so
+  # the gh proved is the tree's; it is not on the shell's PATH. timber
+  # itself runs the `gh` on PATH, the repository's own where a host runs
+  # `timber apply` in its shell (rule core.26).
+  env.TIMBER_TOOLS_GH_CLI = "${pkgs.gh}/bin/gh";
+  # The Nix cache target's proof against Cachix by hand (crates/timber/
+  # tests/cachix.rs, `check-cachix`) runs nixpkgs' cachix at devenv.lock's
+  # pin by this path, never the `cachix` on a person's path, so the cachix
+  # proved is the tree's; it is added to none of the shell's packages.
+  # timber itself runs the `cachix` on PATH, the repository's own where a
+  # host runs `timber apply` in its shell (rule core.26).
+  env.TIMBER_TOOLS_CACHIX_CLI = "${pkgs.cachix}/bin/cachix";
 
   # Claude Code's project files (ADR 0030, after agentplot/boomdrive's
   # record 0022): .mcp.json from the servers below and

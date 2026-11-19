@@ -109,7 +109,8 @@ impl Moon {
     fn git<S: AsRef<OsStr>>(&self, args: &[S], allowed: &[i32]) -> Answer<Ran> {
         let mut all = vec![OsStr::new("-C"), self.repository.as_os_str()];
         all.extend(args.iter().map(AsRef::as_ref));
-        self.git.output(None, &all, GIT_REPOSITORY_ENV, allowed)
+        self.git
+            .output(None, &all, GIT_REPOSITORY_ENV, &[], allowed)
     }
 
     /// The opening read of every operation: the repository's common git
@@ -187,7 +188,7 @@ impl Moon {
     fn moon<S: AsRef<OsStr>>(&self, checkout: &Path, args: &[S]) -> Answer<Ran> {
         let mut env_drop = vec!["MOON_*"];
         env_drop.extend(GIT_REPOSITORY_ENV);
-        self.moon.ran(Some(checkout), args, &env_drop)
+        self.moon.ran(Some(checkout), args, &env_drop, &[])
     }
 
     /// Where `target` says its outputs are, from `moon task <target>

@@ -263,7 +263,7 @@ fn the_head_applied_after_its_claims_are_judged(world: &FakeWorld) {
                 waits: false,
                 settings: settings(),
             },
-            "version": Verified::new(second.clone(), Version::new("0.2.0")),
+            "version": Verified::new(second.clone(), Version::new("0.2.0"), "v0.2.0"),
         }),
         "the target was handed another environment or version"
     );

@@ -238,7 +238,11 @@ impl World {
         .unwrap()
         .with(revision, repository);
         let digest = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-        Verified::new(digest, Version::new(VERSION))
+        Verified::new(
+            digest,
+            Version::new(VERSION),
+            format!("{COMPONENT}-v{VERSION}"),
+        )
     }
 
     /// The machine's closure published as its one root.
@@ -715,7 +719,7 @@ impl TargetRig for ClanRig {
         let published = self.world.version();
         let mut aliases = self.world.store.aliases.borrow_mut();
         aliases.insert(digest.clone(), published.index().clone());
-        Verified::new(digest.clone(), published.version().clone())
+        Verified::new(digest.clone(), published.version().clone(), published.tag())
     }
 
     /// The target is pushed to, handed the head at desired, so `head` is

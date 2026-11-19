@@ -255,7 +255,7 @@ mod tests {
         let target = FakeTarget::new();
         assert!(matches!(target.current(&production()), Err(Not::Absent(_))));
         target.at("2026-10-23T09:00:00Z");
-        let verified = Verified::new(Digest::of(b"index"), Version::new("1.0.0"));
+        let verified = Verified::new(Digest::of(b"index"), Version::new("1.0.0"), "web-v1.0.0");
         assert_eq!(target.apply(&production(), &verified), Ok(()));
         assert_eq!(target.current(&production()), Ok(Digest::of(b"index")));
         assert_eq!(
@@ -271,7 +271,7 @@ mod tests {
     fn a_target_that_holds_no_marker_answers_current_and_report_unreadable() {
         let target = FakeTarget::new();
         target.holds_no_marker();
-        let verified = Verified::new(index(2), Version::new("1.0.0"));
+        let verified = Verified::new(index(2), Version::new("1.0.0"), "web-v1.0.0");
         assert_eq!(target.apply(&production(), &verified), Ok(()));
         let unreadable = Not::unreadable(&source(), "what production runs", Some(NO_MARKER.into()));
         assert_eq!(target.current(&production()), Err(unreadable.clone()));
@@ -279,6 +279,17 @@ mod tests {
         let ops: Vec<TargetOp> = target.calls().iter().map(|c| c.op).collect();
         assert_eq!(ops, [TargetOp::Apply, TargetOp::Current, TargetOp::Report]);
         assert_eq!(target.calls()[0].given["version"]["index"], json!(index(2)));
+    }
+
+    #[test]
+    fn the_fake_records_the_tag_it_is_handed() {
+        let target = FakeTarget::new();
+        let verified = Verified::new(index(2), Version::new("1.2.0"), "web-v1.2.0");
+        assert_eq!(target.apply(&production(), &verified), Ok(()));
+        let version = &target.calls()[0].given["version"];
+        assert_eq!(version["index"], json!(index(2)));
+        assert_eq!(version["version"], json!("1.2.0"));
+        assert_eq!(version["tag"], json!("web-v1.2.0"));
     }
 
     #[test]
@@ -297,7 +308,7 @@ mod tests {
             }
             other => panic!("answered {other:?}, not unreadable naming token"),
         };
-        let verified = Verified::new(index(2), Version::new("1.0.0"));
+        let verified = Verified::new(index(2), Version::new("1.0.0"), "web-v1.0.0");
         naming_token(target.apply(&environment, &verified));
         naming_token(target.desired(&environment, &|| Ok(index(2))).map(|_| ()));
         naming_token(target.current(&environment).map(|_| ()));
@@ -331,7 +342,7 @@ mod tests {
                 Times::Once,
             );
         }
-        let verified = Verified::new(Digest::of(b"index"), Version::new("1.0.0"));
+        let verified = Verified::new(Digest::of(b"index"), Version::new("1.0.0"), "web-v1.0.0");
         assert!(target.desired(&production(), &empty).is_err());
         assert!(target.current(&production()).is_err());
         assert!(target.apply(&production(), &verified).is_err());

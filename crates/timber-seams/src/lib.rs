@@ -349,7 +349,7 @@ mod tests {
             asked(target.current(&environment)),
             asked(target.apply(
                 &environment,
-                &Verified::new(d.clone(), Version::new("1.0.0")),
+                &Verified::new(d.clone(), Version::new("1.0.0"), "v1.0.0"),
             )),
             asked(target.report(&environment)),
             asked(keeper.append(&stable, &envelope, None)),
