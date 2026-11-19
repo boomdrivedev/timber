@@ -91,7 +91,7 @@ Read these before starting:
 
 ## 5. Prune
 
-- [ ] 5.1 Prune in a new `crates/timber-core/src/prune.rs`, exported from `lib.rs` (design D7, D8; cache-keeping spec, every requirement).
+- [x] 5.1 Prune in a new `crates/timber-core/src/prune.rs`, exported from `lib.rs` (design D7, D8; cache-keeping spec, every requirement).
   - `prune(seams, ask: &PruneAsk) -> Answer<Pruned>`, with `PruneAsk { branch, revision, now }`, `Pruned` and `Fate` as design D7 gives them, serializable as push's answer is, each entry's answer beside its build identity.
   - The module's comment cites 145, 54, 22, 34 and 61, and says prune asks the landing, the policy and the store's two cache operations alone.
   - Tests in a new `crates/timber-core/tests/prune.rs` over the fakes: `a_revision_not_landed_is_refused_before_anything_is_asked`, `a_keeping_time_not_read_asks_the_store_nothing`, `an_entry_past_its_time_is_removed_and_one_within_kept`, `an_entry_at_its_time_exactly_is_removed`, `a_written_keeping_time_is_used`, `a_keeping_time_of_zero_removes_every_entry`, `an_entry_with_no_moment_is_removed`, `an_entry_listed_unreadable_is_carried_and_not_removed`, `a_removal_refused_stops_no_other`, `an_entry_gone_before_its_removal_is_gone_already`, `prune_asks_nothing_of_the_keeper_the_signers_the_projections_or_the_targets`, `a_released_version_reads_back_whole_after_its_entries_are_removed`.
