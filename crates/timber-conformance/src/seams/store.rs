@@ -1,16 +1,17 @@
 //! The store's group: 66 to 73, and the clauses of Part A a store's
-//! operations keep (B.1).
+//! operations keep (B.1), the listing and removal of cache entries among
+//! them (145).
 
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use timber_core::{follow, Followed};
 use timber_fakes::FakeKeeper;
 use timber_seams::{
-    Answer, ArtifactMeta, ChannelId, ChannelName, Claim, ClaimKind, Digest, Ecosystem,
-    EcosystemName, Envelope, Held, Keeper, Manifest, Name, Not, Revision, Seam, Signature,
-    SignerId, Store, Version, Why, IN_TOTO,
+    cache_name, Answer, ArtifactMeta, BuildId, ChannelId, ChannelName, Claim, ClaimKind, Digest,
+    Ecosystem, EcosystemName, Envelope, Held, Keeper, Manifest, Name, Not, Pushed, Revision, Seam,
+    Signature, SignerId, Store, Version, Why, IN_TOTO,
 };
 
 use crate::seams::unreadable;
@@ -107,6 +108,30 @@ pub fn scenarios() -> Vec<Scenario<dyn StoreRig>> {
             plays: None,
             cites: &[138],
             run: a_names_versions_listed,
+        },
+        Scenario {
+            name: "a cache entry listed with when it was pushed",
+            plays: None,
+            cites: &[145, 52],
+            run: a_cache_entry_listed_with_when_it_was_pushed,
+        },
+        Scenario {
+            name: "a cache entry removed, its bytes' other names left",
+            plays: None,
+            cites: &[145, 54, 100],
+            run: a_cache_entry_removed_its_bytes_other_names_left,
+        },
+        Scenario {
+            name: "a cache entry's removal from where it is not",
+            plays: None,
+            cites: &[145],
+            run: a_cache_entrys_removal_from_where_it_is_not,
+        },
+        Scenario {
+            name: "a removal of no cache entry",
+            plays: None,
+            cites: &[145],
+            run: a_removal_of_no_cache_entry,
         },
     ]
 }
@@ -557,5 +582,143 @@ fn a_name_moved_from_a_stale_place_repaired_from_the_ledger(rig: &dyn StoreRig) 
         ),
         head,
         "the repair did not put the name where the ledger's head says"
+    );
+}
+
+/// Seconds since the Unix epoch by this host's clock.
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// The cache entry of `build` made from nothing at `BYTES`, put first,
+/// and the bytes' digest, once its name resolves there.
+fn cache_entry(rig: &dyn StoreRig, build: &BuildId) -> Digest {
+    let store = rig.store();
+    let bytes = ok(store.put_bytes(BYTES), "put-bytes").digest;
+    let name = cache_name(build);
+    ok(store.name(&name, &bytes, None), "the cache entry's name");
+    assert_eq!(
+        settled(store, rig.settles_within(), &name, &bytes, &[None]).as_ref(),
+        Ok(&bytes),
+        "{name} does not resolve to its bytes"
+    );
+    bytes
+}
+
+/// The entry of `build` as the store lists it; panics where it is not
+/// listed.
+fn listed(store: &dyn Store, build: &BuildId) -> Answer<Pushed> {
+    let entries = ok(store.cache_entries(), "cache-entries");
+    entries
+        .into_iter()
+        .find(|(listed, _)| listed == build)
+        .map(|(_, entry)| entry)
+        .unwrap_or_else(|| panic!("the cache entry {build} is not listed"))
+}
+
+/// 145, 52: an entry made at bytes is listed by its build identity, at
+/// the bytes' digest, with a push moment from between the moments before
+/// and after it was made.
+fn a_cache_entry_listed_with_when_it_was_pushed(rig: &dyn StoreRig) {
+    let store = rig.store();
+    let build = BuildId::new("b7e1");
+    let before = now();
+    let bytes = cache_entry(rig, &build);
+    let after = now();
+    let pushed = listed(store, &build)
+        .unwrap_or_else(|not| panic!("the cache entry {build} was listed {not:?}"));
+    assert_eq!(
+        pushed.digest, bytes,
+        "the cache entry is listed at other bytes"
+    );
+    let at = pushed
+        .at
+        .unwrap_or_else(|| panic!("the cache entry {build} is listed with no push moment"));
+    assert!(
+        before <= at && at <= after,
+        "the cache entry is listed pushed at {at}, not between {before} and {after}"
+    );
+}
+
+/// 145, 54, 100: an entry removed at the digest it is at is gone, while
+/// another entry of the same bytes still resolves, and an artifact
+/// holding those bytes still reads, its bytes with it.
+fn a_cache_entry_removed_its_bytes_other_names_left(rig: &dyn StoreRig) {
+    let store = rig.store();
+    let artifact = artifact(store, "1.0.0");
+    let (removed, kept) = (BuildId::new("b7e1"), BuildId::new("c9d2"));
+    let bytes = cache_entry(rig, &removed);
+    assert_eq!(cache_entry(rig, &kept), bytes);
+    ok(
+        store.remove_cache_entry(&removed, &bytes),
+        "remove-cache-entry",
+    );
+    let name = cache_name(&removed);
+    let gone = settled(
+        store,
+        rig.settles_within(),
+        &name,
+        &Digest::of(NEVER_PUT),
+        &[Some(&bytes)],
+    );
+    assert!(
+        is_absent(&gone),
+        "{name} resolves after its removal: {gone:?}"
+    );
+    let entries = ok(store.cache_entries(), "cache-entries");
+    assert!(
+        entries.iter().all(|(listed, _)| *listed != removed),
+        "the removed entry is still listed: {entries:?}"
+    );
+    assert_eq!(
+        store.resolve(&cache_name(&kept)).as_ref(),
+        Ok(&bytes),
+        "another entry of the same bytes went with it"
+    );
+    match ok(store.read(&bytes), "read of the bytes") {
+        Held::Bytes(held) => assert!(held == BYTES, "the bytes read back are others"),
+        held => panic!("read of the bytes answered {held:?}"),
+    }
+    match ok(store.read(&artifact), "read of the artifact") {
+        Held::Manifest(Manifest::Artifact { layers, .. }) => {
+            assert_eq!(layers, [bytes], "the artifact names other bytes")
+        }
+        held => panic!("read of the artifact answered {held:?}"),
+    }
+}
+
+/// 145: a removal naming a digest the entry is not at is refused naming
+/// where it is, and the entry stays listed.
+fn a_cache_entrys_removal_from_where_it_is_not(rig: &dyn StoreRig) {
+    let store = rig.store();
+    let build = BuildId::new("b7e1");
+    let bytes = cache_entry(rig, &build);
+    match store.remove_cache_entry(&build, &Digest::of(NEVER_PUT)) {
+        Err(Not::Refused(r)) => assert_eq!(
+            r.why,
+            Why::NameAt {
+                at: Some(bytes.clone())
+            },
+            "the removal was refused naming another place"
+        ),
+        other => panic!("a removal from where the entry is not answered {other:?}"),
+    }
+    assert_eq!(
+        listed(store, &build).map(|p| p.digest).as_ref(),
+        Ok(&bytes),
+        "the entry is not listed where it was"
+    );
+}
+
+/// 145: a removal of a build identity the store holds no entry for is
+/// absent.
+fn a_removal_of_no_cache_entry(rig: &dyn StoreRig) {
+    let store = rig.store();
+    let answer = store.remove_cache_entry(&BuildId::new("never-made"), &Digest::of(BYTES));
+    assert!(
+        is_absent(&answer),
+        "a removal of no cache entry answered {answer:?}"
     );
 }

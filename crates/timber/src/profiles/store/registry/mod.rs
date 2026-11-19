@@ -3157,6 +3157,80 @@ mod tests {
             .is_none());
     }
 
+    /// The store group's rig over the stub: a store under a stub of its
+    /// own, bound for `acme/site` and the build profile `moon`, and one
+    /// at a port nothing listens on, which `unreachable` makes the rig's.
+    struct StubRig {
+        _stub: Stub,
+        live: Registry,
+        dead: Registry,
+        down: std::cell::Cell<bool>,
+    }
+
+    impl StubRig {
+        fn new() -> StubRig {
+            let stub = Stub::start(Behaviour::default(), &[]);
+            let port = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            StubRig {
+                live: store(&stub).bound_for("moon", false),
+                dead: Registry::new(&format!("127.0.0.1:{port}/acme/store"))
+                    .unwrap()
+                    .for_repository(Ok(repository("acme", "site")))
+                    .bound_for("moon", false),
+                _stub: stub,
+                down: std::cell::Cell::new(false),
+            }
+        }
+    }
+
+    impl timber_conformance::Rig for StubRig {
+        fn profile(&self) -> String {
+            self.live.source().profile.clone()
+        }
+    }
+
+    impl timber_conformance::seams::store::StoreRig for StubRig {
+        fn store(&self) -> &dyn Store {
+            if self.down.get() {
+                &self.dead
+            } else {
+                &self.live
+            }
+        }
+
+        fn unreachable(&self) -> String {
+            self.down.set(true);
+            match self.dead.resolve(&Name::new("anything")) {
+                Err(Not::Unreadable(u)) => u.said.expect("the client's words"),
+                other => panic!("a store nothing listens for answered {other:?}"),
+            }
+        }
+
+        fn settles_within(&self) -> Duration {
+            self.live.bound()
+        }
+
+        fn names_conditional(&self) -> bool {
+            self.live.names_conditional()
+        }
+    }
+
+    #[test]
+    fn the_stub_keeps_the_stores_contract() {
+        use timber_conformance::seams::store;
+        let report = timber_conformance::run(store::GROUP, &store::scenarios(), &|| {
+            Box::new(StubRig::new())
+        });
+        report.assert();
+        assert_eq!(report.ran, store::scenarios().len());
+        let not: Vec<&str> = report.not_applicable.iter().map(|n| n.scenario).collect();
+        assert_eq!(not, ["a name moved from where it is not"], "{report}");
+    }
+
     #[test]
     fn a_store_bound_for_no_build_profile_refuses_a_cache_entrys_name() {
         let stub = Stub::start(Behaviour::default(), &[]);

@@ -3,7 +3,7 @@
 //! changes only in the commit that adopts a change of the statement.
 
 /// The statement's revision the clauses were read at.
-pub const READ_AT: &str = "boomdrivedev/blueprints a8234b3";
+pub const READ_AT: &str = "boomdrivedev/blueprints fecf4d9";
 
 /// Each section of Parts A and B, and its clauses.
 pub const PARTS: &[(&str, &[u16])] = &[
@@ -32,7 +32,7 @@ pub const PARTS: &[(&str, &[u16])] = &[
         "A.8 Consumers",
         &[46, 47, 113, 99, 48, 49, 114, 50, 115, 51],
     ),
-    ("A.9 The cache", &[52, 100, 53, 54, 55, 135, 133]),
+    ("A.9 The cache", &[52, 100, 53, 54, 145, 55, 135, 133]),
     ("A.10 Askers and surfaces", &[56, 57, 58, 59, 60, 132, 129]),
     ("A.11 What timber keeps", &[61, 62, 63, 64, 65]),
     ("B.1 The store", &[66, 67, 68, 69, 70, 71, 72, 73]),
@@ -51,13 +51,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_parts_hold_every_clause_from_1_to_144_once_in_20_sections() {
+    fn the_parts_hold_every_clause_from_1_to_145_once_in_20_sections() {
         assert_eq!(PARTS.len(), 20);
         let mut clauses: Vec<u16> = PARTS.iter().flat_map(|(_, c)| c.iter().copied()).collect();
-        assert_eq!(clauses.len(), 144);
+        assert_eq!(clauses.len(), 145);
         clauses.sort_unstable();
-        assert_eq!(clauses, (1..=144).collect::<Vec<u16>>());
-        assert_eq!(READ_AT, "boomdrivedev/blueprints a8234b3");
+        assert_eq!(clauses, (1..=145).collect::<Vec<u16>>());
+        assert_eq!(READ_AT, "boomdrivedev/blueprints fecf4d9");
         let sections: Vec<&str> = PARTS
             .iter()
             .map(|(s, _)| s.split(' ').next().unwrap())
@@ -93,6 +93,7 @@ mod tests {
             (142, "A.2"),
             (143, "A.2"),
             (144, "A.3"),
+            (145, "A.9"),
         ] {
             assert_eq!(section(clause), at, "clause {clause}");
         }
@@ -117,5 +118,15 @@ mod tests {
             .find(|(s, _)| s.starts_with("A.3 "))
             .expect("A.3");
         assert!(publishing.ends_with(&[20, 144]), "A.3 holds {publishing:?}");
+    }
+
+    #[test]
+    fn the_clause_past_144_follows_54_in_a_9() {
+        let (_, cache) = PARTS
+            .iter()
+            .find(|(s, _)| s.starts_with("A.9 "))
+            .expect("A.9");
+        let at = cache.iter().position(|c| *c == 54).expect("54 in A.9");
+        assert_eq!(cache.get(at + 1), Some(&145), "A.9 holds {cache:?}");
     }
 }

@@ -275,9 +275,10 @@ impl Drop for Server {
 }
 
 /// The store group's rig: a registry store under a fresh root of a server
-/// the test started, bound for the repository `acme/site`, and one at a
-/// port nothing listens on, which [`StoreRig::unreachable`] makes the
-/// rig's store.
+/// the test started, bound for the repository `acme/site` and the build
+/// profile `moon`, whose cache repository holds its cache entries, and one
+/// at a port nothing listens on, which [`StoreRig::unreachable`] makes
+/// the rig's store (145).
 pub struct RegistryRig {
     _server: Rc<Server>,
     live: Registry,
@@ -288,8 +289,8 @@ pub struct RegistryRig {
 impl RegistryRig {
     pub fn new(server: &Rc<Server>) -> RegistryRig {
         RegistryRig {
-            live: site(&server.repository()),
-            dead: site(&format!("127.0.0.1:{}/store", unanswered())),
+            live: site(&server.repository()).bound_for("moon", false),
+            dead: site(&format!("127.0.0.1:{}/store", unanswered())).bound_for("moon", false),
             _server: server.clone(),
             down: Cell::new(false),
         }
@@ -428,9 +429,10 @@ impl Store for Prefixed {
 }
 
 /// The store group's rig under the root of a hosted registry the host
-/// names, bound for the repository [`LIVE`], a scenario's names apart from
-/// every other's by the run's prefix, and a store at a loopback port
-/// nothing listens on, which [`StoreRig::unreachable`] makes the rig's.
+/// names, bound for the repository [`LIVE`] and the build profile `moon`,
+/// a scenario's names apart from every other's by the run's prefix, and a
+/// store at a loopback port nothing listens on, which
+/// [`StoreRig::unreachable`] makes the rig's (145).
 pub struct LiveRig {
     live: Prefixed,
     dead: Registry,
@@ -441,10 +443,10 @@ impl LiveRig {
     pub fn new(repository: &str, run: &str, scenario: usize) -> LiveRig {
         LiveRig {
             live: Prefixed {
-                registry: live(repository),
+                registry: live(repository).bound_for("moon", false),
                 prefix: format!("{run}-{scenario}-"),
             },
-            dead: live(&format!("127.0.0.1:{}/store", unanswered())),
+            dead: live(&format!("127.0.0.1:{}/store", unanswered())).bound_for("moon", false),
             down: Cell::new(false),
         }
     }
