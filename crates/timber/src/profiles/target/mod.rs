@@ -38,9 +38,11 @@ use nix_fleet::push::{self, ClanPush};
 /// `credentials`, the host's, names; the GitHub release target, which
 /// makes its releases in `repository` on github.com, and reads the token
 /// `credentials` names at the moment of use, since `gh` takes no file;
-/// the Nix cache; and the clan push profile, which runs the fleet's own
-/// tools against `checkout`, the checkout's path, and keeps its markers
-/// under `repository`. A profile whose repository is unread answers why
+/// the Nix cache, which pushes to a Cachix cache with the token
+/// `credentials` names, read when apply pushes, since `cachix` takes no
+/// file either (record 0044); and the clan push profile, which runs the
+/// fleet's own tools against `checkout`, the checkout's path, and keeps
+/// its markers under `repository`. A profile whose repository is unread answers why
 /// at every operation that needs it (119); `credentials` are as the
 /// bindings file's `[credentials]` names them, and the binding opens none
 /// (118; the Dash0 target's design D3; record 0043).
@@ -65,7 +67,7 @@ pub fn bound(
         ),
         (
             TargetProfile::new(nix_cache::PROFILE),
-            Box::new(NixCache::new(store()?)) as Box<dyn Target>,
+            Box::new(NixCache::new(store()?, credentials)) as Box<dyn Target>,
         ),
         (
             TargetProfile::new(push::PROFILE),
