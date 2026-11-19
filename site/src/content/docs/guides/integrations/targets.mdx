@@ -1,6 +1,6 @@
 ---
 title: Targets
-description: The target seam, the Nix binary cache, a clan fleet's push and a Dash0 dataset's dashboards built to fill it, and the registries, sites, stacks, functions, clusters and pulling fleets designed to be converged.
+description: The target seam, the Nix binary cache, a clan fleet's push, a Dash0 dataset's dashboards and a GitHub release built to fill it, and the registries, sites, stacks, functions, clusters and pulling fleets designed to be converged.
 sidebar:
   order: 7
 ---
@@ -55,6 +55,7 @@ credential has nowhere in the repository's file to sit (45).
 | a Nix fleet, via Clan, pulled | pull: each machine verifies and applies the release assigned to it, realising store paths from the cache | designed |
 | a Nix binary cache, through Attic | push: the version's closures pushed to the cache with `attic push`, from the host that built them, with attic's own credential; current and report unread, since a cache keeps no marker; see below | built, `nix_cache` |
 | Dash0's dashboards | push: each dashboard the version holds applied to one dataset by its fixed identifier with Dash0's own CLI, from the host that holds the dataset's write token, and each one an earlier version applied that this one does not hold removed; a marker dashboard in the dataset; see below | built, `dash0` |
+| a GitHub release | push: the release of the version's tag made or updated in the checkout's repository with `gh`, GitHub's own CLI, its notes as the release's text and the outputs the table names as its assets, from the host that holds a token that may write its releases; current is the release GitHub marks latest; see below | built, `github_release` |
 
 A target's credential is the environment's, reached at the moment of
 use; timber keeps none. Where a target's own tool reads its credential
@@ -62,6 +63,9 @@ from a file, the host's bindings file names that file's path in
 `[credentials]`, by the name the environment's table gives it, and
 timber hands the path to the tool, which alone reads it (118; see
 [the host's bindings](/timber/guides/self-hosting/#the-hosts-bindings)).
+Where the tool takes a credential only in a variable, as `gh` does, the
+target reads the file when it runs and hands the credential to that
+operation's runs of the tool alone, writing it nowhere (64).
 
 ## The Nix binary cache
 
@@ -510,6 +514,147 @@ back. Moved back and applied, an environment loses the dashboards the
 newer version added (34). An environment moved to another dataset
 leaves its dashboards and its marker in the old one, for a person to
 remove there.
+
+## A GitHub release
+
+The GitHub release target, `github_release`, makes or updates the
+GitHub release of a version's tag in the checkout's repository on
+github.com, with [`gh`](https://cli.github.com), GitHub's own CLI. The
+release's text is the version's notes, and its assets are the outputs
+the environment's table names (C.12, 134). A repository whose releases
+carry its binaries declares each binary as an output, packed by the
+file projection as any file is, and an environment that follows the
+channel the authors promote releases to.
+
+The environment's `github_release` table names two keys, both required,
+and no others:
+
+| key | what |
+|---|---|
+| `credential` | the name of the host's credential, which its bindings file's `[credentials]` gives the path of: a token that may write the repository's releases |
+| `assets` | the component's outputs the release carries, each once, `[]` for a release of notes alone |
+
+```toml
+[environments.flume.github]
+channel = "stable"
+target.github_release = { credential = "flume-releases", assets = ["flume-aarch64-darwin.tar.gz", "flume-aarch64-linux.tar.gz", "flume-x86_64-linux.tar.gz"] }
+```
+
+Each asset is the output's file, uploaded under the output's name, so a
+release that carries `flume-x86_64-linux.tar.gz` names its output so.
+An asset's name is letters, digits, `.`, `-` and `_`, neither beginning
+nor ending with `.`, since GitHub renames any other, and a later apply
+finds each asset by the name it asked for. Any other key, a key
+missing, or one of another form is unreadable at every operation,
+naming the environment, the key and the two the table reads, and
+nothing runs. There is no key for a token, a path, a host or a
+repository (45).
+
+### The credential
+
+The token is the host's. The host's bindings file names the path of a
+file holding only it, under the name the table's `credential` gives:
+
+```toml
+[credentials]
+flume-releases = "~/.local/share/secrets/flume-releases"
+```
+
+`gh` reads no token file, so the target reads the file when current,
+apply or report runs, trims its trailing whitespace, and hands the
+token to that operation's runs of `gh` in `GH_TOKEN` alone: in no
+argument, no answer and no file (64). A credential the host's file does
+not name is unreadable, naming it and the bindings file; a file that
+cannot be read is unreadable, naming the credential and the path in the
+operating system's words; a file of whitespace alone is unreadable,
+naming the credential. Nothing runs in any of them, and desired reads
+no credential.
+
+Every run of `gh` takes nothing of the host's own `gh`: it runs in a
+folder of its own under the system's temporary directory, removed when
+its operation ends, with every `GH_*` and `GITHUB_*` variable removed
+from its environment, and is given
+
+```text
+GH_CONFIG_DIR=<run>/config GH_TOKEN=<token> GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
+```
+
+so no sign-in, host or repository of the host's own `gh` is read. Each
+run names the host: `--repo github.com/<owner>/<name>` for `gh release`,
+and `--hostname github.com` for `gh api`.
+
+The `gh` run is the one on `PATH`. Run `timber apply` in the
+repository's own shell, so the `gh` it runs is the one the repository
+pins.
+
+### What apply checks and runs
+
+Apply judges the channel's head as for any target, then runs these
+steps, and stops at the first that fails, answering it:
+
+1. It reads the version's index by digest, refused where it names
+   another publishing repository than the checkout's, or none, or no
+   revision (42).
+2. It reads the version's notes, the artifact its index names in the
+   ecosystem `notes`, and the file of each output `assets` names, each
+   by digest. An index naming no notes, notes that are not UTF-8, and an
+   output the index names no file of are each refused, naming the
+   version and what it lacks.
+3. It reads the token. Nothing has reached GitHub yet.
+4. It reads the version's tag on GitHub, `gh api
+   repos/<owner>/<name>/git/ref/tags/<tag>`, peeled through a tag
+   object to its commit. The version is refused where GitHub holds no
+   such tag, naming the tag and the repository, or holds it at another
+   revision than the index names, naming the tag and both revisions.
+5. It finds the tag's release, published or a draft, with `gh release
+   view <tag>`.
+6. Where there is none, it makes one as a draft, titled by the tag, the
+   notes its text: `gh release create <tag> --verify-tag --draft`.
+7. It uploads, in one `gh release upload <tag> --clobber`, each named
+   asset the release holds no uploaded asset of with the digest of the
+   output's bytes, replacing one of that name; none where every one is
+   held.
+8. It publishes the release last, the notes its text and the tag its
+   title, not a prerelease, and marked latest: `gh release edit <tag>
+   --verify-tag --draft=false --prerelease=false --latest`.
+
+No step makes, moves or deletes a tag: step 4 refuses before any write,
+and `--verify-tag` stops `gh` making one. The release stays a draft
+until its assets are attached, so a reader of the repository's latest
+release never sees one without them, and an apply that stops after
+making the draft leaves it for the next apply to find by its tag and
+finish; one tag never takes two releases. `gh`'s words on a failure are
+the answer, as it wrote them, and nothing after the failed step runs
+(59).
+
+A release is never a prerelease and is always marked latest, whatever
+the version's form, since GitHub never marks a prerelease latest and
+current reads the release it does. An apply of a version whose release
+is published already writes its text and title again and marks it
+latest, which is how a move back converges (34).
+
+### The release marked latest
+
+current and report read the release GitHub marks latest, `gh api
+repos/<owner>/<name>/releases/latest`, and answer the index the store
+names the component's version of its tag at; report answers when GitHub
+says that release was last updated too. They answer unread, never a
+digest, where GitHub marks no release latest, naming the repository,
+and where the latest release's tag names no version of the component in
+the store, naming the tag: a release made by hand, or another
+component's (89, 91, 119). A report claim is signed once the latest
+release names the index applied, as for the other targets.
+
+GitHub marks one release latest for the whole repository, so one
+component per repository takes a GitHub release: a second component's
+release environment would read the first's release as current.
+
+### Nothing is removed
+
+An apply removes no asset, no release and no tag. A release is one
+version's, so an asset the version does not name was put there by hand
+or by an apply under an earlier `assets`, and it stays. A release's
+text or title edited by hand is written back by the next apply.
 
 ## Adding one
 
