@@ -62,7 +62,6 @@ mod table;
 #[cfg(test)]
 mod tests;
 
-use std::fs;
 use std::path::PathBuf;
 
 use timber_seams::{
@@ -71,8 +70,9 @@ use timber_seams::{
 };
 
 use super::file_artifact::{self, Words};
+use super::token::{self, Credential, Token};
 use crate::bindings::Credentials;
-use gh::{At, Backend, Gh, Latest, Token, Upload, HOST};
+use gh::{At, Backend, Gh, Latest, Upload, HOST};
 use table::{Named, Table};
 
 /// The profile name an environment's `target` table names this target by.
@@ -164,46 +164,22 @@ impl GithubRelease {
         Not::refused(&self.source, Why::Said, Some(said))
     }
 
-    /// The token the table's credential names, read from the file the
-    /// host's `[credentials]` gives the path of at the moment of use, its
-    /// trailing whitespace trimmed (64, rule core.21; design D4):
-    /// unreadable naming the credential and the bindings file where it
-    /// names none, the credential and the path with the operating
-    /// system's words where the file cannot be read, and the credential
-    /// where it holds nothing but whitespace, so nothing runs.
+    /// The token the table's credential names, read through the family's
+    /// [`token`] from the file the host's `[credentials]` gives the path
+    /// of, at the moment of use, its trailing whitespace trimmed (64, rule
+    /// core.21; design D4): unreadable naming the credential and the
+    /// bindings file where it names none, the credential and the path with
+    /// the operating system's words where the file cannot be read, and the
+    /// credential where it holds nothing but whitespace, so nothing runs.
     fn token(&self, environment: &Environment, table: &Table) -> Answer<Token> {
-        let name = &table.credential;
-        let what = || format!("credential {name} of {}", Named(environment));
-        let path = self.credentials.path(name).ok_or_else(|| {
-            Not::unreadable(
-                &self.source,
-                what(),
-                Some(format!(
-                    "the bindings file {} names no {name} in its [credentials], the path of the \
-                     file holding the token the {PROFILE} target hands gh",
-                    self.credentials.file.display()
-                )),
-            )
-        })?;
-        let text = fs::read_to_string(path).map_err(|e| {
-            Not::unreadable(
-                &self.source,
-                format!("credential {name} at {}", path.display()),
-                Some(e.to_string()),
-            )
-        })?;
-        let token = text.trim_end();
-        if token.is_empty() {
-            return Err(Not::unreadable(
-                &self.source,
-                what(),
-                Some(format!(
-                    "the file {} holds no token, only whitespace",
-                    path.display()
-                )),
-            ));
-        }
-        Ok(Token::new(token))
+        let hands = format!("the {PROFILE} target hands gh");
+        let credential = Credential {
+            name: &table.credential,
+            of: &Named(environment),
+            hands: &hands,
+        };
+        let path = token::path(&self.credentials, &credential, &self.source)?;
+        token::read(path, &credential, &self.source)
     }
 
     /// The release GitHub marks latest in the checkout's repository, and

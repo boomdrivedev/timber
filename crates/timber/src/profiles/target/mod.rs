@@ -3,10 +3,13 @@
 //! built. The repository's environments pick among them (92, C.10,
 //! C.12): a profile bound once serves every environment that names it,
 //! each handed its own settings as the policy answers them (design D3).
-//! Every profile reads a version's files through [`file_artifact`], and
-//! the Nix profiles a closure's form through [`nix_closure`], which they
-//! share, so none calls another (rule core.2; the Nix cache unit's design
-//! D6, the Dash0 target's design D1).
+//! Every profile reads a version's files through [`file_artifact`], the
+//! Nix profiles a closure's form through [`nix_closure`], and the targets
+//! whose tool takes a token only in a variable, the GitHub release target
+//! and the Nix cache target on Cachix, read that token at use through
+//! [`token`], which they share, so none calls another (rule core.2; the
+//! Nix cache unit's design D6, the Dash0 target's design D1, the Cachix
+//! change's design D6).
 
 pub mod dash0;
 pub mod file_artifact;
@@ -14,6 +17,7 @@ pub mod github_release;
 pub mod nix_cache;
 pub mod nix_closure;
 pub mod nix_fleet;
+pub mod token;
 
 use std::collections::BTreeMap;
 use std::path::Path;

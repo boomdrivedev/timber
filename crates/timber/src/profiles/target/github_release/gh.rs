@@ -26,7 +26,6 @@
 //! command holds no token, since none is an argument.
 
 use std::ffi::{OsStr, OsString};
-use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -34,6 +33,7 @@ use serde::Deserialize;
 use timber_seams::{Answer, Digest, Not, OutputName, RepositoryName, Revision, Source};
 
 use crate::profiles::run::{Ran, Tool};
+use crate::profiles::target::token::Token;
 
 /// The variables removed from every run's environment: every one of the
 /// host's own `gh` settings and GitHub tokens.
@@ -50,28 +50,6 @@ const API_NOT_FOUND: &str = "gh: Not Found (HTTP 404)";
 
 /// How many tag objects a tag is peeled through before its commit.
 const PEELS: usize = 8;
-
-/// A token, held for one operation and written nowhere: its words in no
-/// answer, no argument and no debug print.
-#[derive(Clone, PartialEq, Eq)]
-pub(super) struct Token(String);
-
-impl Token {
-    pub fn new(token: impl Into<String>) -> Token {
-        Token(token.into())
-    }
-
-    /// The token itself, handed to a run in `GH_TOKEN` alone.
-    pub fn secret(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Token(…)")
-    }
-}
 
 /// Where an operation reaches GitHub: the checkout's repository on
 /// github.com, and the token it is handed.
