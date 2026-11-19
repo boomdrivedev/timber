@@ -9,7 +9,7 @@ decision-makers:
 
 # A target's credential is a file the host names, and timber hands its path to the target's own tool
 
-Status: accepted, boomdrive-design's own choice, made on the rules written and cheap to change. Amended on 2026-11-19, below: a credential may also be a secret of the host's SecretSpec, handed over as a leased file.
+Status: accepted, boomdrive-design's own choice, made on the rules written and cheap to change. Its amendment of 2026-11-19, below, a credential may also be a secret of the host's SecretSpec, is proposed.
 
 Deciders: boomdrive-design, on afterthought's question of 2026-11-14, carried by boomdrive-planner, of how timber's Dash0 publish takes a token file.
 Sources: `boomdrivedev/blueprints:design/timber/requirements.md` 45, 64, 92, 118 and C.12, on branch `design/timber-deploys-dash0-dashboards`; record 0013; rule core.21; afterthought/swancloud's record 0062 as amended on 2026-11-14; the README of Dash0's CLI (`dash0hq/dash0-cli`), read 2026-11-14.
@@ -68,7 +68,9 @@ Option 1 of each, written as C.12's row for Dash0, as 118's credentials, and as 
 
 ## Amendment, 2026-11-19: a credential may be a secret of the host's SecretSpec
 
-Status: boomdrive-design's, on the user's note on timber #59, "We should look more closely at Secret Spec direct integration", relayed by boomdrive-unstick on 2026-11-19 with SecretSpec 0.21's interfaces read. The direction came from the user's note. Each choice below is cheap to change.
+Status: proposed to the user on 2026-11-19, as `briefs.15` has it; accepted only on their yes. The user asked to weigh the ways in before anything is built, so the options below are that weighing and the outcome is boomdrive-design's recommendation.
+
+Deciders: the user, who asked on their card of 2026-11-19 for the ways in compared first, from their note on timber #59; boomdrive-design, for the recommendation; boomdrive-unstick read SecretSpec 0.21's interfaces.
 
 ### Context
 
