@@ -53,7 +53,7 @@ Read these before starting:
 
 ## 3. The policy file
 
-- [ ] 3.1 Read `[cache]` in `crates/timber/src/profiles/policy/file/` (design D1; policy-file spec, "The keeping time is read from `[cache]`, given thirty days", "A `[cache]` table outside its form is unreadable").
+- [x] 3.1 Read `[cache]` in `crates/timber/src/profiles/policy/file/` (design D1; policy-file spec, "The keeping time is read from `[cache]`, given thirty days", "A `[cache]` table outside its form is unreadable").
   - `givens.toml` gains `[cache]` with `keep_days = 30` and a comment citing 145, and `Givens` reads it beside the channels.
   - `File` reads `[cache]`. `cache_kept` answers the file's `keep_days`, written, or the fragment's, given, where the file writes none or the revision holds no file. Another key under `[cache]`, and a `keep_days` that is no whole number from 0 or past `u32`, is unreadable naming the key and the file.
   - Tests in `tests.rs`: `the_keeping_time_written_is_answered_written`, `no_cache_table_answers_the_givens_thirty_days`, `a_revision_with_no_file_answers_the_givens_thirty_days`, `keep_days_of_zero_is_answered`, `another_key_under_cache_is_unreadable_naming_it`, `keep_days_of_another_form_is_unreadable_naming_it`.

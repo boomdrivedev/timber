@@ -28,3 +28,8 @@ prereleases = true
 [channels.lts]
 held = true
 bound_to = "stable"
+
+# 145: a repository's cache entries are kept thirty days from their push
+# unless its own [cache] writes keep_days.
+[cache]
+keep_days = 30
