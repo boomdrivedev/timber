@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 use timber_seams::{
-    artifact_name, canonical, Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest,
-    Name, Not, Put, Seam, Store, Version, Why,
+    artifact_name, canonical, Answer, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held,
+    Manifest, Name, Not, Pushed, Put, Seam, Source, Store, Version, Why,
 };
 
 use crate::Fake;
@@ -203,6 +203,20 @@ impl Store for FakeStore {
                     .collect())
             },
         )
+    }
+
+    fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+        Err(Not::absent(
+            &Source::new(Seam::Store, "fake"),
+            "cache entries",
+        ))
+    }
+
+    fn remove_cache_entry(&self, _: &BuildId, _: &Digest) -> Answer<()> {
+        Err(Not::absent(
+            &Source::new(Seam::Store, "fake"),
+            "cache entries",
+        ))
     }
 }
 

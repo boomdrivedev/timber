@@ -406,6 +406,25 @@ impl Store for Prefixed {
     ) -> Answer<Vec<timber_seams::Version>> {
         self.registry.versions(ecosystem, &self.artifact(name))
     }
+    /// The entries whose build identity carries the run's prefix, listed
+    /// without it, so a scenario sees its own entries alone.
+    fn cache_entries(&self) -> Answer<Vec<(timber_seams::BuildId, Answer<timber_seams::Pushed>)>> {
+        Ok(self
+            .registry
+            .cache_entries()?
+            .into_iter()
+            .filter_map(|(build, entry)| {
+                let own = build.as_str().strip_prefix(&self.prefix)?;
+                Some((timber_seams::BuildId::new(own), entry))
+            })
+            .collect())
+    }
+    fn remove_cache_entry(&self, build: &timber_seams::BuildId, at: &Digest) -> Answer<()> {
+        self.registry.remove_cache_entry(
+            &timber_seams::BuildId::new(format!("{}{build}", self.prefix)),
+            at,
+        )
+    }
 }
 
 /// The store group's rig under the root of a hosted registry the host

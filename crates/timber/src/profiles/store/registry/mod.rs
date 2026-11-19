@@ -55,8 +55,9 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use timber_seams::{
-    moved_name, Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, MovedTo, Name,
-    Not, Put, RepositoryName, Seam, Source, Store, Version, Why, REPOSITORY_COMPONENT,
+    moved_name, Answer, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest,
+    MovedTo, Name, Not, Pushed, Put, RepositoryName, Seam, Source, Store, Version, Why,
+    REPOSITORY_COMPONENT,
 };
 use ureq::http::{Method, StatusCode};
 
@@ -1642,6 +1643,14 @@ impl Store for Registry {
             }
             first = false;
         }
+    }
+
+    fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+        Err(Not::absent(&self.source, "cache entries"))
+    }
+
+    fn remove_cache_entry(&self, _: &BuildId, _: &Digest) -> Answer<()> {
+        Err(Not::absent(&self.source, "cache entries"))
     }
 }
 

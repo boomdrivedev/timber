@@ -30,7 +30,7 @@ Read these before starting:
   - Add `utc_seconds(text: &str) -> Option<u64>` to `answer.rs`, reading `YYYY-MM-DDTHH:MM:SSZ` back to seconds since the Unix epoch, `None` for text of any other form.
   - Tests in the modules they test: `a_cache_name_is_cache_and_the_build_identity`, `utc_seconds_reads_back_what_utc_writes`, `utc_seconds_reads_nothing_of_another_form`.
   - Verify with `devenv shell -- cargo test -p timber-seams`.
-- [ ] 1.2 Add the store's two cache operations (design D3; seam-contracts spec, "The store lists and removes cache entries").
+- [x] 1.2 Add the store's two cache operations (design D3; seam-contracts spec, "The store lists and removes cache entries").
   - In `store.rs`: `Pushed { digest: Digest, at: Option<u64> }`, serializable; `Store::cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>>` and `Store::remove_cache_entry(&self, build: &BuildId, at: &Digest) -> Answer<()>`, each with the comment design D3 gives it.
   - Give every implementer both, found by `grep -rln 'impl Store for' crates`. A wrapper delegates: `Unmade` in `profiles/store/mod.rs`, `Unopened` in `bindings/mod.rs` answering its own answer, and the test wrappers in `timber-core` and `timber-conformance`. Every other implementer answers both absent naming cache entries; tasks 2.1, 4.2 and 4.4 replace the fake store's, the registry's and the layout's.
   - A test in `store.rs`: `a_pushed_round_trips_through_json`.

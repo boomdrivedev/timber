@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use timber_seams::{
-    canonical, Answer, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name, Not, Put,
-    Seam, Source, Store, Version, Why,
+    canonical, Answer, BuildId, Digest, Ecosystem, EcosystemName, Envelope, Held, Manifest, Name,
+    Not, Pushed, Put, Seam, Source, Store, Version, Why,
 };
 
 mod blobs;
@@ -308,6 +308,14 @@ impl Store for Layout {
             .filter(|(e, n, _)| e == ecosystem && n == name)
             .map(|(_, _, v)| v)
             .collect())
+    }
+
+    fn cache_entries(&self) -> Answer<Vec<(BuildId, Answer<Pushed>)>> {
+        Err(Not::absent(&self.source, "cache entries"))
+    }
+
+    fn remove_cache_entry(&self, _: &BuildId, _: &Digest) -> Answer<()> {
+        Err(Not::absent(&self.source, "cache entries"))
     }
 }
 
