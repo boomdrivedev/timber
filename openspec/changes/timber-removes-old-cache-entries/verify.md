@@ -1,9 +1,9 @@
 # Verify: timber-removes-old-cache-entries
 
 The verify stage's report on the branch
-`change/timber-removes-old-cache-entries` at 2973de3b, cut from
-`bolt/timber-publishes-github-releases-and-to-cachix` (merge base
-1adfecc7).
+`change/timber-removes-old-cache-entries` at e96196b3, cut from
+`bolt/timber-publishes-github-releases-and-to-cachix` and holding the
+bolt at 995a1af6, its head, by the merge 618faed0.
 
 **Verdict: the work holds.** Both layers of the whole checks pass, every
 task is ticked with the work it names on the branch, and every
@@ -12,24 +12,40 @@ change is archived with this report.
 
 ## The whole checks
 
-Both layers the repository's instructions name, run once at 2973de3b
-inside `devenv shell`, nothing fixed between them:
+Both layers the repository's instructions name, run once at e96196b3
+inside `devenv shell` as one moon run, `moon run ':#check-fast'
+':#check-tools'`, on 2026-11-19, nothing fixed during or after it:
 
-| layer | command | outcome |
-|---|---|---|
-| `check-fast` | `moon run ':#check-fast'` | passed: 28 tasks completed, 21 of them from moon's cache at the hashes this tree gives, in 1 m 5 s |
-| `check-tools` | `moon run ':#check-tools'` | passed: `cli:tools` run, not cached, 107 tests passed and none failed or ignored, in 9 m 54 s; `a_prune_removes_an_entry_past_its_time_and_leaves_a_released_version` and the store group (`zot_keeps_the_stores_contract`, `the_reference_distribution_keeps_the_stores_contract`) passing on zot and the reference distribution |
+| layer | outcome |
+|---|---|
+| `check-fast` | passed |
+| `check-tools` | passed: `cli:tools` run, not cached, 107 tests passed and none failed or ignored |
 
-`check-fast` ran `root:changes`, `root:format`, `root:hooks`,
-`root:toolchain`, `root:compile-server`, `site:install` and
-`site:toolchain` afresh, and took `seams:test`, `fakes:test`,
+moon answered `Tasks: 29 completed (12 cached)` in 7 m 9 s and exited 0.
+Run afresh: `root:changes`, `root:format`, `root:hooks`, `root:lint`,
+`root:toolchain`, `root:compile-server`, `seams:test`, `fakes:test`,
 `core:test`, `cli:test`, `conformance:test`, `conformance:coverage`,
-`root:specs`, `root:lint`, `root:changes-cases`, `root:versions`,
-`root:release`, `root:marketplace`, `site:build`, the `nix` project's
-three tasks and the plugins' tasks from moon's cache, whose hashes are
-of this tree's inputs, so each stands for a pass at 2973de3b.
-`root:changes` (rule core.77) archived this change alone into a scratch
-copy of the specs and validated what it wrote.
+`nix:typecheck`, `site:install`, `site:toolchain`, `site:build` and
+`cli:tools`. Taken from moon's cache, at the hashes of this tree's
+inputs, so each stands for a pass at e96196b3: `root:specs`,
+`root:changes-cases`, `root:versions`, `root:release`,
+`root:marketplace`, `nix:lint`, `nix:test` and the plugins' five tasks.
+
+- `cli:test` passed 834 tests of the crate's library with one ignored,
+  `profiles::target::dash0::cli::tests::a_child_runs_every_operation`,
+  which `the_hosts_own_dash0_settings_reach_no_run` runs in a child, as
+  dash0's change left it; every integration test passed, the GitHub
+  release target's 52 among them.
+- `root:changes` (rule core.77) answered one change open, valid under
+  `openspec validate --strict` and archiving alone onto the bolt's specs
+  to specs that pass it: this change over 995a1af6's
+  `conformance-suite`, which #48 and #49 added the GitHub release's and
+  Cachix's requirements to.
+- `cli:tools` passed
+  `a_prune_removes_an_entry_past_its_time_and_leaves_a_released_version`
+  and the store group, `zot_keeps_the_stores_contract` and
+  `the_reference_distribution_keeps_the_stores_contract`, on zot and on
+  the reference distribution.
 
 The GHCR and ECR checks are outside the gate (rule core.38) and were not
 run again; their runs by hand are tasks 8.2 and 8.3's, below.
@@ -37,19 +53,45 @@ run again; their runs by hand are tasks 8.2 and 8.3's, below.
 `devenv shell -- openspec validate timber-removes-old-cache-entries
 --strict` answers the change valid.
 
+## The merge with the bolt
+
+618faed0 takes 995a1af6, #49 `timber-pushes-to-cachix` with #48
+`timber-publishes-a-github-release` before it. Against git's own merge of
+its two parents (`git merge-tree`), it differs in three files alone:
+
+- `openspec/specs/conformance-suite/spec.md`, git's one conflict, holds
+  both sides' requirements: "The store's group lists and removes cache
+  entries" and "Prune over the fakes", and "The GitHub release target
+  runs the target group" and "The Nix cache target on Cachix runs the
+  target group".
+- `Aliased` in `crates/timber/src/profiles/target/github_release/tests.rs`
+  and in `crates/timber/tests/github_release.rs` passes
+  `cache_entries` and `remove_cache_entry` through to its fake store, as
+  the change gave dash0's and the Nix fleet's aliasing stores.
+
+1d28ac5d moved the change back out of the archive with the ten specs as
+995a1af6 has them: `openspec/specs/` at e96196b3 is 995a1af6's byte for
+byte. Since the last stage's run, the branch has changed nothing of the
+change's code but what the merge brought: every file it differs in from
+2973de3b outside the bolt's own changes is the change's `tasks.md` and
+this report.
+
 ## Tasks
 
-Every task of `tasks.md`, 1.1 to 9.1, is ticked, and each has the work
+Every task of `tasks.md`, 1.1 to 9.2, is ticked, and each has the work
 it names on the branch:
 
-- Every test the tasks name, 72 of them, is in the module or test file
-  the task names it in (`a_cache_name_is_cache_and_the_build_identity`
-  in `timber-seams/src/keeper.rs`, beside `channel_name`).
+- Every test the tasks name is in the module or test file the task names
+  it in (`a_cache_name_is_cache_and_the_build_identity` in
+  `timber-seams/src/keeper.rs`, beside `channel_name`), and the store
+  group's and the core's scenarios are in `seams/store.rs` and
+  `core/cache.rs` by the names 6.2 and 6.3 give.
 - 1.1: `CACHE` and `cache_name` in `timber-seams/src/keeper.rs`,
   re-exported by `timber_core::cache`; `utc_seconds` in `answer.rs`.
 - 1.2, 1.3: `Pushed`, `Store::cache_entries`,
   `Store::remove_cache_entry`, `Keeping` and `Policy::cache_kept` in the
-  seams, every implementer given them.
+  seams, every implementer given them, the bolt's among them, which the
+  workspace's build in `cli:test` and `root:lint` shows.
 - 2.1, 2.2: the fake store stamps, lists and removes cache entries and
   records `CacheEntries` and `RemoveCacheEntry`; the fake policy answers
   thirty days given unless `keeps` or `keeps_at` set a time.
@@ -62,9 +104,9 @@ it names on the branch:
   `repository:<repository>:pull,delete` (`registry/client.rs`); on
   `ghcr.io` `delete_version` goes through GitHub's API.
 - 5.1 to 5.3: `prune` in `timber-core/src/prune.rs`; `For::Prune` binds
-  the store by `bind_for` for the build profile with `push` set,
-  `NoKeeper`, no projections or targets, and the signers unreaching;
-  `timber prune` in `commands/prune.rs`.
+  the store by `bind_for` for the build profile with `push` set, no
+  keeper, projections or targets, and the signers unreaching; `timber
+  prune` in `commands/prune.rs`.
 - 6.1 to 6.3: `READ_AT` is `boomdrivedev/blueprints fecf4d9`, A.9 lists
   145 after 54; the store group's four cache scenarios and the core's
   four prune scenarios.
@@ -72,24 +114,24 @@ it names on the branch:
   left" checks that the read after the removal answers the bytes the
   read before it did, so a store holding other bytes under a digest
   fails only "the same bytes put twice" and "bytes read back"
-  (`crates/timber-conformance/tests/broken.rs`, whose expected failures
-  stand as they were, passing);
+  (`crates/timber-conformance/tests/broken.rs`);
   `crates/timber-conformance/tests/lagging.rs` lists the three cache
   scenarios that read an entry's name once made among the lagging
-  store's failures, with their words; and
+  store's failures; and
   `the_policy_in_force_asks_the_landing_and_the_policy_alone_and_writes_nothing`
   allows `PolicyOp::CacheKept` and counts seven asks. Its check,
   `check-fast` whole, passes above.
-- 7.1, 7.2: record 0045 in `docs/adr/`, status proposed; rule core.80
-  in `docs/architecture/core.md` under "Answers and records".
+- 7.1, 7.2: record 0045 in `docs/adr/`, status proposed, numbered after the
+  bolt's 0043 and 0044; rule core.80 in `docs/architecture/core.md`
+  under "Answers and records", numbered after the bolt's core.79.
 - 7.3, 7.4: the stores page says the keeping time, the cache manifest's
-  two annotations, each member's removal, the first prune and the
-  bytes left to the registry or the layout; the self-hosting guide has
-  "### Removing old cache entries" with the `[cache] keep_days` line,
-  the scheduled workflow, the ECR IAM policy, GitHub's `packages:
-  write` and the admin role on the cache packages, and, under "On
-  GitHub's registry", the pool's push token removing cache entries too
-  and untagged versions left alone.
+  two annotations, each member's removal, the first prune and the bytes
+  left to the registry or the layout; the self-hosting guide has "###
+  Removing old cache entries" with the `[cache] keep_days` line, the
+  scheduled workflow, the ECR IAM policy, GitHub's `packages: write` and
+  the admin role on the cache packages, and, under "On GitHub's
+  registry", the pool's push token removing cache entries too and
+  untagged versions left alone. `site:build` passes above.
 - 8.1: the reference distribution starts with `delete: enabled: true`,
   and `a_prune_removes_an_entry_past_its_time_and_leaves_a_released_version`
   is in `on_both!` in `crates/timber/tests/registry_store.rs`, passing
@@ -99,9 +141,13 @@ it names on the branch:
   02:03:08 to 02:04:52 UTC that commit c6e45d3d's fixture fixed;
   GitHub's registry from 02:08:06 to 02:09:57 UTC, against
   `ghcr.io/boomdrivedev/timber-tools-check`. The stores page's two rows
-  carry the date (ee811a69). This stage did not run them again.
+  carry the date. This stage did not run them again.
 - 9.1: ticked, and met by this stage's archive, which applies the ten
   delta specs to `openspec/specs/`.
+- 9.2: the merge above, the change out of the archive over 995a1af6's
+  specs, and both `Aliased` stores passing the cache operations through;
+  its checks, `root:changes` and the GitHub release target's tests in
+  `cli:test`, pass above.
 
 ## Requirements and scenarios
 
