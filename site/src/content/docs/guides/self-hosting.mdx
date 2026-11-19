@@ -334,7 +334,11 @@ GitHub's registry is bound as any registry, `[store] registry =
   on `<root>/<owner>/<name>/cache/<build>` alone, and nothing on any
   other package, and let the job push with its own token. A package a
   job makes on its own holds no name the gate accepted, and is refused
-  wherever it is read (95, 96, 135).
+  wherever it is read (95, 96, 135). Where the repository's prune
+  workflow removes its old cache entries, the repository holds the admin
+  role on its cache packages instead, and that role lets the pool's
+  push token remove cache entries too: still only cache entries, which
+  a build makes again (54, 145).
 - **The host's token.** A publishing host needs a token with
   `write:packages`, a host that only reads a private store one with
   `read:packages`, kept by `docker login ghcr.io` in its Docker
@@ -343,7 +347,9 @@ GitHub's registry is bound as any registry, `[store] registry =
 - **Leave untagged versions alone.** An artifact's manifest, a referrer
   and a cache entry's bytes are held by digest, untagged, and named by an
   index, a referrers tag or a cache manifest. Deleting a package's
-  untagged versions deletes them.
+  untagged versions deletes them. `timber prune` deletes only a cache
+  entry's tagged cache manifest, never an untagged version, and nothing
+  else should either.
 - **Until its first manifest.** A new package serves no bytes until it
   holds a manifest, which the first publish puts: until then, a read of
   bytes it holds is unreadable in GitHub's words.
@@ -1046,6 +1052,105 @@ it, and the next landing publishes.
 One thing this way rests on is still being built: the step needs room
 in the pool's run job and to know where its checkout is, which sluice's
 Actions pool keeps; sluice's template names no timber.
+
+### Removing old cache entries
+
+Every landing's run pushes its cache entries, so a store grows with
+every landing until they are removed. A repository's entries are kept
+thirty days from their push unless its policy file says otherwise, in
+whole days from 0 (145):
+
+```toml
+[cache]
+keep_days = 14
+```
+
+`timber prune` removes each entry pushed longer ago than that, read
+from the policy at the branch's landed head, and nothing else: no
+version, claim or channel's name, no tag of the repository and no
+ledger (54, 22, 34). timber starts nothing, so a scheduled workflow of
+the repository's own runs it, with a full checkout of the branch and the
+landing's records, as the publish workflow has. On GitHub's registry
+the job's own token removes the entries:
+
+```yaml
+name: timber prune
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: timber-prune
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write # the cache packages' versions (145)
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: git fetch --no-tags origin '+refs/sluice/*:refs/sluice/*'
+      - name: Remove old cache entries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo boomdrivedev/timber \
+            --pattern timber-x86_64-linux.tar.gz --output - | tar -xz -C "$RUNNER_TEMP"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          mkdir -p ~/.config/timber
+          cat > ~/.config/timber/config.toml <<'EOF'
+          [store]
+          registry = "ghcr.io/acme/timber"
+
+          [landing]
+          sluice = { remote = "origin" }
+          EOF
+          "$RUNNER_TEMP/timber" prune --json
+```
+
+On GitHub's registry the token may delete a cache package's versions
+only where the repository holds the admin role on that package: an
+administrator of the organization gives the repository the admin role
+on each of its cache packages, `<root>/<owner>/<name>/cache/<build>`,
+and nothing on its components' or its artifacts' packages, which the
+publishing host makes (record 0040). timber deletes each entry's cache
+manifest through GitHub's API there, as GitHub documents no other way.
+
+On ECR the job assumes a role by OIDC, `permissions: id-token: write`
+in place of `packages: write`, configured as the publish workflow's
+is, whose one policy lets it read and delete in its repository's cache
+repositories and nothing else. For the repository `acme/site` under the
+root `timber`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ecr:BatchGetImage", "ecr:ListImages", "ecr:BatchDeleteImage"],
+      "Resource": "arn:aws:ecr:us-east-1:123456789012:repository/timber/acme/site/cache/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+The first prune removes every entry pushed before cache entries said
+when they were pushed. A landing whose entries are removed before it is
+published is refused naming the output, and the next landing's run
+fills the cache again (54, 135).
 
 ## A team
 
