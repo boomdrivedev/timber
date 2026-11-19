@@ -313,7 +313,7 @@ mod tests {
         bound
             .apply(
                 &production,
-                &Verified::new(index.clone(), Version::new("1.0.0")),
+                &Verified::new(index.clone(), Version::new("1.0.0"), "v1.0.0"),
             )
             .unwrap();
         assert_eq!(bound.report(&production).unwrap().digest, index);

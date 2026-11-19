@@ -206,7 +206,7 @@ impl Cli {
         subcommand: &[&OsStr],
     ) -> Answer<(Vec<OsString>, Ran)> {
         let args = Cli::args(folder, at, subcommand);
-        let ran = self.dash0.ran(None, &args, DASH0_ENV)?;
+        let ran = self.dash0.ran(None, &args, DASH0_ENV, &[])?;
         Ok((args, ran))
     }
 

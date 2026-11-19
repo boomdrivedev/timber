@@ -662,10 +662,89 @@ fn the_channels_head_is_applied_and_the_answer_names_it_with_the_targets_report(
         apply.given,
         json!({
             "environment": handed(),
-            "version": Verified::new(second, Version::new("0.2.0")),
+            "version": Verified::new(second, Version::new("0.2.0"), "lib-v0.2.0"),
         }),
         "the target was handed another environment or version"
     );
+}
+
+#[test]
+fn the_verified_version_names_the_components_tag() {
+    // `web`, which declares the prefix `web-v`, tagged 1.1.0 at the head
+    // and grown by a feature since, so its next version is 1.2.0.
+    let mut world = World::new();
+    world.repo.tag("web-v1.1.0", &world.head);
+    world.repo.git(&["push", "-q", "origin", "web-v1.1.0"]);
+    let revision = world.repo.touch("feat: web grows", &["site"]);
+    world.fakes.landing.land(&world.main, &revision);
+    world.fakes.build.made(
+        &revision,
+        &OutputName::new("site"),
+        Report {
+            build: build_of("site", &revision),
+            outcome: Outcome::Pass,
+            files: vec!["dist/site.tar".into()],
+        },
+    );
+    let published = world
+        .publish_one(&timber_core::Ask {
+            revision: revision.clone(),
+            ..world.ask_for("web")
+        })
+        .unwrap();
+    let index = index_of(&published, "1.2.0");
+    attach(&world, &index, GATE, ClaimKind::Acceptance, json!({}));
+    world.fakes.signer.hold(&SignerId::new(GATE));
+    let web = of("web", "stable");
+    world.fakes.policy.require(
+        Audience::Channel(web.clone()),
+        Required::Channel {
+            claims: vec![wanted(ClaimKind::Acceptance, vec![gate()])],
+            bound_to: None,
+            promoted_by: vec![gate()],
+            approvers: vec![],
+        },
+    );
+    let promoted = promote(
+        &world.fakes.seams(),
+        &world.history(),
+        &PromoteAsk {
+            branch: world.main.clone(),
+            component: Some(ComponentName::new("web")),
+            channel: web.name.clone(),
+            to: To::Version(Version::new("1.2.0")),
+            from: None,
+            signer: SignerId::new(GATE),
+            at: AT,
+        },
+    );
+    assert!(promoted.is_ok(), "{promoted:?}");
+    world
+        .fakes
+        .policy
+        .declares_at(&revision, cache_on(web, Some("fake")));
+    let target = world.fakes.target(&fake());
+
+    let answer = applied_over(
+        &world,
+        &world.fakes.seams(),
+        &ApplyAsk {
+            component: Some(ComponentName::new("web")),
+            ..ask()
+        },
+    );
+    assert!(answer.is_ok(), "{answer:?}");
+    let apply = target
+        .calls()
+        .into_iter()
+        .find(|c| c.op == TargetOp::Apply)
+        .expect("the target was asked to apply");
+    assert_eq!(
+        apply.given["version"],
+        json!(Verified::new(index, Version::new("1.2.0"), "web-v1.2.0")),
+        "the target was handed another version or tag"
+    );
+    assert_eq!(apply.given["version"]["tag"], json!("web-v1.2.0"));
 }
 
 // Requirement: Apply does not apply what the environment already runs

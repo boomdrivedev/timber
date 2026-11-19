@@ -468,7 +468,8 @@ fn publish(layout: &Path, file: &Path, root: &str) -> Verified {
     )
     .unwrap();
     let index = store.put_artifact(&Manifest::Index(index)).unwrap().digest;
-    Verified::new(index, version)
+    let tag = format!("{}{version}", component.prefix);
+    Verified::new(index, version, tag)
 }
 
 /// Every file under `dir` but those under `except`, links unfollowed.
