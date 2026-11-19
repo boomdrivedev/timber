@@ -1682,6 +1682,13 @@ impl Policy for PolicyFile {
             .map_err(|said| self.unreadable(revision, said))?;
         Ok(resolved.environments)
     }
+
+    fn cache_kept(&self, _: &Revision) -> Answer<timber_seams::Keeping> {
+        Ok(timber_seams::Keeping {
+            days: 30,
+            given: true,
+        })
+    }
 }
 
 impl File {

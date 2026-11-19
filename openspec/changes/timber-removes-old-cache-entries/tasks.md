@@ -35,7 +35,7 @@ Read these before starting:
   - Give every implementer both, found by `grep -rln 'impl Store for' crates`. A wrapper delegates: `Unmade` in `profiles/store/mod.rs`, `Unopened` in `bindings/mod.rs` answering its own answer, and the test wrappers in `timber-core` and `timber-conformance`. Every other implementer answers both absent naming cache entries; tasks 2.1, 4.2 and 4.4 replace the fake store's, the registry's and the layout's.
   - A test in `store.rs`: `a_pushed_round_trips_through_json`.
   - Verify with `devenv shell -- cargo check --workspace --all-targets --all-features`, which builds every implementer.
-- [ ] 1.3 Add the policy's keeping time (design D1; seam-contracts spec, "The policy answers how long cache entries are kept").
+- [x] 1.3 Add the policy's keeping time (design D1; seam-contracts spec, "The policy answers how long cache entries are kept").
   - In `policy.rs`: `Keeping { days: u32, given: bool }`, serializable, and `Policy::cache_kept(&self, revision: &Revision) -> Answer<Keeping>`, its comment citing 145 and C.10.
   - Give every implementer it, found by `grep -rln 'impl Policy for' crates`: the test doubles answer thirty days given; tasks 2.2 and 3.1 replace the fake policy's and the policy file's.
   - A test in `policy.rs`: `a_keeping_round_trips_through_json`.

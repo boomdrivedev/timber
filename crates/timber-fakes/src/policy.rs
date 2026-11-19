@@ -269,6 +269,13 @@ impl Policy for FakePolicy {
                 .unwrap_or_default())
         })
     }
+
+    fn cache_kept(&self, _: &Revision) -> Answer<timber_seams::Keeping> {
+        Ok(timber_seams::Keeping {
+            days: 30,
+            given: true,
+        })
+    }
 }
 
 #[cfg(test)]

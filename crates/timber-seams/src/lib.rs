@@ -181,6 +181,9 @@ mod tests {
         fn environments(&self, _: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
             nothing(Seam::Policy, "environments")
         }
+        fn cache_kept(&self, _: &Revision) -> Answer<Keeping> {
+            nothing(Seam::Policy, "cache-kept")
+        }
     }
 
     impl Projection for Nowhere {

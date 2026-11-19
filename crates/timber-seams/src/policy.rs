@@ -234,6 +234,16 @@ pub struct DeclaredEnvironment {
     pub target: Option<TargetTable>,
 }
 
+/// 145: how long a repository keeps its cache entries from their push,
+/// in whole days, and whether that is the givens' time, thirty days,
+/// where the policy file writes none (C.10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Keeping {
+    pub days: u32,
+    /// The givens' time, where the file writes none.
+    pub given: bool,
+}
+
 pub trait Policy {
     /// 82: the claims `audience` requires, read from the repository at
     /// `revision`, a landed revision of the branch the policy governs
@@ -257,6 +267,12 @@ pub trait Policy {
     /// settings as written (C.10); an empty list, never absent, where it
     /// declares none.
     fn environments(&self, revision: &Revision) -> Answer<Vec<DeclaredEnvironment>>;
+
+    /// 145: how long the repository at `revision` keeps its cache
+    /// entries from their push, the repository's own and none of a
+    /// component's; the givens' thirty days where the policy writes none
+    /// or the revision holds no policy, answered given (C.10).
+    fn cache_kept(&self, revision: &Revision) -> Answer<Keeping>;
 }
 
 #[cfg(test)]
@@ -341,6 +357,18 @@ mod tests {
         round_trip(stable.clone());
         let json = serde_json::to_value(&stable).unwrap();
         assert_eq!(json["channel"]["approvers"][0]["id"], "release", "{json}");
+    }
+
+    #[test]
+    fn a_keeping_round_trips_through_json() {
+        round_trip(Keeping {
+            days: 30,
+            given: true,
+        });
+        round_trip(Keeping {
+            days: 0,
+            given: false,
+        });
     }
 
     #[test]
