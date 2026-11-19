@@ -472,6 +472,13 @@ in
   # itself runs the `gh` on PATH, the repository's own where a host runs
   # `timber apply` in its shell (rule core.26).
   env.TIMBER_TOOLS_GH_CLI = "${pkgs.gh}/bin/gh";
+  # The Nix cache target's proof against Cachix by hand (crates/timber/
+  # tests/cachix.rs, `check-cachix`) runs nixpkgs' cachix at devenv.lock's
+  # pin by this path, never the `cachix` on a person's path, so the cachix
+  # proved is the tree's; it is added to none of the shell's packages.
+  # timber itself runs the `cachix` on PATH, the repository's own where a
+  # host runs `timber apply` in its shell (rule core.26).
+  env.TIMBER_TOOLS_CACHIX_CLI = "${pkgs.cachix}/bin/cachix";
 
   # Claude Code's project files (ADR 0030, after agentplot/boomdrive's
   # record 0022): .mcp.json from the servers below and
