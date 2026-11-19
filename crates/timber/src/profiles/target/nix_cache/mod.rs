@@ -1,22 +1,31 @@
 //! The Nix cache target (C.12's Nix binary cache row), bound as
-//! `nix_cache`: a version's closures pushed to the fleet's Nix binary
-//! cache with attic, from the host that holds them, so a closure built on
-//! one host is realised on another from the cache alone.
+//! `nix_cache`: a version's closures pushed to a Nix binary cache, the
+//! fleet's with attic or one on Cachix with cachix, from the host that
+//! holds them, so a closure built on one host is realised on another from
+//! the cache alone.
 //!
 //! An environment names it in its `target` table, which names the cache
-//! as attic's own command names it, `<server>:<cache>`, and the outputs
-//! whose artifacts name closures, and nothing else (C.10; design D7):
+//! once and the outputs whose artifacts name closures, and nothing else
+//! (C.10; design D7; the Cachix change's design D3): an attic cache as
+//! attic's own command names it, `<server>:<cache>`, or a Cachix cache by
+//! its name on Cachix with `credential`, the name of the host's
+//! credential holding its token:
 //!
 //! ```toml
 //! [environments.swancloud-srv.cache]
 //! channel = "beta"
 //! target.nix_cache = { attic = "fleet:swancloud", closures = ["swancloud-srv"] }
+//!
+//! [environments.boomdrive.cachix-x86_64-linux]
+//! channel = "beta"
+//! target.nix_cache = { cachix = "boomdrive", credential = "cachix-boomdrive", closures = ["boomdrive-x86_64-linux"] }
 //! ```
 //!
-//! Any other key, an empty `closures`, or an `attic` that is not
-//! `<server>:<cache>` is unreadable naming the environment and the key,
-//! at every operation, so no token is written where timber reads (45,
-//! rule core.21).
+//! Any other key, both caches or neither, a `credential` beside `attic`,
+//! a `cachix` with none, an empty `closures`, or a cache or credential of
+//! another form is unreadable naming the environment and the key, at
+//! every operation, so no token is written where timber reads (45, rule
+//! core.21).
 //!
 //! A closure is one artifact naming its roots: a machine's build task
 //! leaves a file of its closure's root store paths, one per line, which
@@ -30,66 +39,100 @@
 //! valid in this host's Nix store with `nix-store --check-validity`,
 //! refusing the first it does not hold, naming it and the host: the host
 //! that applies is the host that built, and nothing is built, substituted
-//! or fetched (15, I3; design D8). Then `attic push <server>:<cache>
-//! <roots…>` pushes each root with its closure, skipping what the cache
-//! holds already. attic reads its servers and the environment's token
-//! from its own configuration on that host,
-//! `$XDG_CONFIG_HOME/attic/config.toml`, at the push: timber passes it no
-//! token, sets none of its variables and reads nothing of its
-//! configuration (45), and attic's words on a failure are the answer,
-//! unreadable, verbatim (59).
+//! or fetched (15, I3; design D8). Then the cache is pushed each root
+//! with its closure, skipping what it holds already, and the pushing
+//! tool's words on a failure are the answer, unreadable, verbatim (59).
+//!
+//! - **attic**: `attic push <server>:<cache> <roots…>`. attic reads its
+//!   servers and the environment's token from its own configuration on
+//!   that host, `$XDG_CONFIG_HOME/attic/config.toml`, at the push: timber
+//!   passes it no token, sets none of its variables and reads nothing of
+//!   its configuration (45).
+//! - **Cachix**: `cachix --config <folder>/cachix.dhall push <name>
+//!   <roots…>`. The token is the host's: the bindings file's
+//!   `[credentials]` names the path of the file holding it, by the name
+//!   the table's `credential` gives. `cachix` reads no token file, so
+//!   apply looks the credential's path up once the table is read, before
+//!   the store is asked anything, reads the file through the family's
+//!   [`token`](super::token) once every root is held, and hands the token
+//!   to that one run of `cachix` alone, in `CACHIX_AUTH_TOKEN`, writing it
+//!   nowhere (64, record 0044, rule core.21; the Cachix change's design
+//!   D5, D7). The run has every `CACHIX_*` variable of timber's own
+//!   environment removed, and its `--config` names a file never made, in
+//!   an empty folder the operation makes under the system's temporary
+//!   directory and removes when apply answers, so no token, signing key
+//!   or configuration of the host's own cachix,
+//!   `~/.config/cachix/cachix.dhall` among them, is read.
 //!
 //! A Nix binary cache holds store paths by their hash and keeps no name a
 //! marker could be held under, so current and report are unread, saying
 //! so and naming the cache, never the digest last pushed and never
-//! converged (119, 89, 98; design D9). desired answers the head the core
-//! hands it (88), and apply runs whenever it is asked.
+//! converged, and read no credential (119, 89, 98; design D9). desired
+//! answers the head the core hands it (88), and apply runs whenever it is
+//! asked.
 
 mod table;
 #[cfg(test)]
 mod tests;
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use timber_seams::{
     Answer, Digest, Environment, Head, Not, Running, Seam, Source, Store, Target, Verified, Why,
 };
 
 use super::nix_closure::{self, StorePath};
+use super::token::{self, Credential, Token};
+use crate::bindings::Credentials;
 use crate::profiles::run::Tool;
-use table::{Named, Table};
+use table::{Cache, Named, Table};
 
 /// The profile name an environment's `target` table names this target by.
 pub const PROFILE: &str = "nix_cache";
 
+/// The variables removed from cachix's run: every one of the host's own
+/// cachix settings, its token and its signing key among them.
+const CACHIX_ENV: &[&str] = &["CACHIX_*"];
+
+/// The variable cachix's run is handed the token in.
+const CACHIX_AUTH_TOKEN: &str = "CACHIX_AUTH_TOKEN";
+
 /// The Nix cache target, reading through a store binding of its own,
-/// opened and never made, and running attic and nix-store.
+/// opened and never made, and running attic, cachix and nix-store.
 pub struct NixCache {
     store: Box<dyn Store>,
+    credentials: Credentials,
     attic: Tool,
+    cachix: Tool,
     nix_store: Tool,
     source: Source,
 }
 
 impl NixCache {
-    /// The target reading through `store`, running `attic` and
-    /// `nix-store` as found on `PATH`.
-    pub fn new(store: Box<dyn Store>) -> NixCache {
-        NixCache::with_programs(store, "attic", "nix-store")
+    /// The target reading through `store`, with the token of each Cachix
+    /// cache the file of `credentials`, the host's, names, running
+    /// `attic`, `cachix` and `nix-store` as found on `PATH`.
+    pub fn new(store: Box<dyn Store>, credentials: &Credentials) -> NixCache {
+        NixCache::with_programs(store, credentials, "attic", "cachix", "nix-store")
     }
 
-    /// The target reading through `store`, running attic as `attic` and
-    /// nix-store as `nix_store`.
+    /// The target as [`NixCache::new`] makes it, running attic as
+    /// `attic`, cachix as `cachix` and nix-store as `nix_store`.
     pub fn with_programs(
         store: Box<dyn Store>,
+        credentials: &Credentials,
         attic: impl Into<PathBuf>,
+        cachix: impl Into<PathBuf>,
         nix_store: impl Into<PathBuf>,
     ) -> NixCache {
         NixCache {
             store,
+            credentials: credentials.clone(),
             attic: Tool::new(attic, NixCache::source()),
+            cachix: Tool::new(cachix, NixCache::source()),
             nix_store: Tool::new(nix_store, NixCache::source()),
             source: NixCache::source(),
         }
@@ -109,7 +152,7 @@ impl NixCache {
             Some(format!(
                 "the Nix binary cache {} holds store paths by their hash and keeps no marker of \
                  what was pushed to it",
-                table.attic
+                table.cache
             )),
         )
     }
@@ -143,10 +186,95 @@ impl NixCache {
     /// with its closure; timber passes it no token and sets none of its
     /// variables (45, rule core.21; design D7). attic's words on a
     /// failure are the answer, unreadable.
-    fn push(&self, attic: &str, roots: &[StorePath]) -> Answer<()> {
+    fn push_attic(&self, attic: &str, roots: &[StorePath]) -> Answer<()> {
         let mut args = vec!["push", attic];
         args.extend(roots.iter().map(StorePath::as_str));
         self.attic.output(None, &args, &[], &[], &[0]).map(|_| ())
+    }
+
+    /// `cachix --config <folder>/cachix.dhall push <name> <roots…>`, in a
+    /// folder of the operation's own under the system's temporary
+    /// directory, empty and removed once the run ends, whatever it
+    /// answered; the run has every `CACHIX_*` variable of timber's own
+    /// environment removed and `token` in `CACHIX_AUTH_TOKEN`, and in no
+    /// argument (45, 64, rule core.21; the Cachix change's design D5, D7).
+    /// cachix pushes each root with its closure, skipping what the cache
+    /// holds; its words on a failure are the answer, unreadable.
+    fn push_cachix(&self, name: &str, token: &Token, roots: &[StorePath]) -> Answer<()> {
+        let folder = tempfile::Builder::new()
+            .prefix("timber-cachix-")
+            .tempdir()
+            .map_err(|e| {
+                Not::unreadable(
+                    &self.source,
+                    format!(
+                        "a folder for a run of cachix under {}",
+                        std::env::temp_dir().display()
+                    ),
+                    Some(e.to_string()),
+                )
+            })?;
+        let config = folder.path().join("cachix.dhall");
+        let mut args: Vec<&OsStr> = vec![
+            OsStr::new("--config"),
+            config.as_os_str(),
+            OsStr::new("push"),
+            OsStr::new(name),
+        ];
+        args.extend(roots.iter().map(|root| OsStr::new(root.as_str())));
+        let set: [(&str, &OsStr); 1] = [(CACHIX_AUTH_TOKEN, OsStr::new(token.secret()))];
+        let pushed = self
+            .cachix
+            .output(None, &args, CACHIX_ENV, &set, &[0])
+            .map(|_| ());
+        drop(folder);
+        pushed
+    }
+
+    /// How apply pushes to `cache`: an attic cache, or a Cachix cache with
+    /// the path of the file holding its token, looked up in the host's
+    /// credentials by the name the table gives it, the file never opened
+    /// (118).
+    fn push_of<'a>(&'a self, environment: &Environment, cache: &'a Cache) -> Answer<Push<'a>> {
+        match cache {
+            Cache::Attic(attic) => Ok(Push::Attic(attic)),
+            Cache::Cachix { name, credential } => {
+                let named = Named(environment);
+                let path = token::path(
+                    &self.credentials,
+                    &cachix_credential(credential, &named),
+                    &self.source,
+                )?;
+                Ok(Push::Cachix {
+                    name,
+                    credential,
+                    path,
+                })
+            }
+        }
+    }
+}
+
+/// How apply pushes, as the table names its cache.
+enum Push<'a> {
+    /// `attic push`, to the cache `<server>:<cache>`.
+    Attic(&'a str),
+    /// `cachix push`, to the cache `name`, its token in the file at
+    /// `path` the credential `credential` names.
+    Cachix {
+        name: &'a str,
+        credential: &'a str,
+        path: &'a Path,
+    },
+}
+
+/// The Cachix cache's credential `name`, of the environment `of`, as this
+/// target names it in its answers.
+fn cachix_credential<'a>(name: &'a str, of: &'a Named<'a>) -> Credential<'a> {
+    Credential {
+        name,
+        of,
+        hands: "the nix_cache target hands cachix",
     }
 }
 
@@ -182,10 +310,13 @@ impl Target for NixCache {
 
     /// 90: the roots of every closure the table names, read from the
     /// version's index through the store, checked held in this host's Nix
-    /// store, and pushed with attic; nothing runs before every closure is
-    /// read, and attic does not run before every root is held.
+    /// store, and pushed with attic or cachix; a Cachix cache's credential
+    /// is looked up before the store is asked and its token read once
+    /// every root is held; nothing runs before every closure is read, and
+    /// neither attic nor cachix runs before every root is held.
     fn apply(&self, environment: &Environment, version: &Verified) -> Answer<()> {
         let table = Table::read(environment, &self.source)?;
+        let push = self.push_of(environment, &table.cache)?;
         let index = nix_closure::index(self.store.as_ref(), version, &self.source)?;
         let store_dir = nix_closure::store_dir();
         let mut roots: Vec<StorePath> = Vec::new();
@@ -199,7 +330,19 @@ impl Target for NixCache {
             }
         }
         self.held(&roots)?;
-        self.push(&table.attic, &roots)
+        match push {
+            Push::Attic(attic) => self.push_attic(attic, &roots),
+            Push::Cachix {
+                name,
+                credential,
+                path,
+            } => {
+                let named = Named(environment);
+                let token =
+                    token::read(path, &cachix_credential(credential, &named), &self.source)?;
+                self.push_cachix(name, &token, &roots)
+            }
+        }
     }
 
     fn report(&self, environment: &Environment) -> Answer<Running> {
