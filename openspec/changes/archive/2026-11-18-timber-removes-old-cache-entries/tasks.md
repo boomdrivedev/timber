@@ -134,7 +134,7 @@ Read these before starting:
 
 ## 9. The specs
 
-- [ ] 9.1 Archive the change once groups 1 to 8 are done: `devenv shell -- openspec archive timber-removes-old-cache-entries --yes`. Then commit the archived change and the ten specs it writes. Verify with `devenv shell -- openspec validate cache-keeping --type spec --strict`.
+- [x] 9.1 Archive the change once groups 1 to 8 are done: `devenv shell -- openspec archive timber-removes-old-cache-entries --yes`. Then commit the archived change and the ten specs it writes. Verify with `devenv shell -- openspec validate cache-keeping --type spec --strict`.
 
 ## Workflow follow-up
 
