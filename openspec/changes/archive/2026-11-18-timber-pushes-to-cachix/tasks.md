@@ -38,7 +38,7 @@ each task's check is its own.
 
 ## 5. The specs
 
-- [ ] 5.1 Archive the change once groups 1 to 4 are done, so `openspec/specs/` takes its deltas to `nix-cache-target` and `conformance-suite`: `devenv shell -- openspec archive timber-pushes-to-cachix --yes`. Then commit the archived change and the specs it writes. Verify with `devenv shell -- openspec validate nix-cache-target --type spec --strict`.
+- [x] 5.1 Archive the change once groups 1 to 4 are done, so `openspec/specs/` takes its deltas to `nix-cache-target` and `conformance-suite`: `devenv shell -- openspec archive timber-pushes-to-cachix --yes`. Then commit the archived change and the specs it writes. Verify with `devenv shell -- openspec validate nix-cache-target --type spec --strict`.
 
 ## Workflow follow-up
 
