@@ -9,8 +9,11 @@
 # files set-version.sh lists. It refuses a tree that differs from its
 # commit and a version that is not major.minor.patch, moving nothing. The
 # flake versions its package by Cargo.toml's [workspace.package] alone.
-# And CI's workflow releases from the release commit: the version job
-# reckons with --unreleased, makes the commit and hands on its id; the
+# And CI's workflow releases from the release commit: its runs of pushes
+# go one at a time in one group, queued and never cancelled for a later
+# push's, and no job names a group of its own, which would wait on its
+# own run; the version job reckons with next-version.sh, which
+# root:next-version tests, makes the commit and hands on its id; the
 # binaries job makes it again, holds it to that id and builds it with
 # nothing given; the release job does too, tags it, pushes the tag alone
 # and publishes on it; the build job holds main to 0.0.0; and the
@@ -208,9 +211,9 @@ names build '"timber 0.0.0, revision $(git rev-parse HEAD), built by "*)' \
 names conventional "git tag --list 'v*' --sort=-v:refname" "starts at no newest tag by version"
 lacks conventional 'git describe' "starts at git describe's tag, on main's history"
 
-# version: reckons with --unreleased, makes the release commit and hands
-# on its id.
-names version 'git-cliff --unreleased --bumped-version' "reckons the version otherwise than from the newest tag"
+# version: reckons with next-version.sh, makes the release commit and
+# hands on its id.
+names version 'sh next-version.sh' "reckons the version otherwise than by next-version.sh"
 names version 'sh release-commit.sh "${tag#v}"' "makes no release commit"
 names version 'tag: ${{ steps.next.outputs.tag }}' "hands on no tag"
 names version 'commit: ${{ steps.next.outputs.commit }}' "hands on no commit"
@@ -250,5 +253,20 @@ lacks release '--force' "forces a push"
 names release 'gh release create "$TAG" --verify-tag' "publishes on no tag it verifies"
 lacks release '--target' "publishes at a target, not the tag"
 
-[ "$status" -ne 0 ] || echo "release: release-commit.sh makes one release commit wherever it runs, a build takes timber's version from its tree alone, and CI releases from the release commit"
+# The whole workflow: a push's run waits for the one before it, in one
+# group, so its version job reckons from the tags the release before it
+# pushed; a pull request's run waits for none. A job's group of its own
+# would wait on its own run.
+group="group: \${{ github.event_name == 'push' && 'release' || format('pull-request-{0}', github.run_id) }}"
+concurrency=$(awk '/^concurrency:$/ { on = 1; next } on && /^[^ ]/ { exit } on { sub(/^ +/, ""); print }' "$ci")
+printf '%s\n' "$concurrency" | grep -qxF -- "$group" ||
+  fail "$ci puts the runs of pushes in no one group: no concurrency's $group"
+printf '%s\n' "$concurrency" | grep -qxF -- 'cancel-in-progress: false' ||
+  fail "$ci cancels a push's run for a later push's: no concurrency's cancel-in-progress: false"
+if grep -nE '^    concurrency:' "$ci" >"$scratch/said"; then
+  fail "$ci has a job that names a group of its own, which waits on its own run:"
+  cat "$scratch/said" >&2
+fi
+
+[ "$status" -ne 0 ] || echo "release: release-commit.sh makes one release commit wherever it runs, a build takes timber's version from its tree alone, and CI releases from the release commit, one push at a time"
 exit $status

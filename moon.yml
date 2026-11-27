@@ -135,3 +135,13 @@ tasks:
     inputs: ['/set-version.sh', '/release-commit.sh', '/check-release.sh', '/Cargo.toml', '/Cargo.lock', '/plugins/claude-code/.claude-plugin/plugin.json', '/plugins/herdr/herdr-plugin.toml', '/.github/workflows/ci.yml', '/flake.nix', '/devenv.nix', '/devenv.lock']
     tags: [check-fast]
     options: {runFromWorkspaceRoot: true}
+  # The next version, reckoned by next-version.sh on scratch repositories
+  # laid out as the releases lay out timber's: a second push reckoned once
+  # the first's tag is pushed is the next version, and a run whose commit
+  # a later release already holds releases nothing (check-next-version.sh).
+  # git-cliff is devenv's (core.26), and it needs no credential (core.38).
+  next-version:
+    command: 'sh check-next-version.sh'
+    inputs: ['/next-version.sh', '/check-next-version.sh', '/cliff.toml', '/devenv.nix', '/devenv.lock']
+    tags: [check-fast]
+    options: {runFromWorkspaceRoot: true}
