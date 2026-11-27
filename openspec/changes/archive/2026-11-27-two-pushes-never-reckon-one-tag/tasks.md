@@ -11,5 +11,5 @@ Each check runs through sluice: `sluice exec main -- <command>`.
 
 ## 2. The change
 
-- [ ] 2.1 Run `openspec validate two-pushes-never-reckon-one-tag --strict`. Check: `sluice exec main -- moon run root:specs root:changes`.
-- [ ] 2.2 Archive the change with `openspec archive two-pushes-never-reckon-one-tag`.
+- [x] 2.1 Run `openspec validate two-pushes-never-reckon-one-tag --strict`. Check: `sluice exec main -- moon run root:specs root:changes`.
+- [x] 2.2 Archive the change with `openspec archive two-pushes-never-reckon-one-tag`.
