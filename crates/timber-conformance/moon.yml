@@ -13,8 +13,12 @@ tasks:
   # register, each registered clause printed as pending on every run, pass
   # or fail (core.33, ADR 0012). Its output is buffered and shown when the
   # task ends, set here so a later default cannot hide the pending lines.
+  # It builds `coverage` in a target folder of its own: `test` builds it
+  # too, for the integration tests, and cargo writes `target/debug/coverage`
+  # again at each build (root:targets).
   coverage:
     command: 'cargo run -q -p timber-conformance --bin coverage'
     inputs: ['/crates/timber-conformance/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/coverage'}
     tags: [check-fast]
     options: {runFromWorkspaceRoot: true, outputStyle: 'buffer'}
