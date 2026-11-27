@@ -17,6 +17,17 @@ on:
     branches: [main]
   pull_request:
 
+# The runs of pushes to main go one at a time, in the order they were
+# pushed, each waiting for the one before it to end: so a run's version
+# job reckons from the tags the release before it pushed, and two pushes
+# never reckon one tag. GitHub keeps one run waiting: a push that comes
+# while one waits takes its place, and the run it replaces is cancelled,
+# its commits released by the later run, whose range runs from the newest
+# tag. A pull request's run waits for no other.
+concurrency:
+  group: ${{ github.event_name == 'push' && 'release' || format('pull-request-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -93,9 +104,10 @@ jobs:
           last="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
           nix shell --inputs-from . nixpkgs#convco -c convco check ${last:+"$last..HEAD"}
 
-  # The next version from the commits since the newest v* tag, whose range
-  # `--unreleased` starts at that tag, off main's history; empty when it is
-  # already tagged. Where it is new, the release commit of it, whose id
+  # The next version from the commits since the newest v* tag, the tags
+  # the run holds as it starts, whose range `--unreleased` starts at that
+  # tag, off main's history; empty when it is already tagged
+  # (next-version.sh). Where it is new, the release commit of it, whose id
   # the binaries and release jobs make again and hold theirs to.
   version:
     if: github.event_name == 'push'
@@ -110,10 +122,8 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - id: next
         run: |
-          tag="$(nix shell --inputs-from . nixpkgs#git-cliff -c git-cliff --unreleased --bumped-version)"
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "$tag is already released"
-          else
+          tag="$(nix shell --inputs-from . nixpkgs#git-cliff -c sh next-version.sh)"
+          if [ -n "$tag" ]; then
             sh release-commit.sh "${tag#v}"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -181,7 +191,6 @@ jobs:
   release:
     needs: [version, binaries]
     runs-on: ubuntu-latest
-    concurrency: release
     permissions:
       contents: write
     steps:
