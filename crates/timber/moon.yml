@@ -3,6 +3,13 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'rust'
 dependsOn: [seams, core, fakes, conformance]
 
+# Each task that builds the binary builds it in a target folder of its
+# own: cargo writes `target/debug/timber` again at each build, one with
+# nothing to do among them, and a gate runs its tasks at once in one
+# checkout, so a test that runs the binary while another task's cargo
+# writes it finds no file there, or finds a binary of other features.
+# `test` keeps cargo's `target`; root:targets holds the tasks to this.
+
 tasks:
   # The crate's tests over the fakes and git alone, herdr_documents among
   # them, which compares the herdr plugin's documents with the binary's,
@@ -24,6 +31,7 @@ tasks:
   tools:
     command: 'cargo test -p timber --features tools --test build_moon --test landing_sluice --test landings_end_to_end --test laptop --test moon_cache --test registry_store --test push_after_landing --test one_host --test pool_run_publish --test cargo_projection --test cargo_served --test npm_projection --test npm_served --test nix_cache'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/tools'}
     tags: [check-tools]
     options: {runFromWorkspaceRoot: true}
   # The registry store's group and the cache manifest's scenarios against
@@ -36,6 +44,7 @@ tasks:
   tools-ecr:
     command: 'cargo test -p timber --features tools --test registry_ecr'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_ECR']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/tools-ecr'}
     tags: [check-ecr]
     options: {runFromWorkspaceRoot: true}
   # The registry store's group, the cache manifest's scenarios, and a
@@ -50,6 +59,7 @@ tasks:
   tools-ghcr:
     command: 'cargo test -p timber --features tools --test registry_ghcr'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_GHCR']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/tools-ghcr'}
     tags: [check-ghcr]
     options: {runFromWorkspaceRoot: true}
   # The key service signer's group against the KMS keys the host names in
@@ -62,6 +72,7 @@ tasks:
   kms:
     command: 'cargo test -p timber --features tools --test kms_account'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_KMS_KEY', '$TIMBER_TOOLS_KMS_STRANGER']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/kms'}
     tags: [check-kms]
     options: {runFromWorkspaceRoot: true}
   # The clan push profile's target group, and an apply of two versions
@@ -75,6 +86,7 @@ tasks:
   fleet:
     command: 'cargo test -p timber --features tools --test nix_fleet_push'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_FLEET']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/fleet'}
     tags: [check-fleet]
     options: {runFromWorkspaceRoot: true}
   # The Dash0 target's group, and applies of three versions with a
@@ -89,6 +101,7 @@ tasks:
   dash0:
     command: 'cargo test -p timber --features tools --test dash0'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_DASH0']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/dash0'}
     tags: [check-dash0]
     options: {runFromWorkspaceRoot: true}
   # The GitHub release target's group, and applies of three versions, one
@@ -103,6 +116,7 @@ tasks:
   github-release:
     command: 'cargo test -p timber --features tools --test github_release'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_GITHUB_RELEASE']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/github-release'}
     tags: [check-github-release]
     options: {runFromWorkspaceRoot: true}
   # The Nix cache target's proof against Cachix: a closure new to the
@@ -118,5 +132,6 @@ tasks:
   cachix:
     command: 'cargo test -p timber --features tools --test cachix'
     inputs: ['/crates/timber/**/*', '/crates/timber-seams/**/*', '/crates/timber-core/**/*', '/crates/timber-fakes/**/*', '/crates/timber-conformance/**/*', '/Cargo.toml', '/Cargo.lock', '/devenv.nix', '/devenv.lock', '/.prototools', '$TIMBER_TOOLS_CACHIX']
+    env: {CARGO_TARGET_DIR: '$workspaceRoot/target/cachix'}
     tags: [check-cachix]
     options: {runFromWorkspaceRoot: true}
