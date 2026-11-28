@@ -45,6 +45,8 @@ use crate::{render, Binding, REVISION};
 
 pub mod host;
 pub mod page;
+#[cfg(test)]
+mod serving_process;
 
 use host::{Host, Serving, SERVING_NAME};
 
