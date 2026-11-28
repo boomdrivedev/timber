@@ -3394,6 +3394,7 @@ dependencies = [
  "clap",
  "docker_credential",
  "flate2",
+ "git2",
  "glob",
  "http 1.5.0",
  "libc",

@@ -46,6 +46,7 @@ tools = []
 
 [dev-dependencies]
 timber-fakes = { path = "../timber-fakes" }
+git2.workspace = true
 timber-conformance = { path = "../timber-conformance" }
 aws-credential-types.workspace = true
 aws-smithy-http-client = { workspace = true, features = ["test-util"] }

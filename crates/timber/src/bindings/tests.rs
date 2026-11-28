@@ -977,17 +977,15 @@ fn a_key_service_host_asking_status_binds_both_verify_only_reaching_no_service()
     );
 }
 
-/// A repository in the host's directory, made with git, and its path.
+/// A repository in the host's directory on `main`, made in the test's
+/// own process, and its path.
 fn repository(host: &Host) -> PathBuf {
     let repo = host.dir.path().join("repo");
-    let made = std::process::Command::new("git")
-        .args(["init", "-q", "-b", "main"])
-        .arg(&repo)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(made.success());
+    git2::Repository::init_opts(
+        &repo,
+        git2::RepositoryInitOptions::new().initial_head("main"),
+    )
+    .unwrap();
     repo.canonicalize().unwrap()
 }
 
@@ -1831,28 +1829,25 @@ fn the_policy_command_binds_no_store_and_no_signer_whatever_the_file_names() {
 /// commit.
 fn committed(host: &Host, origin: Option<&Path>) -> (PathBuf, timber_seams::Revision) {
     let repo = repository(host);
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_NAME", "A. Uthor")
-            .env("GIT_AUTHOR_EMAIL", "author@example.com")
-            .env("GIT_COMMITTER_NAME", "A. Uthor")
-            .env("GIT_COMMITTER_EMAIL", "author@example.com")
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {out:?}");
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-    git(&["commit", "-q", "--allow-empty", "-m", "feat: a start"]);
+    let git = git2::Repository::open(&repo).unwrap();
+    let tree = git
+        .find_tree(git.index().unwrap().write_tree().unwrap())
+        .unwrap();
+    let author = git2::Signature::now("A. Uthor", "author@example.com").unwrap();
+    let head = git
+        .commit(
+            Some("HEAD"),
+            &author,
+            &author,
+            "feat: a start\n",
+            &tree,
+            &[],
+        )
+        .unwrap();
     if let Some(origin) = origin {
-        git(&["remote", "add", "origin", origin.to_str().unwrap()]);
+        git.remote("origin", origin.to_str().unwrap()).unwrap();
     }
-    let head = git(&["rev-parse", "HEAD"]);
-    (repo, timber_seams::Revision::new(head))
+    (repo, timber_seams::Revision::new(head.to_string()))
 }
 
 #[test]
@@ -2138,31 +2133,22 @@ const STABLE_REF: &str = "refs/timber/ledger/stable";
 /// remote holds a checkout's refs, and its path.
 fn bare(host: &Host, name: &str) -> PathBuf {
     let at = host.dir.path().join(format!("{name}.git"));
-    let made = std::process::Command::new("git")
-        .args(["init", "-q", "--bare", "-b", "main"])
-        .arg(&at)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(made.success());
+    git2::Repository::init_opts(
+        &at,
+        git2::RepositoryInitOptions::new()
+            .bare(true)
+            .initial_head("main"),
+    )
+    .unwrap();
     at
 }
 
 /// The commit `name` names in the repository at `git_dir`, a checkout
 /// or a bare one, or none where it names none.
 fn ref_at(git_dir: &Path, name: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(git_dir)
-        .args(["rev-parse", "--verify", "--quiet", name])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    out.status
-        .success()
-        .then(|| String::from_utf8(out.stdout).unwrap().trim().to_string())
+    let git = git2::Repository::open(git_dir).unwrap();
+    let found = git.revparse_single(name).ok();
+    found.map(|object| object.id().to_string())
 }
 
 /// The first promotion of `stable`, signed as the gate.
