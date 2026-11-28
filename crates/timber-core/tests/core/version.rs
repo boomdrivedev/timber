@@ -1,9 +1,7 @@
 //! Spec component-versions: the version a landed revision takes per
 //! component, from the history alone.
 
-mod common;
-
-use common::{landed, Fixture, Repo};
+use crate::common::{landed, Fixture, Repo};
 use semver::Version;
 use timber_core::{
     claim, derive, touched, Declared, Derived, Kind, Landed, Rule, Versioned, POLICY_FILE,
@@ -75,9 +73,9 @@ fn a_tag_another_publisher_claimed_is_the_last_release() {
     let shared = fixture.bare("shared.git");
     let first = fixture.clone_of(&shared, "first");
     let rev = first.touch("feat: lib", &["crates/lib"]);
-    first.git(&["push", "-q", "origin", "main"]);
+    first.push(&["refs/heads/main"]);
     first.tag("lib-v1.2.3", &rev);
-    first.git(&["push", "-q", "origin", "refs/tags/lib-v1.2.3"]);
+    first.push(&["refs/tags/lib-v1.2.3"]);
 
     let second = fixture.clone_of(&shared, "second");
     second.git(&["tag", "-d", "lib-v1.2.3"]);

@@ -1,12 +1,14 @@
 //! Spec publishing: one landed revision turned into a version of each
 //! component it publishes, over the fakes and a shared history.
 
-mod common;
-mod world;
-
+use crate::world;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::world::{
+    build_of, build_ops, by_host, eco, output, published_before_notes, version_of, Watched, World,
+    HOST, LANDING,
+};
 use timber_core::carry::{Rooted, VersionCarried};
 use timber_core::{
     answer_json, layout_policy_body, publish, Ask, Kept, Provenance, Published, BOUND, NOTES,
@@ -21,10 +23,6 @@ use timber_seams::{
     Name, NamedSigner, Not, Outcome, Output, PackAt, Packed, Pin, Pinned, Projection, Put, Range,
     Rendered, Request, Required, RequiredClaim, Requirement, Response, Seam, SignerId, Source,
     Store, TargetProfile, Version, Why,
-};
-use world::{
-    build_of, build_ops, by_host, eco, output, published_before_notes, version_of, Watched, World,
-    HOST, LANDING,
 };
 
 fn refused(answer: Answer<Published>) -> timber_seams::Refusal {

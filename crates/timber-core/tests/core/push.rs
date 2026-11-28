@@ -4,20 +4,17 @@
 //! pass, over the fakes, offering nothing and keeping nothing (design
 //! D1, D2).
 
-mod common;
-mod world;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::world::{eco, World, LANDING};
 use timber_core::cache::Written;
 use timber_core::{
     answer_json, cache_name, push, push_left, LeftAsk, Push, PushAsk, PushedLeft, BOUND,
 };
 use timber_fakes::{BuildOp, Fault, LandingOp, ProjectionOp, StoreOp, Times};
 use timber_seams::{Answer, BuildId, Held, Left, Not, Outcome, Seam, Why};
-use world::{eco, World, LANDING};
 
 fn ask(world: &World) -> PushAsk {
     PushAsk {

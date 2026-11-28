@@ -2,9 +2,7 @@
 //! fakes, and a move read and carried at a publish's start (C.1, 22, 103,
 //! 105; design D3 to D5, D7, D8).
 
-mod common;
-mod world;
-
+use crate::world::World;
 use serde_json::json;
 use timber_core::carry::{self, ChannelCarried, Marked, Root, Rooted, VersionCarried};
 use timber_core::{Declared, Landed, ROOT_REF};
@@ -16,7 +14,6 @@ use timber_seams::{
     Promotion, RepositoryName, Required, Revision, Satisfied, Seam, Signature, SignerId, Source,
     Store, Version, Why, IN_TOTO,
 };
-use world::World;
 
 fn root(owner: &str, name: &str) -> RepositoryName {
     RepositoryName {

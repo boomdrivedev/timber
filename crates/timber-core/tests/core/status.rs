@@ -2,12 +2,12 @@
 //! and status answered from it alone; and spec channel-status: every
 //! channel the policy declares, read from the ledger alone, beside it.
 
-mod common;
-mod world;
-
+use crate::common;
+use crate::world;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::world::{World, HOST};
 use timber_core::{
     overview, row, status, Ask, Channel, ChannelStatus, Entry, EnvironmentCounts, Filter, Head,
     HeadAt, History, Kept, Logged, Noted, Overview, OverviewAsk, Published, RepositoryName, Shown,
@@ -19,7 +19,6 @@ use timber_seams::{
     Manifest, Moved, Moves, Not, Outcome, Promotion, Read, Required, Revision, Satisfied, Seam,
     Signer, SignerId, Source, Store, TargetProfile, Version, Why,
 };
-use world::{World, HOST};
 
 fn files(dir: &Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTime)> {
     let mut found = Vec::new();

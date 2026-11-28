@@ -3,9 +3,7 @@
 //! asked of the core over the fakes at the branch's landed head, each part
 //! and each channel its own answer.
 
-mod common;
-mod world;
-
+use crate::world::World;
 use timber_core::{answer_json, in_force, ChannelInForce, ChannelsInForce, InForce, InForceAsk};
 use timber_fakes::{FakePolicy, LandingOp, PolicyOp, PROFILE};
 use timber_seams::{
@@ -13,7 +11,6 @@ use timber_seams::{
     DeclaredEnvironment, HeldChannel, Keeping, Moves, Not, Policy, PolicyChannels, Required,
     RequiredClaim, Revision, Seam, Seams, Source, TargetProfile, Why,
 };
-use world::World;
 
 /// The channel `name` of `component`, as the world declares components
 /// (125).

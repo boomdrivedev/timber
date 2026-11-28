@@ -1,11 +1,15 @@
-//! Repositories made with the git command in a temporary directory, by a
-//! fixed author, for the core's tests over real history (design D8).
+//! Repositories in a temporary directory, made, committed to, tagged and
+//! pushed in the test's own process with libgit2, by a fixed author, for
+//! the core's tests over real history (design D8). [`git`] runs the git
+//! command for the few states a test makes that the fixture does not.
 
 #![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature};
 
 use tempfile::TempDir;
 use timber_core::{History, Landed};
@@ -94,34 +98,49 @@ impl Fixture {
     /// A new repository with a working tree, on `main`.
     pub fn repo(&self, name: &str) -> Repo {
         let path = self.path(name);
-        git(self.root.path(), &["init", "-q", "-b", "main", name]);
+        Repository::init_opts(&path, RepositoryInitOptions::new().initial_head("main")).unwrap();
         Repo { path }
     }
 
     /// A new bare repository, the history every publisher shares.
     pub fn bare(&self, name: &str) -> Repo {
         let path = self.path(name);
-        git(
-            self.root.path(),
-            &["init", "-q", "--bare", "-b", "main", name],
-        );
+        Repository::init_opts(
+            &path,
+            RepositoryInitOptions::new().bare(true).initial_head("main"),
+        )
+        .unwrap();
         Repo { path }
     }
 
     /// A clone of `from` named `name`, its `main` following `origin`.
     pub fn clone_of(&self, from: &Repo, name: &str) -> Repo {
         let path = self.path(name);
-        git(
-            self.root.path(),
-            &["clone", "-q", from.path.to_str().unwrap(), name],
-        );
-        let repo = Repo { path };
-        // A clone of an empty repository sets no upstream; a clone of one
-        // holding `main` would.
-        repo.git(&["config", "branch.main.remote", "origin"]);
-        repo.git(&["config", "branch.main.merge", "refs/heads/main"]);
-        repo
+        let cloned = git2::build::RepoBuilder::new()
+            .clone(from.path.to_str().unwrap(), &path)
+            .unwrap();
+        // A clone of an empty repository is on no branch and sets no
+        // upstream; git's, of one whose HEAD names `main`, is on `main`.
+        cloned.set_head("refs/heads/main").unwrap();
+        let mut config = cloned.config().unwrap();
+        config.set_str("branch.main.remote", "origin").unwrap();
+        config
+            .set_str("branch.main.merge", "refs/heads/main")
+            .unwrap();
+        Repo { path }
     }
+}
+
+/// The fixed author, committing now.
+fn author() -> Signature<'static> {
+    Signature::now("A. Uthor", "author@example.com").unwrap()
+}
+
+/// `message` as `git commit -m` and `git tag -m` keep it: trailing
+/// whitespace and surrounding blank lines stripped, one newline at its
+/// end.
+fn cleaned(message: &str) -> String {
+    git2::message_prettify(message, None).unwrap()
 }
 
 impl Repo {
@@ -129,16 +148,31 @@ impl Repo {
         git(&self.path, args)
     }
 
+    fn open(&self) -> Repository {
+        Repository::open(&self.path).unwrap()
+    }
+
     /// A commit with `message` writing each file, and its revision.
     pub fn commit(&self, message: &str, files: &[(&str, &str)]) -> Revision {
+        let repo = self.open();
+        let mut index = repo.index().unwrap();
         for (file, contents) in files {
             let at = self.path.join(file);
             fs::create_dir_all(at.parent().unwrap()).unwrap();
             fs::write(&at, contents).unwrap();
-            self.git(&["add", "--", file]);
+            index
+                .add_all([file], IndexAddOption::DEFAULT, None)
+                .unwrap();
         }
-        self.git(&["commit", "-q", "--allow-empty", "-m", message]);
-        self.head()
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let parent = repo.head().ok().map(|h| h.peel_to_commit().unwrap());
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let sig = author();
+        let made = repo
+            .commit(Some("HEAD"), &sig, &sig, &cleaned(message), &tree, &parents)
+            .unwrap();
+        Revision::new(made.to_string())
     }
 
     /// A commit with `message` changing one file under each of `paths`.
@@ -155,57 +189,56 @@ impl Repo {
     }
 
     pub fn head(&self) -> Revision {
-        Revision::new(self.git(&["rev-parse", "HEAD"]))
+        let repo = self.open();
+        let head = repo.head().unwrap().peel_to_commit().unwrap().id();
+        Revision::new(head.to_string())
     }
 
     /// A lightweight tag `name` at `at`.
     pub fn tag(&self, name: &str, at: &Revision) {
-        self.git(&["tag", name, at.as_str()]);
+        let repo = self.open();
+        let target = repo
+            .find_object(Oid::from_str(at.as_str()).unwrap(), None)
+            .unwrap();
+        repo.tag_lightweight(name, &target, false).unwrap();
     }
 
     /// An annotated tag `name` at `at`.
     pub fn annotated(&self, name: &str, at: &Revision) {
-        self.git(&["tag", "-a", "-m", name, name, at.as_str()]);
+        let repo = self.open();
+        let target = repo
+            .find_object(Oid::from_str(at.as_str()).unwrap(), None)
+            .unwrap();
+        repo.tag(name, &target, &author(), &cleaned(name), false)
+            .unwrap();
+    }
+
+    /// `refs` pushed to `origin`, each to the ref of its own name.
+    pub fn push(&self, refs: &[&str]) {
+        let repo = self.open();
+        let specs: Vec<String> = refs.iter().map(|r| format!("{r}:{r}")).collect();
+        repo.find_remote("origin")
+            .unwrap()
+            .push(&specs, None)
+            .unwrap();
     }
 
     /// The revision the tag `name` names, peeled, or none.
     pub fn tag_at(&self, name: &str) -> Option<String> {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&self.path)
-            .args([
-                "rev-parse",
-                "-q",
-                "--verify",
-                &format!("refs/tags/{name}^{{commit}}"),
-            ])
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .output()
-            .unwrap();
-        out.status
-            .success()
-            .then(|| String::from_utf8(out.stdout).unwrap().trim().to_string())
+        let repo = self.open();
+        let found = repo.revparse_single(&format!("refs/tags/{name}^{{commit}}"));
+        found.ok().map(|commit| commit.id().to_string())
     }
 
     /// The day `at` was committed, in UTC, as a template's date filter
     /// prints its time.
     pub fn day(&self, at: &Revision) -> String {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&self.path)
-            .args([
-                "show",
-                "-s",
-                "--date=format-local:%Y-%m-%d",
-                "--format=%cd",
-                at.as_str(),
-            ])
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("TZ", "UTC")
-            .output()
+        let repo = self.open();
+        let commit = repo
+            .find_commit(Oid::from_str(at.as_str()).unwrap())
             .unwrap();
-        assert!(out.status.success());
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
+        let seconds = u64::try_from(commit.committer().when().seconds()).unwrap();
+        timber_seams::utc(seconds)[..10].to_string()
     }
 
     pub fn history(&self) -> History {

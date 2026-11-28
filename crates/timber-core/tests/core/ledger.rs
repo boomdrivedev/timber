@@ -2,12 +2,11 @@
 //! versions of `lib` published in the test, each carrying the gate's
 //! acceptance and a second signer's rebuild.
 
-mod common;
-mod world;
-
+use crate::world;
 use std::cell::Cell;
 use std::rc::Rc;
 
+use crate::world::{build_of, version_of, World};
 use serde_json::json;
 use timber_core::ledger::judge;
 use timber_core::{
@@ -21,7 +20,6 @@ use timber_seams::{
     Outcome, OutputName, Promotion, Read, Report, Required, RequiredClaim, Satisfied, Seam, Seams,
     Signature, Signer, SignerId, Store, Version, Why,
 };
-use world::{build_of, version_of, World};
 
 /// The identity the host signs promotions as, which the policy names
 /// for acceptance and promotion (108).

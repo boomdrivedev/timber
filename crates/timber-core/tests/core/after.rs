@@ -4,12 +4,10 @@
 //! rebuild, and `stable` promoted between them (record 0028's design D8),
 //! its reports counted newest first (design D3).
 
-mod common;
-mod world;
-
 use std::cell::Cell;
 use std::rc::Rc;
 
+use crate::world::{build_of, version_of, World};
 use serde_json::{json, Value};
 use timber_core::{newest, promote, Newest, PromoteAsk, Published, Reported, To};
 use timber_fakes::{FakeSigner, Fault, StoreOp, Times};
@@ -18,7 +16,6 @@ use timber_seams::{
     Digest, Envelope, EnvironmentName, Made, NamedSigner, Not, Outcome, OutputName, Report,
     Required, RequiredClaim, Seam, Seams, Signer, SignerId, Source, Store, Version, Why,
 };
-use world::{build_of, version_of, World};
 
 /// The identity the host signs promotions as, which the policy names
 /// for acceptance and promotion (108).

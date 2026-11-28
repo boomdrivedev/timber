@@ -1,13 +1,12 @@
 //! Spec attestation-verification: which signer the policy names made
 //! each attestation on a version, over a version published in the test.
 
-mod common;
-mod world;
-
+use crate::world;
 use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
 
+use crate::world::{build_of, World, HOST, LANDING};
 use serde_json::json;
 use timber_core::{verify, Published, Told, Verified, VerifiedNotes, VerifyAsk, NOTES};
 use timber_fakes::{Fault, LandingOp, PolicyOp, SignerOp, StoreOp, Times};
@@ -17,7 +16,6 @@ use timber_seams::{
     Outcome, Policy, PolicyChannels, Required, RequiredClaim, Revision, Seam, SignerId, Store,
     Version, Why,
 };
-use world::{build_of, World, HOST, LANDING};
 
 fn named(id: &str, kinds: &[ClaimKind], checks: &[&str]) -> NamedSigner {
     NamedSigner {

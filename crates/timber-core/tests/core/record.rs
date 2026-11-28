@@ -1,19 +1,17 @@
 //! Spec host-record: the host's record rebuilt from the store and git to
 //! the same state, over the fakes and a real history (design D3).
 
-mod common;
-mod world;
-
+use crate::world;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use crate::world::{build_of, output, store, World};
 use timber_core::{
     answer_json, rebuild, Ask, Entry, Filter, Noted, Published, RebuildAsk, Rebuilt, Written, BOUND,
 };
 use timber_fakes::{Fault, StoreOp, Times};
 use timber_seams::{Branch, Digest, Name, Not, Outcome, Report, Revision, Store, Why};
-use world::{build_of, output, store, World};
 
 fn files(dir: &Path) -> Vec<(PathBuf, Vec<u8>, SystemTime)> {
     let mut found = Vec::new();

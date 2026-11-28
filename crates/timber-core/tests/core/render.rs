@@ -1,8 +1,7 @@
 //! Consumer layouts rendered under a policy, over the fakes (design D2
 //! to D7).
 
-mod common;
-
+use crate::common;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

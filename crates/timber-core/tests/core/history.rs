@@ -1,11 +1,9 @@
 //! The repository's history as the core reads it (design D3, D6).
 
-mod common;
-
 use std::collections::BTreeSet;
 use std::fs;
 
-use common::{landed, Fixture, Repo};
+use crate::common::{landed, Fixture, Repo};
 use semver::Version;
 use timber_core::{paths_hold, History, ROOT_REF};
 use timber_seams::{Branch, Not, RepositoryName, Revision, Seam, Why};

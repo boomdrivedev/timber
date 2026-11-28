@@ -2,11 +2,9 @@
 //! before anything is packed, and a name another revision holds refuses
 //! the publish (design D6).
 
-mod common;
-
 use std::fs;
 
-use common::{landed, Fixture, Repo};
+use crate::common::{landed, Fixture, Repo};
 use timber_core::{claim, derive, Claimed, Derived, Rule, Versioned};
 use timber_seams::{Component, ComponentName, Not, Revision, Seam, Why};
 
@@ -37,7 +35,7 @@ fn two_publishers(fixture: &Fixture) -> (Repo, Repo, Repo) {
     let first = fixture.clone_of(&shared, "first");
     let base = first.touch("feat: lib", &["crates/lib"]);
     first.tag("lib-v1.2.3", &base);
-    first.git(&["push", "-q", "origin", "main", "refs/tags/lib-v1.2.3"]);
+    first.push(&["refs/heads/main", "refs/tags/lib-v1.2.3"]);
     let second = fixture.clone_of(&shared, "second");
     (shared, first, second)
 }

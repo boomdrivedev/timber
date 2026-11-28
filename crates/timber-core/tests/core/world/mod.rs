@@ -106,7 +106,11 @@ impl World {
         repo.tag("lib-v0.1.0", &start);
         repo.tag("web-v0.1.0", &start);
         let head = repo.touch(subject, &["crates/lib"]);
-        repo.git(&["push", "-q", "origin", "main", "lib-v0.1.0", "web-v0.1.0"]);
+        repo.push(&[
+            "refs/heads/main",
+            "refs/tags/lib-v0.1.0",
+            "refs/tags/web-v0.1.0",
+        ]);
 
         let main = Branch::new("main");
         let mut world = World {

@@ -1,11 +1,9 @@
 //! Spec landed-policy: the components and the rule, read from the policy
 //! file at the landed revision.
 
-mod common;
-
 use std::fs;
 
-use common::{landed, Fixture, Repo};
+use crate::common::{landed, Fixture, Repo};
 use semver::Version;
 use timber_core::{Declared, Rule, POLICY_FILE};
 use timber_seams::{Component, ComponentName, Not, OutputName, Seam, Why};
