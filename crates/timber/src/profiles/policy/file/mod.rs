@@ -484,30 +484,6 @@ impl PolicyFile {
         Ok(Some(self.git(&["cat-file", "blob", &blob], &[0])?.stdout))
     }
 
-    /// 108, C.10: refused, wanting an acceptance no signer may make, in
-    /// [`NO_GATE`]'s words, where several may publish and none accept.
-    fn no_gate(&self) -> Not {
-        Not::refused(
-            self.source(),
-            Why::Wanting {
-                kind: ClaimKind::Acceptance,
-                check: None,
-                environment: None,
-                signers: vec![],
-            },
-            Some(NO_GATE.into()),
-        )
-    }
-
-    /// Unreadable naming the file and the revision, with `said`.
-    fn unreadable(&self, revision: &Revision, said: String) -> Not {
-        Not::unreadable(
-            self.source(),
-            format!("{POLICY_FILE} at {revision}"),
-            Some(said),
-        )
-    }
-
     /// The fragment, or unreadable naming it with the words it could not
     /// be read with, so a fragment one operation cannot read no other
     /// reads either.
@@ -517,17 +493,49 @@ impl PolicyFile {
             .map_err(|said| Not::unreadable(self.source(), GIVENS_NAME, Some(said.clone())))
     }
 
-    /// The policy file at `revision` parsed whole, its signers read,
-    /// `None` where the revision's tree holds none; unreadable with git's
-    /// or the parser's words where it or the fragment cannot be read, so
-    /// a file one operation cannot read no other reads either.
-    fn read(&self, revision: &Revision) -> Answer<Option<Read>> {
-        self.givens()?;
+    /// The policy file at `revision` with the fragment beneath it: the
+    /// fragment read first, then the revision resolved and its tree's
+    /// file taken with git, and the text judged apart from git (rule
+    /// core.22).
+    fn at(&self, revision: &Revision) -> Answer<AtRevision> {
+        let givens = self.givens()?.clone();
         let commit = self.commit(revision)?;
-        let unreadable = |said: String| self.unreadable(revision, said);
-        let Some(bytes) = self.text(&commit)? else {
-            return Ok(None);
+        let text = self.text(&commit)?;
+        AtRevision::new(self.source().clone(), revision.clone(), givens, text)
+    }
+}
+
+/// The policy file as one revision's tree holds it, parsed whole with its
+/// signers read, and the fragment beneath it: what each operation of the
+/// seam answers from.
+struct AtRevision {
+    source: Source,
+    revision: Revision,
+    givens: Givens,
+    read: Option<Read>,
+}
+
+impl AtRevision {
+    /// `text`, the file `revision`'s tree holds, `None` where it holds
+    /// none, parsed whole and its signers read; unreadable with the
+    /// parser's words where it cannot be, so a file one operation cannot
+    /// read no other reads either.
+    fn new(
+        source: Source,
+        revision: Revision,
+        givens: Givens,
+        text: Option<Vec<u8>>,
+    ) -> Answer<AtRevision> {
+        let mut at = AtRevision {
+            source,
+            revision,
+            givens,
+            read: None,
         };
+        let Some(bytes) = text else {
+            return Ok(at);
+        };
+        let unreadable = |said: String| at.unreadable(said);
         let text = String::from_utf8(bytes).map_err(|e| unreadable(e.to_string()))?;
         let file: File = toml::from_str(&text).map_err(|e| unreadable(e.to_string()))?;
         let mut written = Vec::new();
@@ -540,12 +548,37 @@ impl PolicyFile {
         let mut signers = by_name(&written);
         let gateless = several_publishers_and_no_gate(&signers);
         given_gate(&mut signers);
-        Ok(Some(Read {
+        at.read = Some(Read {
             file,
             signers,
             written,
             gateless,
-        }))
+        });
+        Ok(at)
+    }
+
+    /// 108, C.10: refused, wanting an acceptance no signer may make, in
+    /// [`NO_GATE`]'s words, where several may publish and none accept.
+    fn no_gate(&self) -> Not {
+        Not::refused(
+            &self.source,
+            Why::Wanting {
+                kind: ClaimKind::Acceptance,
+                check: None,
+                environment: None,
+                signers: vec![],
+            },
+            Some(NO_GATE.into()),
+        )
+    }
+
+    /// Unreadable naming the file and the revision, with `said`.
+    fn unreadable(&self, said: String) -> Not {
+        Not::unreadable(
+            &self.source,
+            format!("{POLICY_FILE} at {}", self.revision),
+            Some(said),
+        )
     }
 }
 
@@ -1570,7 +1603,7 @@ fn given_layout(signers: &[NamedSigner]) -> Vec<RequiredClaim> {
     }]
 }
 
-impl Policy for PolicyFile {
+impl AtRevision {
     /// 82, 83: the claims `audience` requires in the policy file at
     /// `revision`, each signer with its verifier and its reach; for a
     /// channel, the channel it is bound to and the signers whose
@@ -1581,17 +1614,16 @@ impl Policy for PolicyFile {
     /// on in the table in force nor made (C.10), and unreadable naming the
     /// file and the revision, with git's or the parser's words, where it
     /// cannot be read.
-    fn policy_for(&self, revision: &Revision, audience: &Audience) -> Answer<Required> {
+    fn policy_for(&self, audience: &Audience) -> Answer<Required> {
         let absent = || {
             Not::absent(
-                self.source(),
+                &self.source,
                 format!("policy for {} in {POLICY_FILE}", audience_name(audience)),
             )
         };
-        let unreadable = |said: String| self.unreadable(revision, said);
-        let read = self.read(revision)?;
+        let unreadable = |said: String| self.unreadable(said);
         if let Audience::Channel(channel) = audience {
-            let (file, signers, gateless) = match &read {
+            let (file, signers, gateless) = match &self.read {
                 Some(Read {
                     file,
                     signers,
@@ -1600,7 +1632,7 @@ impl Policy for PolicyFile {
                 }) => (file, signers, *gateless),
                 None => (&File::none(), &BTreeMap::new(), false),
             };
-            let resolved = resolve(&in_force(file, self.givens()?)).map_err(unreadable)?;
+            let resolved = resolve(&in_force(file, &self.givens)).map_err(unreadable)?;
             let entry = resolved.channels.get(channel).ok_or_else(absent)?;
             let required = channel_policy(entry, signers).map_err(unreadable)?;
             if gateless && entry.origin != Origin::Declared {
@@ -1613,7 +1645,7 @@ impl Policy for PolicyFile {
             signers,
             written,
             gateless,
-        }) = read
+        }) = &self.read
         else {
             return Err(absent());
         };
@@ -1638,27 +1670,26 @@ impl Policy for PolicyFile {
             // A layout's claims name its signers as written: the given
             // gate is for publishing, not reading (118, C.10).
             Some(table) if *audience == Audience::Layout => Some(
-                claims_of(name, &table.require, &by_name(&written), of_every)
-                    .map_err(unreadable)?,
+                claims_of(name, &table.require, &by_name(written), of_every).map_err(unreadable)?,
             ),
             Some(table) => {
-                Some(claims_of(name, &table.require, &signers, asked_of).map_err(unreadable)?)
+                Some(claims_of(name, &table.require, signers, asked_of).map_err(unreadable)?)
             }
             None => None,
         };
-        if gateless && *audience == Audience::Acceptance {
+        if *gateless && *audience == Audience::Acceptance {
             return Err(self.no_gate());
         }
         Ok(match (audience, claims) {
             (Audience::Layout, Some(claims)) => Required::Layout {
                 claims,
                 given: false,
-                signers: written,
+                signers: written.clone(),
             },
             (Audience::Layout, None) => Required::Layout {
-                claims: given_layout(&written),
+                claims: given_layout(written),
                 given: true,
-                signers: written,
+                signers: written.clone(),
             },
             (_, claims) => Required::Acceptance {
                 claims: claims.ok_or_else(absent)?,
@@ -1676,14 +1707,13 @@ impl Policy for PolicyFile {
     /// table says, with that table's header as the line that switches it
     /// on. Unreadable naming the file and the revision, with the words of
     /// the first table that breaks 125, 37 or C.10, where one does.
-    fn channels(&self, revision: &Revision) -> Answer<PolicyChannels> {
-        let read = self.read(revision)?;
-        let file = match &read {
+    fn channels(&self) -> Answer<PolicyChannels> {
+        let file = match &self.read {
             Some(Read { file, .. }) => file,
             None => &File::none(),
         };
-        let unreadable = |said: String| self.unreadable(revision, said);
-        let table = in_force(file, self.givens()?);
+        let unreadable = |said: String| self.unreadable(said);
+        let table = in_force(file, &self.givens);
         let resolved = resolve(&table).map_err(unreadable)?;
         let mut held = Vec::new();
         for (channel, switch, given) in table.off {
@@ -1719,14 +1749,13 @@ impl Policy for PolicyFile {
     /// file or the file declares no environment; unreadable naming the
     /// file and the revision, with the words the channels are unreadable
     /// with, where they are.
-    fn environments(&self, revision: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
-        let read = self.read(revision)?;
-        let file = match &read {
+    fn environments(&self) -> Answer<Vec<DeclaredEnvironment>> {
+        let file = match &self.read {
             Some(Read { file, .. }) => file,
             None => &File::none(),
         };
-        let resolved = resolve(&in_force(file, self.givens()?))
-            .map_err(|said| self.unreadable(revision, said))?;
+        let resolved =
+            resolve(&in_force(file, &self.givens)).map_err(|said| self.unreadable(said))?;
         Ok(resolved.environments)
     }
 
@@ -1735,22 +1764,39 @@ impl Policy for PolicyFile {
     /// holds no file. Unreadable naming the key and the file where
     /// `[cache]` breaks its form, and naming the fragment where neither
     /// gives a time.
-    fn cache_kept(&self, revision: &Revision) -> Answer<Keeping> {
-        let given = self.givens()?.keep_days;
-        let read = self.read(revision)?;
-        let written = match read.as_ref().and_then(|r| r.file.cache.as_ref()) {
-            Some(cache) => keep_days(cache).map_err(|said| self.unreadable(revision, said))?,
+    fn cache_kept(&self) -> Answer<Keeping> {
+        let given = self.givens.keep_days;
+        let written = match self.read.as_ref().and_then(|r| r.file.cache.as_ref()) {
+            Some(cache) => keep_days(cache).map_err(|said| self.unreadable(said))?,
             None => None,
         };
         match (written, given) {
             (Some(days), _) => Ok(Keeping { days, given: false }),
             (None, Some(days)) => Ok(Keeping { days, given: true }),
             (None, None) => Err(Not::unreadable(
-                self.source(),
+                &self.source,
                 GIVENS_NAME,
                 Some("the givens give no [cache] keep_days".into()),
             )),
         }
+    }
+}
+
+impl Policy for PolicyFile {
+    fn policy_for(&self, revision: &Revision, audience: &Audience) -> Answer<Required> {
+        self.at(revision)?.policy_for(audience)
+    }
+
+    fn channels(&self, revision: &Revision) -> Answer<PolicyChannels> {
+        self.at(revision)?.channels()
+    }
+
+    fn environments(&self, revision: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
+        self.at(revision)?.environments()
+    }
+
+    fn cache_kept(&self, revision: &Revision) -> Answer<Keeping> {
+        self.at(revision)?.cache_kept()
     }
 }
 

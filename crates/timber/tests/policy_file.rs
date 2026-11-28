@@ -1,7 +1,8 @@
 //! Spec policy-file: the conformance suite's policy group over the policy
 //! file, each policy the group asks for written as a commit of a scratch
-//! repository of its own (design D3, D7). Needs git alone, so it is in
-//! the fast layer.
+//! repository of its own (design D3, D7), and the file read with git at
+//! the revision asked alone. Needs git alone, so it is in the fast layer;
+//! the profile's judgment of the text is its unit tests'.
 
 mod scratch;
 
@@ -14,7 +15,7 @@ use timber_conformance::seams::policy::{self, Declares, PolicyRig};
 use timber_conformance::{run, Rig};
 use timber_seams::{
     Audience, ChannelId, ChannelName, ClaimKind, ComponentName, DeclaredChannel, HeldChannel,
-    Moves, NamedSigner, Policy, Required, Revision,
+    Moves, NamedSigner, Not, Policy, Required, Revision, Seam, Source,
 };
 
 /// The given channels as timber ships them, beside the profile (C.10).
@@ -350,4 +351,60 @@ fn the_policy_group_over_the_policy_file() {
     assert_eq!(report.profile, "policy file");
     assert_eq!(report.not_applicable, [], "{report}");
     report.assert();
+}
+
+/// 65, rule core.22: the file is read from the tree of the revision
+/// asked, never from the working tree; a revision with no file is read as
+/// none; a revision the repository does not hold is absent for every
+/// operation; and a read writes nothing.
+#[test]
+fn the_file_is_read_with_git_at_the_revision_alone() {
+    let scratch = Scratch::new();
+    let repo = &scratch.repo;
+    let policy = PolicyFile::new(&repo.path);
+    let laptop = "[signers.laptop]\nssh = \"ssh-ed25519 AAAA\"\nkinds = [\"provenance\"]\n\n\
+                  [acceptance]\nrequire = [{ kind = \"provenance\", signers = [\"laptop\"] }]\n";
+    repo.write(POLICY_FILE, laptop);
+    let at = Revision::new(repo.commit("chore: the policy"));
+    repo.write(
+        POLICY_FILE,
+        "[signers.stranger]\nssh = \"ssh-ed25519 CCCC\"\nkinds = [\"provenance\"]\n\n\
+         [acceptance]\nrequire = [{ kind = \"provenance\", signers = [\"stranger\"] }]\n",
+    );
+    let named: Vec<String> = policy
+        .policy_for(&at, &Audience::Acceptance)
+        .unwrap()
+        .claims()
+        .iter()
+        .flat_map(|c| &c.signers)
+        .map(|s| s.id.as_str().to_string())
+        .collect();
+    assert_eq!(named, ["laptop"]);
+    let edited = repo.git(&["status", "--porcelain"]);
+    assert_eq!(edited, format!(" M {POLICY_FILE}"));
+
+    fs::remove_file(repo.path.join(POLICY_FILE)).unwrap();
+    let none = Revision::new(repo.commit("chore: no policy"));
+    assert!(
+        matches!(
+            policy.policy_for(&none, &Audience::Acceptance),
+            Err(Not::Absent(_))
+        ),
+        "a revision with no file answers no acceptance"
+    );
+    assert_eq!(policy.environments(&none), Ok(vec![]));
+
+    let missing = Revision::new("0000000000000000000000000000000000000001");
+    let absent = Not::absent(
+        &Source::new(Seam::Policy, "policy file"),
+        format!("revision {missing}"),
+    );
+    assert_eq!(
+        policy.policy_for(&missing, &Audience::Acceptance),
+        Err(absent.clone())
+    );
+    assert_eq!(policy.channels(&missing), Err(absent.clone()));
+    assert_eq!(policy.environments(&missing), Err(absent.clone()));
+    assert_eq!(policy.cache_kept(&missing), Err(absent));
+    assert_eq!(repo.git(&["status", "--porcelain"]), "");
 }
