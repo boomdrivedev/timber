@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 use clap::Args;
 use serde::Serialize;
 use timber_core::{
-    answer_json, miss, place, row, History, Layouts, MissAsk, Overview, Repositories,
-    RepositoryName, SERVING_HOST, SERVING_PORT,
+    answer_json, miss, place, row, Layouts, MissAsk, Overview, Repositories, RepositoryName,
+    SERVING_HOST, SERVING_PORT,
 };
 use timber_seams::{
     no_serving, Answer, Branch, Ecosystem, Layout, Not, Pinned, Request, Seam, Source,
@@ -465,7 +465,7 @@ fn layout(
     let Some(projection) = binding.seams.projection(ecosystem) else {
         return serves_none();
     };
-    let history = match History::open(&checkout) {
+    let history = match binding.history(&checkout) {
         Ok(history) => history,
         Err(not) => return words(not),
     };

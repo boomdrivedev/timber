@@ -31,9 +31,11 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use timber_seams::{Answer, NamedSigner, Not, Seam, Seams, SignerId, Source};
+use timber_core::History;
+use timber_seams::{Answer, NamedSigner, Not, Seam, Seams, SharedHistory, SignerId, Source};
 
 pub mod bindings;
 pub mod commands;
@@ -132,6 +134,27 @@ pub struct Binding {
     pub signer: Option<SignerId>,
     pub gate: bindings::Teller,
     pub trust: Vec<NamedSigner>,
+    /// How a history reaches the shared history its remotes hold: with
+    /// the git command, as [`bindings::bind`] binds it (rule core.21).
+    pub shared: Arc<dyn SharedHistory>,
+}
+
+impl Binding {
+    /// The history of the repository at `at`, its remotes reached as this
+    /// binding reaches them.
+    pub fn history(&self, at: &Path) -> Answer<History> {
+        History::reaching(at, self.shared.clone())
+    }
+}
+
+/// The history of the repository at `at`, its remotes reached as
+/// `binding` reaches them, or with the git command where it bound
+/// nothing.
+pub(crate) fn history_of(binding: &Answer<Binding>, at: &Path) -> Answer<History> {
+    match binding {
+        Ok(binding) => binding.history(at),
+        Err(_) => History::open(at),
+    }
 }
 
 /// `cli` asked in the repository at `at`, over the binding the host's

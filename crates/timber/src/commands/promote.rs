@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{ArgGroup, Args};
-use timber_core::{promote, Followed, History, Mirrored, PromoteAsk, Promoted, To};
+use timber_core::{promote, Followed, Mirrored, PromoteAsk, Promoted, To};
 use timber_seams::{Answer, Branch, ChannelName, ComponentName, Moved, Not, Version};
 
 use crate::{render, unsigned, Binding};
@@ -55,7 +55,7 @@ pub fn run(args: &PromoteArgs, binding: &Answer<Binding>, at: &Path, out: &mut d
 fn ask(args: &PromoteArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Promoted> {
     let binding = binding.as_ref().map_err(Not::clone)?;
     let signer = binding.signer.clone().ok_or_else(unsigned)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let ask = PromoteAsk {
         branch: Branch::new(&args.branch),
         component: args.component.as_ref().map(ComponentName::new),

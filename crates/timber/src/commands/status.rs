@@ -112,7 +112,7 @@ pub(crate) fn overview_in(
     component: Option<&str>,
     revision: Option<&str>,
 ) -> Answer<Overview> {
-    let history = History::open(at)?;
+    let history = crate::history_of(binding, at)?;
     let ask = OverviewAsk {
         branch: Branch::new(branch),
         component: component.map(ComponentName::new),

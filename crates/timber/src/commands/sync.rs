@@ -170,7 +170,7 @@ fn synced(
     repository: &Answer<RepositoryName>,
 ) -> Answer<CheckoutSynced> {
     let binding = binding.as_ref().map_err(Not::clone)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let branch = Branch::new(&args.branch);
     let revision = match &args.revision {
         Some(text) => history.resolve(text)?,

@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use clap::Args;
-use timber_core::{verify, History, Verified, VerifyAsk};
+use timber_core::{verify, Verified, VerifyAsk};
 use timber_seams::{Answer, Audience, Branch, ChannelId, ChannelName, ComponentName, Not, Version};
 
 use crate::{render, Binding};
@@ -60,7 +60,7 @@ pub fn run(args: &VerifyArgs, binding: &Answer<Binding>, at: &Path, out: &mut dy
 
 fn ask(args: &VerifyArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Verified> {
     let binding = binding.as_ref().map_err(Not::clone)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let ask = VerifyAsk {
         branch: Branch::new(&args.branch),
         component: args.component.as_ref().map(ComponentName::new),

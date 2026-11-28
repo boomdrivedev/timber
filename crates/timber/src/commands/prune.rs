@@ -12,7 +12,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use clap::Args;
-use timber_core::{prune, Fate, History, PruneAsk, Pruned};
+use timber_core::{prune, Fate, PruneAsk, Pruned};
 use timber_seams::{Answer, Branch, BuildId, Not};
 
 use crate::commands::status::now;
@@ -49,7 +49,7 @@ pub fn run(args: &PruneArgs, binding: &Answer<Binding>, at: &Path, out: &mut dyn
 
 fn ask(args: &PruneArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Pruned> {
     let binding = binding.as_ref().map_err(Not::clone)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let branch = Branch::new(&args.branch);
     let revision = match &args.revision {
         Some(text) => history.resolve(text)?,
