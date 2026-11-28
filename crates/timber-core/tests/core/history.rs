@@ -2,12 +2,15 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::Path;
 
 use crate::common::{landed, Fixture, Repo};
 use semver::Version;
 use timber_core::{paths_hold, GitCommand, History, ROOT_REF};
 use timber_fakes::FakeSharedHistory;
-use timber_seams::{Answer, Branch, Not, RepositoryName, Revision, Seam, SharedHistory, Why};
+use timber_seams::{
+    Answer, Branch, Not, PushedRef, RepositoryName, Revision, Seam, SharedHistory, Why,
+};
 
 #[test]
 fn a_path_that_is_not_a_repository_is_unreadable_with_gits_words() {
@@ -186,10 +189,7 @@ fn a_shared_history_that_cannot_be_reached_makes_the_tags_unreadable() {
     };
     assert_eq!(u.source.profile, "git, origin");
     let said = u.said.unwrap();
-    assert!(
-        said.contains("does not appear to be a git repository"),
-        "{said}"
-    );
+    assert!(said.contains(&shared.path.display().to_string()), "{said}");
 }
 
 #[test]
@@ -359,61 +359,62 @@ fn root_at_tip(repo: &Repo) -> String {
 /// by the git command as another host would, and pushed to `refs/b/root`
 /// of its remote; its id.
 fn written_elsewhere(repo: &Repo, named: &str, parent: Option<&str>) -> String {
-    let blob = git_fed(
-        repo,
-        &["hash-object", "-w", "--stdin"],
-        &format!("{named}\n"),
-    );
-    let tree = git_fed(repo, &["mktree"], &format!("100644 blob {blob}\troot\n"));
-    let mut args = vec!["commit-tree", tree.as_str(), "-m", named];
-    if let Some(parent) = parent {
-        args.extend(["-p", parent]);
-    }
-    let commit = repo.git(&args);
-    repo.git(&["push", "-q", "origin", &format!("{commit}:refs/b/root")]);
-    commit
-}
-
-fn git_fed(repo: &Repo, args: &[&str], input: &str) -> String {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(&repo.path)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
+    let git = git2::Repository::open(&repo.path).unwrap();
+    let blob = git.blob(format!("{named}\n").as_bytes()).unwrap();
+    let mut tree = git.treebuilder(None).unwrap();
+    tree.insert("root", blob, 0o100644).unwrap();
+    let tree = git.find_tree(tree.write().unwrap()).unwrap();
+    let parents: Vec<git2::Commit> = parent
+        .iter()
+        .map(|p| git.find_commit(git2::Oid::from_str(p).unwrap()).unwrap())
+        .collect();
+    let parents: Vec<&git2::Commit> = parents.iter().collect();
+    let author = git2::Signature::now("A. Uthor", "author@example.com").unwrap();
+    let message = format!("{named}\n");
+    let commit = git
+        .commit(None, &author, &author, &message, &tree, &parents)
         .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success());
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
+        .to_string();
+    let pushed = FakeSharedHistory.push(&repo.path, "origin", &commit, "refs/b/root", "a write");
+    assert_eq!(pushed, Ok(PushedRef::Held));
+    commit
 }
 
 /// A hook in `shared` that, at the first push it is handed, moves the
 /// record's ref to `refs/b/root` before the push's own update, as another
 /// host's write landing first would.
-fn racing_hook(shared: &Repo) {
-    let hook = shared.path.join("hooks").join("pre-receive");
-    fs::write(
-        &hook,
-        "#!/bin/sh\n\
-         cat >/dev/null\n\
-         [ -e raced ] && exit 0\n\
-         touch raced\n\
-         env -u GIT_QUARANTINE_PATH git update-ref refs/timber/root refs/b/root\n",
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+#[derive(Default)]
+struct Racing {
+    raced: std::sync::atomic::AtomicBool,
+}
+
+impl SharedHistory for Racing {
+    fn list(
+        &self,
+        at: &Path,
+        remote: &str,
+        pattern: &str,
+        what: &str,
+    ) -> Answer<Vec<(String, String)>> {
+        FakeSharedHistory.list(at, remote, pattern, what)
+    }
+
+    /// The first push of the record's ref finds another publisher's
+    /// record, `refs/b/root`, there before it.
+    fn push(&self, at: &Path, remote: &str, from: &str, to: &str, what: &str) -> Answer<PushedRef> {
+        if to == ROOT_REF && !self.raced.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let ours = git2::Repository::open(at).unwrap();
+            let url = ours.find_remote(remote).unwrap().url().unwrap().to_string();
+            let theirs = git2::Repository::open(url).unwrap();
+            let raced = theirs.refname_to_id("refs/b/root").unwrap();
+            theirs.reference(ROOT_REF, raced, true, "raced").unwrap();
+        }
+        FakeSharedHistory.push(at, remote, from, to, what)
+    }
+
+    fn fetch(&self, at: &Path, remote: &str, name: &str, what: &str) -> Answer<()> {
+        FakeSharedHistory.fetch(at, remote, name, what)
+    }
 }
 
 #[test]
@@ -494,9 +495,7 @@ fn the_root_record_read_again_after_a_push_refused_is_done_where_it_names_the_ro
     let fixture = Fixture::new();
     let (shared, clone, rev) = shared_clone(&fixture);
     let theirs = written_elsewhere(&clone, "acme/site", None);
-    racing_hook(&shared);
-
-    let history = clone.history();
+    let history = History::reaching(&clone.path, Box::new(Racing::default())).unwrap();
     history
         .record_root(&landed(&rev), &root("acme", "site"))
         .unwrap();
@@ -512,9 +511,7 @@ fn the_root_record_refused_where_another_root_was_written_first_names_gits_words
     let fixture = Fixture::new();
     let (shared, clone, rev) = shared_clone(&fixture);
     let theirs = written_elsewhere(&clone, "acme/web", None);
-    racing_hook(&shared);
-
-    let history = clone.history();
+    let history = History::reaching(&clone.path, Box::new(Racing::default())).unwrap();
     let Err(Not::Refused(r)) = history.record_root(&landed(&rev), &root("acme", "site")) else {
         panic!("a root written over another's was recorded")
     };
@@ -584,10 +581,7 @@ fn the_root_record_is_unreadable_where_the_remote_cannot_be_reached() {
         };
         assert_eq!(u.source.profile, "git, origin");
         let said = u.said.unwrap();
-        assert!(
-            said.contains("does not appear to be a git repository"),
-            "{said}"
-        );
+        assert!(said.contains(&shared.path.display().to_string()), "{said}");
     }
     assert_eq!(root_at_tip(&clone), "acme/app");
 }

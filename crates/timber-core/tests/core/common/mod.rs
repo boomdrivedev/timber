@@ -13,7 +13,7 @@ use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature};
 
 use tempfile::TempDir;
 use timber_core::{History, Landed};
-use timber_fakes::FakeLanding;
+use timber_fakes::{FakeLanding, FakeSharedHistory};
 use timber_seams::{Branch, Revision};
 
 /// A directory holding the repositories of one test.
@@ -241,8 +241,10 @@ impl Repo {
         timber_seams::utc(seconds)[..10].to_string()
     }
 
+    /// The repository's history, its shared history reached in the
+    /// test's own process.
     pub fn history(&self) -> History {
-        History::open(&self.path).unwrap()
+        History::reaching(&self.path, Box::new(FakeSharedHistory)).unwrap()
     }
 }
 
