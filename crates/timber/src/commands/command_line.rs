@@ -12,15 +12,15 @@ use clap::Parser;
 use serde_json::Value;
 use tempfile::TempDir;
 use timber_core::{
-    answer_json, artifact_name, promote, publish, push, push_left, sync_checkout, write, Ask,
-    CheckoutAsk, History, Kept, Layouts, LeftAsk, PromoteAsk, PushAsk, Reported, RepositoryName,
-    To,
+    answer_json, artifact_name, in_force, promote, publish, push, push_left, sync_checkout, write,
+    Ask, CheckoutAsk, History, InForceAsk, Kept, Layouts, LeftAsk, PromoteAsk, PushAsk, Reported,
+    RepositoryName, To,
 };
 use timber_fakes::{FakeSharedHistory, FakeTarget, Fakes, Fault, PolicyOp, StoreOp, Times};
 use timber_seams::{
     Artifact, ArtifactMeta, AskedOf, Audience, Branch, BuildId, ChannelId, ChannelName, Check,
     Claim, ClaimKind, ComponentName, DeclaredEnvironment, Digest, Ecosystem, EcosystemName,
-    EnvironmentName, Held, IndexMeta, Keeper, Left, Manifest, NamedSigner, Outcome, Output,
+    EnvironmentName, Held, IndexMeta, Keeper, Left, Manifest, Moves, NamedSigner, Outcome, Output,
     OutputName, Pinned, Promotion, PushedRef, Report, Required, RequiredClaim, Revision, Seam,
     SharedHistory, Signer, SignerId, Source, Store, TargetProfile, TargetTable, Verdict, Version,
 };
@@ -1915,6 +1915,217 @@ fn status_prints_an_empty_channel_read_from_the_copy_as_last_read_with_its_words
     assert_eq!(kept["said"], "fatal: unable to access", "{printed}");
     let read_at = kept["at"].as_u64().expect("the copy's time");
     assert!((before..=after).contains(&read_at), "{printed}");
+}
+
+// Requirement: Policy shows the policy in force
+
+/// `id` as the policy names a signer, verified by a key of its name,
+/// claiming `kinds` and, of verdicts, `checks`.
+fn signer(id: &str, kinds: &[ClaimKind], checks: &[&str]) -> NamedSigner {
+    NamedSigner {
+        id: SignerId::new(id),
+        verified_by: format!("{id}'s key"),
+        kinds: kinds.to_vec(),
+        checks: checks.iter().map(|c| Check::new(*c)).collect(),
+    }
+}
+
+/// `channel`'s policy scripted on the host's fake policy: the gate's
+/// acceptance, bound to `bound_to` where it names a channel, promoted by
+/// `promoters` and asked for by `approvers`.
+fn channel_policy(
+    host: &Host,
+    channel: &str,
+    bound_to: Option<&str>,
+    promoters: &[&str],
+    approvers: &[&str],
+) -> ChannelId {
+    let id = ChannelId::new(None, ChannelName::new(channel));
+    host.fakes.policy.require(
+        Audience::Channel(id.clone()),
+        Required::Channel {
+            claims: vec![RequiredClaim {
+                kind: ClaimKind::Acceptance,
+                check: None,
+                environment: None,
+                signers: vec![signer("gate", &[ClaimKind::Acceptance], &[])],
+                asked_of: AskedOf::Every,
+            }],
+            bound_to: bound_to.map(ChannelName::new),
+            promoted_by: promoters
+                .iter()
+                .map(|p| signer(p, &[ClaimKind::Acceptance], &[]))
+                .collect(),
+            approvers: approvers.iter().map(|a| signer(a, &[], &[])).collect(),
+        },
+    );
+    id
+}
+
+/// The lines `timber policy` prints over the host's fakes, and its JSON
+/// compared value for value with the core's answer.
+fn policy_lines(host: &Host) -> (Vec<String>, Value) {
+    let (code, printed) = host.run(&["policy"]);
+    assert_eq!(code, 0, "{printed}");
+    let (code, json) = host.run(&["policy", "--json"]);
+    assert_eq!(code, 0, "{json}");
+    let json: Value = serde_json::from_str(&json).unwrap();
+    let history = History::open(&host.repo).unwrap();
+    let core = in_force(
+        &host.fakes.seams(),
+        &history,
+        &InForceAsk {
+            branch: Branch::new("main"),
+        },
+    );
+    assert_eq!(json, answer_json(&core));
+    (printed.lines().map(str::to_string).collect(), json)
+}
+
+#[test]
+fn policy_shows_a_verdict_asked_of_built_artifacts_alone() {
+    let host = Host::new();
+    host.fakes.policy.require(
+        Audience::Acceptance,
+        Required::Acceptance {
+            claims: vec![
+                RequiredClaim {
+                    kind: ClaimKind::Provenance,
+                    check: None,
+                    environment: None,
+                    signers: vec![signer("laptop", &[ClaimKind::Provenance], &[])],
+                    asked_of: AskedOf::Every,
+                },
+                RequiredClaim {
+                    kind: ClaimKind::Verdict,
+                    check: Some(Check::new("cli:test")),
+                    environment: None,
+                    signers: vec![signer("box", &[ClaimKind::Verdict], &["cli:test"])],
+                    asked_of: AskedOf::Built,
+                },
+            ],
+        },
+    );
+
+    let (lines, json) = policy_lines(&host);
+    let printed = lines.join("\n");
+    let acceptance = lines
+        .iter()
+        .position(|l| l == "acceptance")
+        .unwrap_or_else(|| panic!("no acceptance: {printed}"));
+    assert_eq!(
+        lines[acceptance + 1..acceptance + 3],
+        [
+            "  provenance by laptop",
+            "  verdict of cli:test by box, of built artifacts alone",
+        ],
+        "{printed}"
+    );
+    let claims = &json["value"]["acceptance"]["value"]["acceptance"]["claims"];
+    assert!(claims[0].get("asked_of").is_none(), "{claims}");
+    assert_eq!(claims[1]["asked_of"], "built", "{claims}");
+}
+
+#[test]
+fn policy_shows_the_givens_held_off_beneath_the_table_with_their_lines() {
+    let host = Host::new();
+    let beta = channel_policy(&host, "beta", None, &["gate"], &[]);
+    host.fakes.policy.follows(&beta, false);
+    channel_policy(&host, "stable", Some("beta"), &["gate"], &[]);
+    host.fakes.policy.holds(
+        &ChannelId::new(None, ChannelName::new("alpha")),
+        Moves::EachPublish { prereleases: true },
+        "[channels.alpha]",
+    );
+    host.fakes.policy.holds(
+        &ChannelId::new(None, ChannelName::new("lts")),
+        Moves::Bound {
+            to: ChannelName::new("stable"),
+            after: vec![],
+        },
+        "[channels.lts]",
+    );
+
+    let (lines, json) = policy_lines(&host);
+    let printed = lines.join("\n");
+    let at = |line: &str| {
+        lines
+            .iter()
+            .position(|l| l == line)
+            .unwrap_or_else(|| panic!("no line {line:?}: {printed}"))
+    };
+    let held = at("held off");
+    assert!(at("  beta, each publish") < held, "{printed}");
+    assert!(at("  stable, bound to beta") < held, "{printed}");
+    assert_eq!(
+        lines[held + 1..],
+        [
+            "  alpha, each publish, prereleases too, switch on with [channels.alpha]",
+            "  lts, bound to stable, switch on with [channels.lts]",
+        ],
+        "{printed}"
+    );
+
+    let channels = &json["value"]["channels"]["value"];
+    assert_eq!(
+        channels["held"],
+        serde_json::json!([
+            {
+                "channel": { "component": null, "name": "alpha" },
+                "moves": { "by": "each_publish", "prereleases": true },
+                "switch": "[channels.alpha]",
+            },
+            {
+                "channel": { "component": null, "name": "lts" },
+                "moves": { "by": "bound", "to": "stable" },
+                "switch": "[channels.lts]",
+            },
+        ])
+    );
+}
+
+#[test]
+fn policy_shows_alpha_taking_prereleases_and_stables_approvers_value_for_value() {
+    let host = Host::new();
+    let alpha = channel_policy(&host, "alpha", None, &["gate"], &[]);
+    host.fakes.policy.follows(&alpha, true);
+    let beta = channel_policy(&host, "beta", None, &["gate"], &[]);
+    host.fakes.policy.follows(&beta, false);
+    channel_policy(&host, "stable", Some("beta"), &["ci", "gate"], &["ci"]);
+
+    let (lines, json) = policy_lines(&host);
+    let printed = lines.join("\n");
+    let at = |line: &str| {
+        lines
+            .iter()
+            .position(|l| l == line)
+            .unwrap_or_else(|| panic!("no line {line:?}: {printed}"))
+    };
+    let alpha = at("  alpha, each publish, prereleases too");
+    assert_eq!(
+        lines[alpha + 3],
+        "    may be asked for by any asker",
+        "{printed}"
+    );
+    let stable = at("  stable, bound to beta");
+    assert_eq!(lines[stable + 2], "    promoted by ci, gate", "{printed}");
+    assert_eq!(lines[stable + 3], "    may be asked for by ci", "{printed}");
+
+    let channels = json["value"]["channels"]["value"]["in_force"]
+        .as_array()
+        .expect("the channels");
+    assert_eq!(
+        channels[0]["moves"],
+        serde_json::json!({ "by": "each_publish", "prereleases": true })
+    );
+    let stable = channels
+        .iter()
+        .find(|c| c["channel"]["name"] == "stable")
+        .expect("stable");
+    assert_eq!(
+        stable["policy"]["value"]["channel"]["approvers"][0]["id"],
+        "ci"
+    );
 }
 
 // Requirement: Status names the page
