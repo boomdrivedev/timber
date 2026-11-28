@@ -3,7 +3,8 @@
 //! test's own, never the core's: the process naming itself, the page
 //! named and the process started where none answers, over a scratch
 //! remote bound to a plain branch landing and the git ref ledger; the
-//! lock that keeps it one, two askers, and its idle endings, which wait
+//! lock that keeps it one, the built binary's `timber serve` ending where
+//! it finds the lock held, two askers, and its idle endings, which wait
 //! while a layout is served. Each route's answer is a unit of the lib,
 //! `src/commands/serve/serving_process.rs`. Needs git alone, so it is in
 //! the fast layer.
@@ -12,6 +13,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -51,7 +53,7 @@ fn host_in(dir: &Path) -> Host {
 
 /// A host of a temporary directory of its own, holding nothing.
 struct Bare {
-    _dir: TempDir,
+    dir: TempDir,
     host: Host,
 }
 
@@ -59,7 +61,35 @@ impl Bare {
     fn new() -> Bare {
         let dir = TempDir::new().unwrap();
         let host = host_in(dir.path());
-        Bare { _dir: dir, host }
+        Bare { dir, host }
+    }
+
+    /// The built binary's `timber serve` over this host, its home and
+    /// its configuration, data and state directories this host's, once
+    /// it ends. It is waited for up to a limit that no load of the host
+    /// reaches, and stopped and failed at that limit alone.
+    fn serve(&self) -> std::process::Output {
+        let dir = self.dir.path();
+        let mut serve = Command::new(env!("CARGO_BIN_EXE_timber"))
+            .arg("serve")
+            .env("HOME", dir.join("home"))
+            .env("XDG_CONFIG_HOME", dir.join("config"))
+            .env("XDG_DATA_HOME", dir.join("data"))
+            .env("XDG_STATE_HOME", dir.join("state"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the binary runs");
+        let limit = Instant::now() + Duration::from_secs(60);
+        while serve.try_wait().unwrap().is_none() {
+            if Instant::now() > limit {
+                serve.kill().unwrap();
+                let _ = serve.wait();
+                panic!("timber serve did not end");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        serve.wait_with_output().unwrap()
     }
 }
 
@@ -192,18 +222,18 @@ fn the_page_is_named_and_the_process_started_where_none_answers() {
 fn a_second_serve_with_the_lock_held_returns_at_once_saying_the_first_answers() {
     let bare = Bare::new();
     let (address, _) = serving(&bare.host, Duration::from_secs(60));
-    let other = free();
-    let started = Instant::now();
+    let second = bare.serve();
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
     assert_eq!(
-        serve_on(other, &bare.host, Duration::from_secs(60)),
-        Ok(Served::Held)
+        String::from_utf8_lossy(&second.stdout),
+        format!(
+            "the host's timber serve answers at http://{}\n",
+            timber::commands::serve::address()
+        )
     );
-    assert!(started.elapsed() < Duration::from_secs(1));
-    assert!(
-        TcpStream::connect(other).is_err(),
-        "the second bound {other}"
-    );
-    assert_eq!(get(address, "/serving.json").0, 200);
+    let (status, named) = json(address, "/serving.json");
+    assert_eq!(status, 200);
+    assert_eq!(named["pid"], std::process::id(), "the first answers");
 }
 
 #[test]
