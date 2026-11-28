@@ -97,24 +97,48 @@ struct Host {
 impl Host {
     fn new() -> Host {
         let root = TempDir::new().unwrap();
-        git(
-            root.path(),
-            &["init", "-q", "--bare", "-b", "main", "shared.git"],
-        );
-        git(root.path(), &["clone", "-q", "shared.git", "repo"]);
+        git2::Repository::init_opts(
+            root.path().join("shared.git"),
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
         let repo = root.path().join("repo");
-        git(&repo, &["config", "branch.main.remote", "origin"]);
-        git(&repo, &["config", "branch.main.merge", "refs/heads/main"]);
+        // Made in the test's own process: a clone of the empty shared
+        // history on `main`, following it, with the policy and one
+        // feature committed by the fixed author.
+        let cloned = git2::build::RepoBuilder::new()
+            .clone(root.path().join("shared.git").to_str().unwrap(), &repo)
+            .unwrap();
+        cloned.set_head("refs/heads/main").unwrap();
+        let mut config = cloned.config().unwrap();
+        config.set_str("branch.main.remote", "origin").unwrap();
+        config
+            .set_str("branch.main.merge", "refs/heads/main")
+            .unwrap();
         fs::create_dir_all(repo.join(".config")).unwrap();
         fs::write(repo.join(".config/timber.toml"), POLICY).unwrap();
         fs::create_dir_all(repo.join("site")).unwrap();
         fs::write(repo.join("site/index.html"), "<p>hello</p>").unwrap();
-        git(
-            &repo,
-            &["add", "--", ".config/timber.toml", "site/index.html"],
-        );
-        git(&repo, &["commit", "-q", "-m", "feat: the site"]);
-        let head = Revision::new(git(&repo, &["rev-parse", "HEAD"]));
+        let mut index = cloned.index().unwrap();
+        for file in [".config/timber.toml", "site/index.html"] {
+            index.add_path(Path::new(file)).unwrap();
+        }
+        index.write().unwrap();
+        let tree = cloned.find_tree(index.write_tree().unwrap()).unwrap();
+        let author = git2::Signature::now("A. Uthor", "author@example.com").unwrap();
+        let made = cloned
+            .commit(
+                Some("HEAD"),
+                &author,
+                &author,
+                "feat: the site\n",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let head = Revision::new(made.to_string());
         let fakes = fakes_at(&head);
         Host {
             _root: root,
