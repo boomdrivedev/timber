@@ -1,9 +1,7 @@
 //! Spec component-versions: the version a landed revision takes per
 //! component, from the history alone.
 
-mod common;
-
-use common::{landed, Fixture, Repo};
+use crate::common::{landed, Fixture, Repo};
 use semver::Version;
 use timber_core::{
     claim, derive, touched, Declared, Derived, Kind, Landed, Rule, Versioned, POLICY_FILE,

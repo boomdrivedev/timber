@@ -2,11 +2,9 @@
 //! before anything is packed, and a name another revision holds refuses
 //! the publish (design D6).
 
-mod common;
-
 use std::fs;
 
-use common::{landed, Fixture, Repo};
+use crate::common::{landed, Fixture, Repo};
 use timber_core::{claim, derive, Claimed, Derived, Rule, Versioned};
 use timber_seams::{Component, ComponentName, Not, Revision, Seam, Why};
 

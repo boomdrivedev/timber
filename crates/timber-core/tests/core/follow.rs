@@ -3,9 +3,8 @@
 //! versions of `lib` published in the test, each carrying the gate's
 //! acceptance, and `stable` promoted between them (design D9).
 
-mod common;
-mod world;
-
+use crate::world;
+use crate::world::{version_of, World};
 use serde_json::{json, Value};
 use timber_core::after::{follow, After, FollowAsk, Follows};
 use timber_core::{promote, Newest, PromoteAsk, Promoted, Published, Reported, To};
@@ -15,7 +14,6 @@ use timber_seams::{
     DeclaredEnvironment, Digest, EnvironmentName, Keeper, NamedSigner, Not, Promotion, Required,
     RequiredClaim, Signer, SignerId, Store, Version, Why,
 };
-use world::{version_of, World};
 
 /// The identity the host signs promotions as, which the policy names
 /// for acceptance and promotion (108).

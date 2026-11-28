@@ -4,9 +4,7 @@
 //! nothing asked of the keeper, the signers, the projections or the
 //! targets (145; design D7, D8).
 
-mod common;
-mod world;
-
+use crate::world::{build_of, version_of, World, HOST, LANDING};
 use timber_core::{
     accept, answer_json, cache_name, prune, AcceptAsk, Fate, Judged, PruneAsk, Pruned, ToldBy,
 };
@@ -17,7 +15,6 @@ use timber_seams::{
     Name, NamedSigner, Not, Outcome, Pushed, Put, Required, RequiredClaim, Revision, Seam, Seams,
     SignerId, Source, Store, TargetProfile, Version, Why,
 };
-use world::{build_of, version_of, World, HOST, LANDING};
 
 /// The moment every prune here runs at.
 const NOW: u64 = 1_800_000_000;

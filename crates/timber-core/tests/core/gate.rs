@@ -2,13 +2,13 @@
 //! test, under the policy for acceptance at the branch's landed head, and
 //! the channels that follow each publish.
 
-mod common;
-mod world;
-
+use crate::common;
+use crate::world;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use common::Fixture;
+use crate::common::Fixture;
+use crate::world::{build_of, version_of, World, HOST, LANDING};
 use serde_json::json;
 use timber_core::{
     accept, answer_json, channel, following, promote, AcceptAsk, Channel, Followed, Judged, Moved,
@@ -24,7 +24,6 @@ use timber_seams::{
     Required, RequiredClaim, Revision, Satisfied, Seam, Seams, Signer, SignerId, Source, Store,
     Version, Why, REPOSITORY_COMPONENT,
 };
-use world::{build_of, version_of, World, HOST, LANDING};
 
 /// The identity the gate signs as, held by a signer of its own beside
 /// the host's.

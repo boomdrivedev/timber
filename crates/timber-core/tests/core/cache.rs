@@ -2,9 +2,7 @@
 //! build identity, never an artifact, over the fakes, and the revision
 //! a checkout syncs by default (design D1 to D4).
 
-mod common;
-
-use common::Fixture;
+use crate::common::Fixture;
 use serde_json::json;
 use timber_core::cache::Written;
 use timber_core::{answer_json, cache_name, sync, write, Filled, SyncAsk, Synced, BOUND};

@@ -3,13 +3,11 @@
 //! template for it, the same bytes on every host (134 as amended at
 //! blueprints a3efbd8).
 
-mod common;
-
 use std::fs;
 use std::thread;
 use std::time::Duration;
 
-use common::{landed, Fixture, Repo, CLIFF_TOML};
+use crate::common::{landed, Fixture, Repo, CLIFF_TOML};
 use timber_core::{derive, notes, Derived, Kind, Noted, Rule, Versioned};
 use timber_seams::{Component, ComponentName, Not, Revision, Version};
 
