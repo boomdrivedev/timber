@@ -55,6 +55,10 @@ fn copied(from: &Repository, to: &Repository, oid: Oid) -> Result<(), git2::Erro
     pack.insert_walk(&mut walk)?;
     let mut bytes = git2::Buf::new();
     pack.write_buf(&mut bytes)?;
+    // git makes the pack folder where a copy of a repository lacks it;
+    // libgit2's writer does not.
+    std::fs::create_dir_all(to.path().join("objects").join("pack"))
+        .map_err(|e| git2::Error::from_str(&e.to_string()))?;
     let odb = to.odb()?;
     let mut writer = odb.packwriter()?;
     writer

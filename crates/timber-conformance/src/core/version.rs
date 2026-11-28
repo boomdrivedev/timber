@@ -1,7 +1,7 @@
 //! The version's group: a version per component from the history alone,
 //! claimed as its name in the shared history (21 to 24, 65, 123, 124).
 
-use timber_core::{touched, Declared, History, Landed, Publish, Published, Versioned, POLICY_FILE};
+use timber_core::{touched, Declared, Landed, Publish, Published, Versioned, POLICY_FILE};
 use timber_seams::{Answer, ComponentName, Held, Manifest, Not, Outcome, Revision, Seam, Why};
 
 use crate::core::publish::version_of;
@@ -217,7 +217,7 @@ fn no_component_declared(_: &FakeWorld) {
 /// What the rule derives for every component `revision` touched, read
 /// from the repository at `path`.
 fn derived(world: &FakeWorld, path: &std::path::Path, revision: &Revision) -> Vec<Versioned> {
-    let history = ok(History::open(path), "the clone");
+    let history = ok(crate::world::history_at(path), "the clone");
     let landed = ok(
         Landed::check(&world.fakes.landing, &world.main, revision),
         "the landing",

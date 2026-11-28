@@ -17,8 +17,8 @@ use timber_core::{
     History, Kept, Layouts, Publish, RepositoryName, Verified, VerifyAsk,
 };
 use timber_fakes::{
-    BuildOp, Call, FakeKeeper, FakeProjection, FakeSigner, FakeStore, Fakes, KeeperOp, StoreOp,
-    TargetOp,
+    BuildOp, Call, FakeKeeper, FakeProjection, FakeSharedHistory, FakeSigner, FakeStore, Fakes,
+    KeeperOp, StoreOp, TargetOp,
 };
 use timber_seams::{
     Answer, Artifact, ArtifactMeta, Audience, Branch, BuildId, ChannelId, ChannelName, Check,
@@ -205,6 +205,13 @@ pub fn build_of(output: &str, revision: &Revision) -> BuildId {
 
 fn changes<T>(calls: Vec<Call<T>>) -> Vec<T> {
     calls.into_iter().map(|c| c.op).collect()
+}
+
+/// The history of the repository at `path`, its shared history reached
+/// in the test's own process by the fakes, so no group's scenario pushes
+/// or lists with git.
+pub fn history_at(path: &std::path::Path) -> Answer<History> {
+    History::reaching(path, Box::new(FakeSharedHistory))
 }
 
 impl FakeWorld {
@@ -470,8 +477,10 @@ impl FakeWorld {
         seams
     }
 
+    /// The clone's history, its shared history reached in the test's own
+    /// process.
     pub fn history(&self) -> History {
-        History::open(&self.repo().path).expect("the clone is a repository")
+        history_at(&self.repo().path).expect("the clone is a repository")
     }
 
     /// The host's record of what it published from the clone.
@@ -1101,7 +1110,7 @@ mod tests {
 
         world.land(&world.head, &[]);
         let landed = Landed::check(&world.fakes.landing, &world.main, &world.head).unwrap();
-        let history = History::open(&second.path).unwrap();
+        let history = history_at(&second.path).unwrap();
         let tags = history.tags(&landed, "v").unwrap();
         let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["v0.1.0", "v9.0.0"]);
