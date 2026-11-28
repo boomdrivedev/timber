@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use git2::{ErrorCode, Object, ObjectType, Oid, Repository};
 use git_cliff_core::commit::Commit as CliffCommit;
@@ -31,7 +32,7 @@ pub struct History {
     path: PathBuf,
     git: Repository,
     cliff: git_cliff_core::repo::Repository,
-    shared: Box<dyn SharedHistory>,
+    shared: Arc<dyn SharedHistory>,
 }
 
 /// A commit: its revision and its message as written.
@@ -86,12 +87,12 @@ impl History {
     /// command; unreadable naming the path with git's words when it is
     /// none.
     pub fn open(path: impl AsRef<Path>) -> Answer<History> {
-        History::reaching(path, Box::new(GitCommand))
+        History::reaching(path, Arc::new(GitCommand))
     }
 
     /// The repository at `path`, as [`History::open`] opens it, its
     /// remotes reached as `shared`.
-    pub fn reaching(path: impl AsRef<Path>, shared: Box<dyn SharedHistory>) -> Answer<History> {
+    pub fn reaching(path: impl AsRef<Path>, shared: Arc<dyn SharedHistory>) -> Answer<History> {
         let path = path.as_ref().to_path_buf();
         let what = format!("the repository at {}", path.display());
         let git = Repository::open(&path)

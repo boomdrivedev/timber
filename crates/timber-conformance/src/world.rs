@@ -211,7 +211,7 @@ fn changes<T>(calls: Vec<Call<T>>) -> Vec<T> {
 /// in the test's own process by the fakes, so no group's scenario pushes
 /// or lists with git.
 pub fn history_at(path: &std::path::Path) -> Answer<History> {
-    History::reaching(path, Box::new(FakeSharedHistory))
+    History::reaching(path, std::sync::Arc::new(FakeSharedHistory))
 }
 
 impl FakeWorld {

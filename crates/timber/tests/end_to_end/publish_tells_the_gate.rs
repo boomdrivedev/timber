@@ -208,6 +208,7 @@ fn binding(world: &FakeWorld, gate: Teller) -> Binding {
         signer: Some(world.host.clone()),
         gate,
         trust: Vec::new(),
+        shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
     }
 }
 

@@ -26,8 +26,8 @@ use clap::Args;
 use serde_json::{json, Value};
 use timber_core::carry::{ChannelCarried, Rooted, VersionCarried};
 use timber_core::{
-    accept, answer_json, publish, AcceptAsk, Ask, History, Judged, Kept, Moved, Publish, Published,
-    ToldBy, WhyWanting, LOCAL,
+    accept, answer_json, publish, AcceptAsk, Ask, Judged, Kept, Moved, Publish, Published, ToldBy,
+    WhyWanting, LOCAL,
 };
 use timber_seams::{Answer, Branch, ComponentName, Not, RequiredClaim, Source};
 
@@ -122,7 +122,7 @@ pub fn run(args: &PublishArgs, binding: &Answer<Binding>, at: &Path, out: &mut d
 fn ask(args: &PublishArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Offered> {
     let binding = binding.as_ref().map_err(Not::clone)?;
     let signer = binding.signer.clone().ok_or_else(unsigned)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let tree = history.workdir().ok_or_else(|| {
         Not::absent(
             &Source::history(LOCAL),

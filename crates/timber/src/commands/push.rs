@@ -14,7 +14,7 @@ use std::path::Path;
 
 use clap::Args;
 use timber_core::cache::Written;
-use timber_core::{push, push_left, History, LeftAsk, Push, PushAsk, PushedLeft, LOCAL};
+use timber_core::{push, push_left, LeftAsk, Push, PushAsk, PushedLeft, LOCAL};
 use timber_seams::{Answer, Branch, BuildId, Not, Source};
 
 use crate::{render, Binding};
@@ -63,7 +63,7 @@ pub fn run(args: &PushArgs, binding: &Answer<Binding>, at: &Path, out: &mut dyn 
 
 fn ask(args: &PushArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Push> {
     let binding = binding.as_ref().map_err(Not::clone)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let branch = Branch::new(&args.branch);
     let revision = match &args.revision {
         Some(text) => history.resolve(text)?,
@@ -78,7 +78,7 @@ fn ask(args: &PushArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Push> {
 /// is none.
 fn ask_left(binding: &Answer<Binding>, at: &Path) -> Answer<PushedLeft> {
     let binding = binding.as_ref().map_err(Not::clone)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let tree = history.workdir().ok_or_else(|| {
         Not::absent(
             &Source::history(LOCAL),

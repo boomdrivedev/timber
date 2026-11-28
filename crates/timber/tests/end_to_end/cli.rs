@@ -155,6 +155,7 @@ impl Host {
             signer: Some(SignerId::new("host")),
             gate: Teller::Job(JOB.into()),
             trust: Vec::new(),
+            shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
         }
     }
 
@@ -2706,6 +2707,7 @@ fn over_the_file(host: &Host) -> Binding {
         signer: None,
         gate: Teller::Job(JOB.into()),
         trust: Vec::new(),
+        shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
     }
 }
 

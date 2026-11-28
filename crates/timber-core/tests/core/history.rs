@@ -495,7 +495,7 @@ fn the_root_record_read_again_after_a_push_refused_is_done_where_it_names_the_ro
     let fixture = Fixture::new();
     let (shared, clone, rev) = shared_clone(&fixture);
     let theirs = written_elsewhere(&clone, "acme/site", None);
-    let history = History::reaching(&clone.path, Box::new(Racing::default())).unwrap();
+    let history = History::reaching(&clone.path, std::sync::Arc::new(Racing::default())).unwrap();
     history
         .record_root(&landed(&rev), &root("acme", "site"))
         .unwrap();
@@ -511,7 +511,7 @@ fn the_root_record_refused_where_another_root_was_written_first_names_gits_words
     let fixture = Fixture::new();
     let (shared, clone, rev) = shared_clone(&fixture);
     let theirs = written_elsewhere(&clone, "acme/web", None);
-    let history = History::reaching(&clone.path, Box::new(Racing::default())).unwrap();
+    let history = History::reaching(&clone.path, std::sync::Arc::new(Racing::default())).unwrap();
     let Err(Not::Refused(r)) = history.record_root(&landed(&rev), &root("acme", "site")) else {
         panic!("a root written over another's was recorded")
     };

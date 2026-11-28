@@ -17,7 +17,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use clap::Args;
-use timber_core::{in_force, ChannelInForce, History, InForce, InForceAsk};
+use timber_core::{in_force, ChannelInForce, InForce, InForceAsk};
 use timber_seams::{
     Answer, AskedOf, Branch, HeldChannel, Keeping, Moves, NamedSigner, Not, Required, RequiredClaim,
 };
@@ -50,7 +50,7 @@ pub fn run(args: &PolicyArgs, binding: &Answer<Binding>, at: &Path, out: &mut dy
 
 fn ask(args: &PolicyArgs, binding: &Answer<Binding>, at: &Path) -> Answer<InForce> {
     let binding = binding.as_ref().map_err(Not::clone)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     in_force(
         &binding.seams,
         &history,

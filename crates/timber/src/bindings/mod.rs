@@ -932,6 +932,7 @@ pub fn bind(
         signer: signing.map(Signing::signer),
         gate,
         trust,
+        shared: std::sync::Arc::new(timber_core::GitCommand),
     })
 }
 

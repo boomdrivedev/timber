@@ -244,7 +244,7 @@ impl Repo {
     /// The repository's history, its shared history reached in the
     /// test's own process.
     pub fn history(&self) -> History {
-        History::reaching(&self.path, Box::new(FakeSharedHistory)).unwrap()
+        History::reaching(&self.path, std::sync::Arc::new(FakeSharedHistory)).unwrap()
     }
 }
 

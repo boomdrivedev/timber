@@ -1168,6 +1168,7 @@ impl Consumer {
             signer: None,
             gate: Teller::Job("the gate's job".into()),
             trust: vec![],
+            shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
         }
     }
 
@@ -1411,6 +1412,7 @@ fn fresh(serving: bool) -> Binder {
             signer: None,
             gate: Teller::Job("the gate's job".into()),
             trust: vec![],
+            shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
         })
     })
 }
@@ -1497,6 +1499,7 @@ fn a_served_layout_is_handed_the_base_of_the_address_the_process_is_bound_at() {
             signer: None,
             gate: Teller::Job("the gate's job".into()),
             trust: vec![],
+            shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
         })
     });
     let (address, server) = serving_with(&consumer.world.host, bind);

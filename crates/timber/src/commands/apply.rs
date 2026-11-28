@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::Args;
 use serde_json::{json, Value};
 use timber_core::after::{follow, After, FollowAsk, Follows};
-use timber_core::{answer_json, apply, Applied, ApplyAsk, History};
+use timber_core::{answer_json, apply, Applied, ApplyAsk};
 use timber_seams::{Answer, Branch, ComponentName, EnvironmentName, Not};
 
 use crate::bindings::Teller;
@@ -126,7 +126,7 @@ fn now() -> u64 {
 fn ask(args: &ApplyArgs, binding: &Answer<Binding>, at: &Path) -> Answer<Converged> {
     let binding = binding.as_ref().map_err(Not::clone)?;
     let signer = binding.signer.clone().ok_or_else(unsigned)?;
-    let history = History::open(at)?;
+    let history = binding.history(at)?;
     let ask = ApplyAsk {
         branch: Branch::new(&args.branch),
         component: args.component.as_ref().map(ComponentName::new),
@@ -553,6 +553,7 @@ mod tests {
                 signer: Some(SignerId::new(HOST)),
                 gate: Teller::Job("the gate's job".into()),
                 trust: vec![],
+                shared: std::sync::Arc::new(timber_fakes::FakeSharedHistory),
             }
         }
 
