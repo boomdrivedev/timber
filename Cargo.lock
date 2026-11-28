@@ -3452,6 +3452,7 @@ dependencies = [
 name = "timber-fakes"
 version = "0.0.0"
 dependencies = [
+ "git2",
  "semver",
  "serde",
  "serde_json",

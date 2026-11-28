@@ -5,8 +5,9 @@ use std::fs;
 
 use crate::common::{landed, Fixture, Repo};
 use semver::Version;
-use timber_core::{paths_hold, History, ROOT_REF};
-use timber_seams::{Branch, Not, RepositoryName, Revision, Seam, Why};
+use timber_core::{paths_hold, GitCommand, History, ROOT_REF};
+use timber_fakes::FakeSharedHistory;
+use timber_seams::{Answer, Branch, Not, RepositoryName, Revision, Seam, SharedHistory, Why};
 
 #[test]
 fn a_path_that_is_not_a_repository_is_unreadable_with_gits_words() {
@@ -609,4 +610,123 @@ fn the_root_record_of_a_branch_with_no_remote_is_the_own_ref() {
     );
     assert_eq!(root_at_tip(&repo), "acme/site");
     assert_eq!(repo.git(&["remote"]), "");
+}
+
+// The shared history: the git command and the fake answer alike
+
+/// What `answer` came to, its revisions named by `names` and a refusal by
+/// git's reason alone, so the git command's answers and the fake's
+/// compare.
+fn told<T: std::fmt::Debug>(answer: Answer<T>, names: &[(String, &str)]) -> String {
+    let mut text = match answer {
+        Ok(value) => format!("{value:?}"),
+        Err(Not::Unreadable(_)) => "unreadable".into(),
+        Err(other) => format!("{other:?}"),
+    };
+    if let Some(at) = text.find("[rejected] (") {
+        let reason = &text[at..];
+        let end = reason.find(')').unwrap();
+        text = format!("rejected {}", &reason["[rejected] ".len()..=end]);
+    }
+    for (id, name) in names {
+        text = text.replace(id.as_str(), name);
+    }
+    text
+}
+
+/// One shared history and two clones of it, reached as `shared`: tags
+/// pushed, again, and refused; an annotated tag listed with its commit;
+/// the record's ref pushed, moved forward, refused, fetched and refused
+/// again; and what neither holds.
+fn reached_as(shared: &dyn SharedHistory) -> Vec<String> {
+    let fixture = Fixture::new();
+    let bare = fixture.bare("shared.git");
+    let first = fixture.clone_of(&bare, "first");
+    let second = fixture.clone_of(&bare, "second");
+    let one = first.commit("feat: one", &[("a", "1")]);
+    first.tag("v1.0.0", &one);
+    first.annotated("v1.1.0", &one);
+    let two = second.commit("feat: two", &[("b", "2")]);
+    second.tag("v1.0.0", &two);
+    let three = first.commit("feat: three", &[("a", "3")]);
+    let names = [
+        (one.as_str().to_string(), "one"),
+        (two.as_str().to_string(), "two"),
+        (three.as_str().to_string(), "three"),
+    ];
+    let w = "the test's read";
+    let (a, b) = (&first.path, &second.path);
+    let tag = |name: &str| format!("refs/tags/{name}");
+    let mut said = vec![
+        told(
+            shared.push(a, "origin", &tag("v1.0.0"), &tag("v1.0.0"), w),
+            &names,
+        ),
+        told(
+            shared.push(a, "origin", &tag("v1.0.0"), &tag("v1.0.0"), w),
+            &names,
+        ),
+        told(
+            shared.push(a, "origin", &tag("v1.1.0"), &tag("v1.1.0"), w),
+            &names,
+        ),
+        told(
+            shared.push(b, "origin", &tag("v1.0.0"), &tag("v1.0.0"), w),
+            &names,
+        ),
+    ];
+    let listed = shared.list(a, "origin", "refs/tags/v*", w).map(|refs| {
+        refs.into_iter()
+            .filter(|(name, _)| !name.starts_with("refs/tags/v1.1.0") || name.ends_with("^{}"))
+            .collect::<Vec<_>>()
+    });
+    said.push(told(listed, &names));
+    said.push(told(
+        shared.push(a, "origin", one.as_str(), ROOT_REF, w),
+        &names,
+    ));
+    said.push(told(
+        shared.push(a, "origin", three.as_str(), ROOT_REF, w),
+        &names,
+    ));
+    said.push(told(
+        shared.push(b, "origin", two.as_str(), ROOT_REF, w),
+        &names,
+    ));
+    said.push(told(shared.fetch(b, "origin", ROOT_REF, w), &names));
+    said.push(told(
+        shared.push(b, "origin", two.as_str(), ROOT_REF, w),
+        &names,
+    ));
+    said.push(told(shared.list(b, "origin", ROOT_REF, w), &names));
+    let fetched = git2::Repository::open(b).unwrap();
+    said.push(format!(
+        "fetched {}, no ref {}",
+        fetched
+            .find_commit(git2::Oid::from_str(three.as_str()).unwrap())
+            .is_ok(),
+        fetched.find_reference(ROOT_REF).is_err()
+    ));
+    said.push(told(
+        shared.fetch(b, "origin", "refs/timber/none", w),
+        &names,
+    ));
+    said.push(told(shared.list(b, "nowhere", ROOT_REF, w), &names));
+    said
+}
+
+/// The one contract test of the shared history against real git (rule
+/// logic-is-tested-as-units-and-few-tests-run-the-binary): the fake the
+/// core's tests reach it through answers every operation as the git
+/// command does.
+#[test]
+fn the_git_command_and_the_fake_reach_a_shared_history_alike() {
+    let git = reached_as(&GitCommand);
+    assert_eq!(
+        git[..4],
+        ["Held", "Held", "Held", "rejected (already exists)"]
+    );
+    assert_eq!(git[7], "rejected (fetch first)", "{git:?}");
+    assert_eq!(git[9], "rejected (non-fast-forward)", "{git:?}");
+    assert_eq!(reached_as(&FakeSharedHistory), git);
 }
