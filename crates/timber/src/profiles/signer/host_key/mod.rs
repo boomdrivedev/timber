@@ -29,6 +29,8 @@ use timber_seams::{
     Why, IN_TOTO,
 };
 
+#[cfg(test)]
+mod conformance;
 mod listed;
 #[cfg(test)]
 mod tests;

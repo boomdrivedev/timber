@@ -230,4 +230,6 @@ impl Projection for MoonCache {
 }
 
 #[cfg(test)]
+mod conformance;
+#[cfg(test)]
 mod tests;

@@ -8,10 +8,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+use crate::profiles::signer::host_key::HostKey;
 use ssh_key::rand_core::OsRng;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use tempfile::TempDir;
-use timber::profiles::signer::host_key::HostKey;
 use timber_conformance::seams::signer::{self, SignerRig};
 use timber_conformance::{not_applicable, run, Rig};
 use timber_seams::{ClaimKind, NamedSigner, Signer, SignerId};

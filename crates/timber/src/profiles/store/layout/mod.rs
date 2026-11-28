@@ -35,6 +35,8 @@ use timber_seams::{
 };
 
 mod blobs;
+#[cfg(test)]
+mod conformance;
 mod index;
 
 use super::oci::{self, Descriptor, CREATED, ENVELOPE, OCTETS, REF_NAME, SUBJECT};
