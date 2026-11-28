@@ -346,7 +346,7 @@ fn two_clones_at_different_paths_and_times_render_the_same_bytes() {
     first.tag("v1.2.3", &rev);
     first.touch("feat: a new call", &["crates/lib"]);
     first.touch("fix!: a bug that breaks", &["crates/lib"]);
-    first.git(&["push", "-q", "origin", "main", "v1.2.3"]);
+    first.push(&["refs/heads/main", "refs/tags/v1.2.3"]);
 
     // git-cliff's default prints the release's day, the tagged revision's.
     let here = notes_of(&first, &versioned(&first));

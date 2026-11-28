@@ -671,7 +671,7 @@ fn the_verified_version_names_the_components_tag() {
     // and grown by a feature since, so its next version is 1.2.0.
     let mut world = World::new();
     world.repo.tag("web-v1.1.0", &world.head);
-    world.repo.git(&["push", "-q", "origin", "web-v1.1.0"]);
+    world.repo.push(&["refs/tags/web-v1.1.0"]);
     let revision = world.repo.touch("feat: web grows", &["site"]);
     world.fakes.landing.land(&world.main, &revision);
     world.fakes.build.made(

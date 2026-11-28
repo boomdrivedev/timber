@@ -35,7 +35,7 @@ fn two_publishers(fixture: &Fixture) -> (Repo, Repo, Repo) {
     let first = fixture.clone_of(&shared, "first");
     let base = first.touch("feat: lib", &["crates/lib"]);
     first.tag("lib-v1.2.3", &base);
-    first.git(&["push", "-q", "origin", "main", "refs/tags/lib-v1.2.3"]);
+    first.push(&["refs/heads/main", "refs/tags/lib-v1.2.3"]);
     let second = fixture.clone_of(&shared, "second");
     (shared, first, second)
 }
