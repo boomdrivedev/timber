@@ -1491,9 +1491,9 @@ fn index_meta(world: &World, published: &Published) -> IndexMeta {
 /// to the shared history's path, so git reaches it while the address
 /// reads as written (design D17).
 fn addressed(world: &World, url: &str) {
-    world.repo.git(&["remote", "set-url", "origin", url]);
+    world.repo.remote_set_url("origin", url);
     let shared = format!("url.{}.insteadOf", world.shared.path.display());
-    world.repo.git(&["config", &shared, url]);
+    world.repo.config(&shared, url);
 }
 
 #[test]
@@ -1516,7 +1516,7 @@ fn a_repository_with_a_remote_names_its_owner_and_name_on_the_index() {
 #[test]
 fn a_repository_with_no_remote_names_the_revision_and_no_repository() {
     let world = World::new();
-    world.repo.git(&["config", "--unset", "branch.main.remote"]);
+    world.repo.config_unset("branch.main.remote");
     let published = world.publish_one(&world.ask_for("lib")).unwrap();
     assert!(matches!(published, Published::Version { .. }));
     let meta = index_meta(&world, &published);
@@ -1564,10 +1564,7 @@ fn the_same_revision_published_again_ends_at_the_same_index_and_writes_nothing()
     world.pushed(&["lib-pack", "lib-docs"]);
     let first = world.publish(&world.ask()).unwrap();
     let store = world.fakes.store.contents();
-    let tags = (
-        world.repo.git(&["tag", "-l"]),
-        world.shared.git(&["tag", "-l"]),
-    );
+    let tags = (world.repo.tags(None), world.shared.tags(None));
     let record: Vec<(std::path::PathBuf, Vec<u8>)> = walk(world.kept().dir())
         .into_iter()
         .map(|p| {
@@ -1584,13 +1581,7 @@ fn the_same_revision_published_again_ends_at_the_same_index_and_writes_nothing()
     assert!(again
         .iter()
         .all(|c| matches!(c.op, StoreOp::Resolve | StoreOp::Read | StoreOp::ClaimsOf)));
-    assert_eq!(
-        (
-            world.repo.git(&["tag", "-l"]),
-            world.shared.git(&["tag", "-l"])
-        ),
-        tags
-    );
+    assert_eq!((world.repo.tags(None), world.shared.tags(None)), tags);
     let now: Vec<(std::path::PathBuf, Vec<u8>)> = walk(world.kept().dir())
         .into_iter()
         .map(|p| {
@@ -2012,11 +2003,9 @@ fn a_name_held_by_another_revision_puts_nothing_of_the_notes() {
     let world = World::new();
     // The name is held at a revision of another branch, which the head
     // does not reach.
-    world
-        .repo
-        .git(&["checkout", "-q", "-b", "side", world.start.as_str()]);
+    world.repo.branch("side", Some(&world.start));
     let side = world.repo.touch("fix: elsewhere", &["crates/lib"]);
-    world.repo.git(&["checkout", "-q", "main"]);
+    world.repo.checkout("main");
     world.repo.tag("lib-v0.2.0", &side);
     let r = refused(world.publish_one(&world.ask_for("lib")));
     assert!(matches!(r.why, Why::NameHeld { .. }), "{r:?}");
@@ -2450,8 +2439,8 @@ fn a_publish_whose_carry_is_refused_claims_and_offers_nothing() {
     assert_eq!(world.fakes.build.calls(), []);
     assert_eq!(world.fakes.signer.calls(), []);
     no_pack(&world);
-    assert_eq!(world.shared.git(&["tag", "-l", "lib-v0.2.*"]), "");
-    assert_eq!(world.repo.git(&["tag", "-l", "lib-v0.2.*"]), "");
+    assert_eq!(world.shared.tags(Some("lib-v0.2.*")), Vec::<String>::new());
+    assert_eq!(world.repo.tags(Some("lib-v0.2.*")), Vec::<String>::new());
     assert!(world.fakes.store.contents().names.is_empty());
     assert_eq!(record(&world), [repository("acme", "app")]);
 }

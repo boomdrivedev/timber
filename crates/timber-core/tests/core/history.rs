@@ -138,10 +138,10 @@ fn a_tag_on_a_revision_the_landed_one_does_not_reach_is_not_kept() {
     let repo = fixture.repo("repo");
     let base = repo.touch("feat: base", &["a"]);
     repo.tag("v1.0.0", &base);
-    repo.git(&["checkout", "-q", "-b", "side"]);
+    repo.branch("side", None);
     let side = repo.touch("feat: side", &["a"]);
     repo.tag("v2.0.0", &side);
-    repo.git(&["checkout", "-q", "main"]);
+    repo.checkout("main");
     let main = repo.touch("fix: main", &["a"]);
 
     let tags = repo.history().tags(&landed(&main), "v").unwrap();
@@ -157,11 +157,11 @@ fn a_tag_only_the_shared_history_holds_is_read() {
     let shared = fixture.bare("shared.git");
     let first = fixture.clone_of(&shared, "first");
     let rev = first.touch("feat: one", &["a"]);
-    first.git(&["push", "-q", "origin", "main"]);
+    first.push(&["refs/heads/main"]);
     let second = fixture.clone_of(&shared, "second");
     first.annotated("v1.0.0", &rev);
-    first.git(&["push", "-q", "origin", "refs/tags/v1.0.0"]);
-    first.git(&["tag", "-d", "v1.0.0"]);
+    first.push(&["refs/tags/v1.0.0"]);
+    first.delete_tag("v1.0.0");
     assert_eq!(second.tag_at("v1.0.0"), None);
 
     let history = second.history();
@@ -181,7 +181,7 @@ fn a_shared_history_that_cannot_be_reached_makes_the_tags_unreadable() {
     let shared = fixture.bare("shared.git");
     let clone = fixture.clone_of(&shared, "clone");
     let rev = clone.touch("feat: one", &["a"]);
-    clone.git(&["push", "-q", "origin", "main"]);
+    clone.push(&["refs/heads/main"]);
     fs::remove_dir_all(&shared.path).unwrap();
 
     let Err(Not::Unreadable(u)) = clone.history().tags(&landed(&rev), "v") else {
@@ -236,7 +236,7 @@ fn a_name_that_is_no_commit_is_absent_with_gits_words() {
         a.what,
         format!("commit named no-such-thing: {}", git.message())
     );
-    let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    let tree = repo.rev_parse("HEAD^{tree}");
     assert!(matches!(history.resolve(&tree), Err(Not::Absent(_))));
     assert!(matches!(
         history.head(&Branch::new("elsewhere")),
@@ -250,14 +250,7 @@ fn two_worktrees_of_one_repository_answer_one_common_directory() {
     let repo = fixture.repo("repo");
     repo.commit("chore: start", &[("a", "a")]);
     let other = fixture.path("other");
-    repo.git(&[
-        "worktree",
-        "add",
-        "-q",
-        "-b",
-        "other",
-        other.to_str().unwrap(),
-    ]);
+    repo.worktree("other", &other);
 
     let here = repo.history().common_dir();
     let there = History::open(&other).unwrap().common_dir();
@@ -275,14 +268,7 @@ fn two_worktrees_of_one_repository_answer_two_git_directories() {
     let repo = fixture.repo("repo");
     repo.commit("chore: start", &[("a", "a")]);
     let other = fixture.path("other");
-    repo.git(&[
-        "worktree",
-        "add",
-        "-q",
-        "-b",
-        "other",
-        other.to_str().unwrap(),
-    ]);
+    repo.worktree("other", &other);
 
     let (here, there) = (repo.history(), History::open(&other).unwrap());
     assert_ne!(here.git_dir(), there.git_dir());
@@ -291,16 +277,9 @@ fn two_worktrees_of_one_repository_answer_two_git_directories() {
         here.git_dir(),
         repo.path.join(".git").canonicalize().unwrap()
     );
-    let theirs = repo.git(&[
-        "-C",
-        other.to_str().unwrap(),
-        "rev-parse",
-        "--absolute-git-dir",
-    ]);
-    assert_eq!(
-        there.git_dir(),
-        std::path::Path::new(&theirs).canonicalize().unwrap()
-    );
+    // Where git keeps a worktree's own directory, under the common one.
+    let theirs = repo.path.join(".git/worktrees/other");
+    assert_eq!(there.git_dir(), theirs.canonicalize().unwrap());
     assert!(
         there.git_dir().starts_with(here.common_dir()),
         "{} is not under the common directory",
@@ -346,13 +325,13 @@ fn shared_clone(fixture: &Fixture) -> (Repo, Repo, Revision) {
     let shared = fixture.bare("shared.git");
     let clone = fixture.clone_of(&shared, "clone");
     let rev = clone.touch("feat: one", &["a"]);
-    clone.git(&["push", "-q", "origin", "main"]);
+    clone.push(&["refs/heads/main"]);
     (shared, clone, rev)
 }
 
 /// The root `repo`'s ref of the record names at its tip, as git reads it.
 fn root_at_tip(repo: &Repo) -> String {
-    repo.git(&["cat-file", "blob", &format!("{ROOT_REF}:root")])
+    repo.blob(&format!("{ROOT_REF}:root"))
 }
 
 /// A commit of the record naming `named` on `parent`, written into `repo`
@@ -439,12 +418,12 @@ fn the_root_record_holds_the_first_root_written_and_pushed() {
     assert_eq!(history.roots(&landed(&rev)).unwrap(), [root("acme", "app")]);
     assert_eq!(root_at_tip(&shared), "acme/app");
     assert_eq!(
-        shared.git(&["rev-parse", ROOT_REF]),
-        clone.git(&["rev-parse", ROOT_REF]),
+        shared.rev_parse(ROOT_REF),
+        clone.rev_parse(ROOT_REF),
         "the copy is not where the remote is"
     );
     assert_eq!(
-        shared.git(&["log", "-1", "--format=%an <%ae>|%cn <%ce>|%s|%P", ROOT_REF]),
+        shared.commit_line(ROOT_REF),
         "timber <timber@localhost>|timber <timber@localhost>|acme/app|"
     );
     let other = fixture.clone_of(&shared, "other");
@@ -462,7 +441,7 @@ fn the_root_record_appends_a_second_root_after_the_first() {
     history
         .record_root(&landed(&rev), &root("acme", "app"))
         .unwrap();
-    let first = shared.git(&["rev-parse", ROOT_REF]);
+    let first = shared.rev_parse(ROOT_REF);
     history
         .record_root(&landed(&rev), &root("acme", "site"))
         .unwrap();
@@ -471,7 +450,7 @@ fn the_root_record_appends_a_second_root_after_the_first() {
         history.roots(&landed(&rev)).unwrap(),
         [root("acme", "app"), root("acme", "site")]
     );
-    assert_eq!(shared.git(&["rev-parse", &format!("{ROOT_REF}^")]), first);
+    assert_eq!(shared.rev_parse(&format!("{ROOT_REF}^")), first);
     assert_eq!(root_at_tip(&shared), "acme/site");
 }
 
@@ -499,7 +478,7 @@ fn the_root_record_read_again_after_a_push_refused_is_done_where_it_names_the_ro
     history
         .record_root(&landed(&rev), &root("acme", "site"))
         .unwrap();
-    assert_eq!(shared.git(&["rev-parse", ROOT_REF]), theirs);
+    assert_eq!(shared.rev_parse(ROOT_REF), theirs);
     assert_eq!(
         history.roots(&landed(&rev)).unwrap(),
         [root("acme", "site")]
@@ -520,7 +499,7 @@ fn the_root_record_refused_where_another_root_was_written_first_names_gits_words
     let said = r.said.unwrap();
     assert!(said.contains(ROOT_REF), "{said}");
     assert!(said.contains("rejected"), "{said}");
-    assert_eq!(shared.git(&["rev-parse", ROOT_REF]), theirs);
+    assert_eq!(shared.rev_parse(ROOT_REF), theirs);
     assert_eq!(history.roots(&landed(&rev)).unwrap(), [root("acme", "web")]);
 }
 
@@ -532,12 +511,12 @@ fn the_root_record_is_unreadable_where_the_remote_holds_less_than_the_copy() {
     history
         .record_root(&landed(&rev), &root("acme", "app"))
         .unwrap();
-    let first = shared.git(&["rev-parse", ROOT_REF]);
+    let first = shared.rev_parse(ROOT_REF);
     history
         .record_root(&landed(&rev), &root("acme", "site"))
         .unwrap();
-    let second = shared.git(&["rev-parse", ROOT_REF]);
-    shared.git(&["update-ref", ROOT_REF, &first]);
+    let second = shared.rev_parse(ROOT_REF);
+    shared.update_ref(ROOT_REF, &first);
 
     let Err(Not::Unreadable(u)) = history.roots(&landed(&rev)) else {
         panic!("a remote holding less than the copy was read")
@@ -545,13 +524,9 @@ fn the_root_record_is_unreadable_where_the_remote_holds_less_than_the_copy() {
     assert_eq!(u.source.profile, "git, origin");
     assert!(u.what.contains(&second), "{}", u.what);
     assert!(!u.what.contains(&first), "{}", u.what);
-    assert_eq!(
-        clone.git(&["rev-parse", ROOT_REF]),
-        second,
-        "the copy moved back"
-    );
+    assert_eq!(clone.rev_parse(ROOT_REF), second, "the copy moved back");
 
-    shared.git(&["update-ref", "-d", ROOT_REF]);
+    shared.delete_ref(ROOT_REF);
     let Err(Not::Unreadable(u)) = history.roots(&landed(&rev)) else {
         panic!("a remote holding none of the copy was read")
     };
@@ -603,7 +578,7 @@ fn the_root_record_of_a_branch_with_no_remote_is_the_own_ref() {
         [root("acme", "app"), root("acme", "site")]
     );
     assert_eq!(root_at_tip(&repo), "acme/site");
-    assert_eq!(repo.git(&["remote"]), "");
+    assert_eq!(repo.remotes(), Vec::<String>::new());
 }
 
 // The shared history: the git command and the fake answer alike

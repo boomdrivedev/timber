@@ -247,14 +247,7 @@ fn an_entry_held_with_other_content_is_refused_and_left_as_it_is() {
 fn two_worktrees_of_one_repository_share_one_record() {
     let world = World::new();
     let other = world.fixture.path("other");
-    world.repo.git(&[
-        "worktree",
-        "add",
-        "-q",
-        "-b",
-        "elsewhere",
-        other.to_str().unwrap(),
-    ]);
+    world.repo.worktree("elsewhere", &other);
     let (version, _) = published(&world);
     let there = Kept::at(&History::open(&other).unwrap());
     assert_eq!(there, world.kept());
@@ -1167,8 +1160,8 @@ fn a_tag_the_history_does_not_hold_leaves_that_versions_notes_unreadable_and_the
     declare(&world, &stable(), None);
     let [first, second] = two_published(&world);
     let chain = promoted_to(&world, &stable(), &[first.clone(), second.clone()]);
-    world.repo.git(&["tag", "-d", "lib-v0.2.0"]);
-    world.shared.git(&["tag", "-d", "lib-v0.2.0"]);
+    world.repo.delete_tag("lib-v0.2.0");
+    world.shared.delete_tag("lib-v0.2.0");
 
     let answer = asked(&world, &ask(&world));
     let stable = &channels_of(&answer)[0];
@@ -2303,12 +2296,10 @@ fn one_channels_unreadable_chain_is_that_heads_own_answer() {
 fn a_remotes_address_is_read_as_written_with_no_rewrite_applied() {
     let world = World::new();
     let url = "https://example.com/agentplot/timber.git";
-    world.repo.git(&["remote", "add", "upstream", url]);
-    world.repo.git(&[
-        "config",
-        "url./srv/elsewhere/.insteadOf",
-        "https://example.com/",
-    ]);
+    world.repo.remote_add("upstream", url);
+    world
+        .repo
+        .config("url./srv/elsewhere/.insteadOf", "https://example.com/");
     let history = world.history();
     assert_eq!(history.remote_url("upstream"), Ok(Some(url.to_string())));
     assert_eq!(history.remote_url("nowhere"), Ok(None));
