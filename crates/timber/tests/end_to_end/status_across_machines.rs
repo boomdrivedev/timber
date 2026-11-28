@@ -9,16 +9,15 @@
 //! read, each saying when (60, 61, 77, C.6). Needs git alone, so it is in
 //! the fast layer.
 
-mod scratch;
-
 use std::fs;
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::scratch;
+use crate::scratch::{Repo, Scratch, MAIN, POLICY_FILE};
 use clap::Parser;
-use scratch::{Repo, Scratch, MAIN, POLICY_FILE};
 use serde_json::Value;
 use ssh_key::rand_core::OsRng;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};

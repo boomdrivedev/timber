@@ -7,9 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Barrier;
 
+use crate::profiles::store::layout::Layout;
 use serde_json::{json, Value};
 use tempfile::TempDir;
-use timber::profiles::store::layout::Layout;
 use timber_conformance::seams::store::{self, StoreRig};
 use timber_conformance::{run, Rig};
 use timber_seams::{

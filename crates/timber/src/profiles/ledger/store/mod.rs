@@ -365,3 +365,6 @@ impl Keeper for InStore {
         Ok(chain)
     }
 }
+
+#[cfg(test)]
+mod conformance;

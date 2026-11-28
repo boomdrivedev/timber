@@ -13,14 +13,12 @@
 //! documents are `plugins/herdr/tests/docs/environments/` alike (98, 134).
 //! Needs git alone, so it is in the fast layer.
 
-mod scratch;
-
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::scratch::{Scratch, MAIN, POLICY_FILE};
 use clap::Parser;
-use scratch::{Scratch, MAIN, POLICY_FILE};
 use serde_json::Value;
 use ssh_key::rand_core::OsRng;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};

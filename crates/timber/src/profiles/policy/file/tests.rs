@@ -1,75 +1,45 @@
-//! Spec policy-file: the policy read from the file at a revision of a
-//! scratch repository, each test with a repository of its own.
+//! Spec policy-file: the policy judged from the file's text at a
+//! revision, with the fragment beneath it. git's answer for the text is
+//! held in memory, so no test starts git; the profile's reading of the
+//! text with git is the contract test's, `tests/end_to_end/policy_file.rs`.
 
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-
-use tempfile::TempDir;
+use std::cell::RefCell;
 
 use super::*;
 
 /// A host key's listing, as a policy names one.
 const LAPTOP_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOv host@laptop";
 
-/// A git repository in a temporary directory, committed to under a fixed
-/// author and date with no global or system configuration.
+/// The policy file's text at each revision made, as git answers it, and
+/// the text written and not yet committed.
 struct Repo {
-    dir: TempDir,
+    revisions: RefCell<Vec<Option<String>>>,
+    written: RefCell<Option<String>>,
 }
 
 impl Repo {
     fn new() -> Repo {
-        let repo = Repo {
-            dir: TempDir::new().unwrap(),
-        };
-        repo.git(&["init", "-q", "-b", "main"]);
-        repo
-    }
-
-    fn path(&self) -> &Path {
-        self.dir.path()
-    }
-
-    fn git(&self, args: &[&str]) -> String {
-        let mut command = Command::new("git");
-        for name in GIT_REPOSITORY_ENV {
-            command.env_remove(name);
+        Repo {
+            revisions: RefCell::new(Vec::new()),
+            written: RefCell::new(None),
         }
-        let out = command
-            .arg("-C")
-            .arg(self.path())
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_NAME", "an author")
-            .env("GIT_AUTHOR_EMAIL", "author@example.org")
-            .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
-            .env("GIT_COMMITTER_NAME", "an author")
-            .env("GIT_COMMITTER_EMAIL", "author@example.org")
-            .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
 
-    /// The policy file written in the working tree, nothing committed.
+    /// The policy file written, nothing committed.
     fn write(&self, text: &str) {
-        let at = self.path().join(POLICY_FILE);
-        fs::create_dir_all(at.parent().unwrap()).unwrap();
-        fs::write(at, text).unwrap();
+        *self.written.borrow_mut() = Some(text.to_string());
+    }
+
+    /// The policy file removed, nothing committed.
+    fn remove(&self) {
+        *self.written.borrow_mut() = None;
     }
 
     /// Everything written, committed; answers the commit.
     fn commit(&self) -> Revision {
-        self.git(&["add", "-A"]);
-        self.git(&["commit", "-q", "--allow-empty", "-m", "the policy"]);
-        Revision::new(self.git(&["rev-parse", "HEAD"]))
+        let mut revisions = self.revisions.borrow_mut();
+        revisions.push(self.written.borrow().clone());
+        Revision::new(format!("{:040x}", 0xc0_0000 + revisions.len()))
     }
 
     /// `text` as the policy file of a new commit.
@@ -78,8 +48,63 @@ impl Repo {
         self.commit()
     }
 
-    fn policy(&self) -> PolicyFile {
-        PolicyFile::new(self.path())
+    /// The file's text at `revision`, as git answers it.
+    fn text(&self, revision: &Revision) -> Option<Vec<u8>> {
+        let made = usize::from_str_radix(revision.as_str(), 16).unwrap() - 0xc0_0001;
+        self.revisions.borrow()[made]
+            .as_ref()
+            .map(|text| text.as_bytes().to_vec())
+    }
+
+    /// The profile over this repository, with the fragment it ships.
+    fn policy(&self) -> Judged<'_> {
+        self.with_givens(GIVENS)
+    }
+
+    /// The profile over this repository with the fragment `givens`.
+    fn with_givens(&self, givens: &str) -> Judged<'_> {
+        Judged {
+            repo: self,
+            profile: PolicyFile::with_givens("/nowhere", givens),
+        }
+    }
+}
+
+/// The profile judging the text git answers at a revision, as
+/// [`PolicyFile`] does once it has read it.
+struct Judged<'a> {
+    repo: &'a Repo,
+    profile: PolicyFile,
+}
+
+impl Judged<'_> {
+    fn at(&self, revision: &Revision) -> Answer<AtRevision> {
+        let givens = self.profile.givens()?.clone();
+        let text = self.repo.text(revision);
+        AtRevision::new(
+            self.profile.source().clone(),
+            revision.clone(),
+            givens,
+            text,
+        )
+    }
+}
+
+impl Policy for Judged<'_> {
+    fn policy_for(&self, revision: &Revision, audience: &Audience) -> Answer<Required> {
+        self.at(revision)?.policy_for(audience)
+    }
+
+    fn channels(&self, revision: &Revision) -> Answer<PolicyChannels> {
+        self.at(revision)?.channels()
+    }
+
+    fn environments(&self, revision: &Revision) -> Answer<Vec<DeclaredEnvironment>> {
+        self.at(revision)?.environments()
+    }
+
+    fn cache_kept(&self, revision: &Revision) -> Answer<Keeping> {
+        self.at(revision)?.cache_kept()
     }
 }
 
@@ -235,7 +260,6 @@ fn a_signer_the_signers_table_lacks_is_unreadable_naming_it() {
 #[test]
 fn no_file_and_no_table_are_absent_naming_the_audience() {
     let repo = Repo::new();
-    fs::write(repo.path().join("README"), "no policy").unwrap();
     let none = repo.commit();
     absent(
         repo.policy().policy_for(&none, &Audience::Acceptance),
@@ -410,42 +434,6 @@ fn a_malformed_file_is_unreadable_with_the_parsers_words() {
     assert!(said.contains("blessing"), "{said}");
 }
 
-#[test]
-fn a_working_trees_edit_is_not_read() {
-    let repo = Repo::new();
-    let at = repo.at(&format!(
-        "{}[acceptance]\nrequire = [{{ kind = \"provenance\", signers = [\"laptop\"] }}]\n",
-        signers()
-    ));
-    repo.write(&format!(
-        "{}[signers.stranger]\nssh = \"ssh-ed25519 CCCC\"\nkinds = [\"provenance\"]\n\n\
-         [acceptance]\nrequire = [{{ kind = \"provenance\", signers = [\"stranger\"] }}]\n",
-        signers()
-    ));
-    let required = repo
-        .policy()
-        .policy_for(&at, &Audience::Acceptance)
-        .unwrap();
-    let named: Vec<&str> = required
-        .claims()
-        .iter()
-        .flat_map(|c| &c.signers)
-        .map(|s| s.id.as_str())
-        .collect();
-    assert_eq!(named, ["laptop"]);
-}
-
-#[test]
-fn a_revision_the_repository_does_not_hold_is_absent() {
-    let repo = Repo::new();
-    repo.at("");
-    let missing = Revision::new("0000000000000000000000000000000000000001");
-    assert_eq!(
-        repo.policy().policy_for(&missing, &Audience::Acceptance),
-        Err(Not::absent(&source(), format!("revision {missing}")))
-    );
-}
-
 // The channels: helpers
 
 /// A `[[component]]` table with every key the core requires.
@@ -511,7 +499,7 @@ trait Listed {
     fn listed(&self, at: &Revision) -> Answer<Vec<DeclaredChannel>>;
 }
 
-impl Listed for PolicyFile {
+impl Listed for Judged<'_> {
     fn listed(&self, at: &Revision) -> Answer<Vec<DeclaredChannel>> {
         self.channels(at).map(|channels| channels.in_force)
     }
@@ -581,7 +569,6 @@ fn a_channel_neither_given_nor_declared_is_absent_naming_it() {
 #[test]
 fn with_no_file_a_given_channel_is_answered_as_given() {
     let repo = Repo::new();
-    fs::write(repo.path().join("README"), "no policy").unwrap();
     let none = repo.commit();
     assert_eq!(
         channel_policy(&repo, &none, &id(None, "beta")),
@@ -785,7 +772,6 @@ fn two_components_channels_are_listed_by_name_then_component() {
 #[test]
 fn no_channel_declared_and_no_file_answer_the_given_channels() {
     let repo = Repo::new();
-    fs::write(repo.path().join("README"), "no policy").unwrap();
     let none = repo.commit();
     assert_eq!(repo.policy().listed(&none), Ok(givens(None)));
     let at = repo.at(&format!(
@@ -806,17 +792,7 @@ fn every_component_is_given_beta_and_stable() {
 }
 
 #[test]
-fn a_working_trees_channel_is_not_listed() {
-    let repo = Repo::new();
-    let at = repo.at("[channels.edge]\nrequire = []\n");
-    repo.write("[channels.edge]\nrequire = []\n\n[channels.next]\nrequire = []\n");
-    let mut all = givens(None);
-    all.push(declared(id(None, "edge"), Moves::Promotion));
-    assert_eq!(repo.policy().listed(&at), Ok(sorted(all)));
-}
-
-#[test]
-fn the_channels_of_a_revision_not_held_or_a_file_not_read_answer_as_policy_for() {
+fn the_channels_of_a_file_not_read_answer_as_policy_for() {
     let repo = Repo::new();
     let text = "[channels.beta\nrequire = []\n";
     let at = repo.at(text);
@@ -824,11 +800,6 @@ fn the_channels_of_a_revision_not_held_or_a_file_not_read_answer_as_policy_for()
     assert_eq!(
         said,
         toml::from_str::<toml::Table>(text).unwrap_err().to_string()
-    );
-    let missing = Revision::new("0000000000000000000000000000000000000001");
-    assert_eq!(
-        repo.policy().listed(&missing),
-        Err(Not::absent(&source(), format!("revision {missing}")))
     );
 }
 
@@ -1592,13 +1563,8 @@ fn a_broken_environment_table_makes_the_environments_unreadable_as_the_channels(
 }
 
 #[test]
-fn the_environments_of_a_revision_not_held_or_a_file_not_read_answer_as_policy_for() {
+fn the_environments_of_a_file_not_read_answer_as_policy_for() {
     let repo = Repo::new();
-    let missing = Revision::new("0000000000000000000000000000000000000001");
-    assert_eq!(
-        repo.policy().environments(&missing),
-        Err(Not::absent(&source(), format!("revision {missing}")))
-    );
     let at = repo.at("[environments.prod\nchannel = \"stable\"\n");
     let said = unreadable(repo.policy().environments(&at), &at);
     assert_eq!(unreadable(repo.policy().channels(&at), &at), said);
@@ -1990,7 +1956,7 @@ fn a_fragment_that_cannot_be_read_makes_every_answer_unreadable_naming_the_given
                 .to_string(),
         ),
     ] {
-        let policy = PolicyFile::with_givens(repo.path(), text);
+        let policy = repo.with_givens(text);
         let not = Not::unreadable(&source(), GIVENS_NAME, Some(said));
         assert_eq!(policy.listed(&at), Err(not.clone()));
         assert_eq!(policy.environments(&at), Err(not.clone()));
@@ -2007,9 +1973,8 @@ fn a_fragment_that_cannot_be_read_makes_every_answer_unreadable_naming_the_given
 #[test]
 fn another_fragment_gives_its_channels_alone() {
     let repo = Repo::new();
-    fs::write(repo.path().join("README"), "no policy").unwrap();
     let none = repo.commit();
-    let policy = PolicyFile::with_givens(repo.path(), "[channels.edge]\non_each_publish = true\n");
+    let policy = repo.with_givens("[channels.edge]\non_each_publish = true\n");
     assert_eq!(
         policy.listed(&none),
         Ok(vec![declared(
@@ -2027,9 +1992,7 @@ fn a_fragment_of_other_names_is_read_with_a_line_under_one() {
         gate_table(false),
         signers()
     ));
-    let policy = PolicyFile::with_givens(
-        repo.path(),
-        "[channels.nightly]\non_each_publish = true\n\n[channels.release]\nbound_to = \"nightly\"\n",
+    let policy = repo.with_givens("[channels.nightly]\non_each_publish = true\n\n[channels.release]\nbound_to = \"nightly\"\n",
     );
     assert_eq!(
         policy.listed(&at),
@@ -2166,12 +2129,6 @@ fn a_laptops_policy_names_it_the_gate_for_acceptance_and_the_given_channels() {
             "{channel}"
         );
     }
-    // The file at the revision, and the working tree, are as written.
-    assert_eq!(
-        repo.git(&["show", &format!("{at}:{POLICY_FILE}")]),
-        text.trim()
-    );
-    assert_eq!(repo.git(&["status", "--porcelain"]), "");
 }
 
 #[test]
@@ -2329,7 +2286,7 @@ fn held(channel: ChannelId, moves: Moves, switch: &str) -> HeldChannel {
 
 /// That no channel the channels answer at `at` holds off is among its
 /// channels in force.
-fn none_in_both(policy: &PolicyFile, at: &Revision) {
+fn none_in_both(policy: &Judged, at: &Revision) {
     let answer = policy.channels(at).unwrap();
     for given in &answer.held {
         assert!(
@@ -2361,7 +2318,7 @@ fn with_nothing_switched_on_alpha_and_lts_are_held_off_with_their_lines() {
     );
     assert_eq!(answer.in_force, givens(None));
     none_in_both(&repo.policy(), &at);
-    fs::remove_file(repo.path().join(POLICY_FILE)).unwrap();
+    repo.remove();
     let none = repo.commit();
     assert_eq!(repo.policy().channels(&none), Ok(answer));
 }
@@ -2408,11 +2365,8 @@ fn one_components_alpha_switched_on_leaves_the_held_givens_and_joins_the_channel
 #[test]
 fn another_fragments_held_given_is_answered_with_its_line() {
     let repo = Repo::new();
-    fs::write(repo.path().join("README"), "no policy").unwrap();
     let none = repo.commit();
-    let policy = PolicyFile::with_givens(
-        repo.path(),
-        "[channels.edge]\non_each_publish = true\n\n[channels.canary]\nheld = true\nbound_to = \"edge\"\n",
+    let policy = repo.with_givens("[channels.edge]\non_each_publish = true\n\n[channels.canary]\nheld = true\nbound_to = \"edge\"\n",
     );
     assert_eq!(
         policy.channels(&none),
@@ -2583,7 +2537,6 @@ fn no_cache_table_answers_the_givens_thirty_days() {
 #[test]
 fn a_revision_with_no_file_answers_the_givens_thirty_days() {
     let repo = Repo::new();
-    fs::write(repo.path().join("README"), "no policy").unwrap();
     let none = repo.commit();
     assert_eq!(
         repo.policy().cache_kept(&none),
@@ -2592,7 +2545,7 @@ fn a_revision_with_no_file_answers_the_givens_thirty_days() {
             given: true
         })
     );
-    let policy = PolicyFile::with_givens(repo.path(), "[channels.edge]\non_each_publish = true\n");
+    let policy = repo.with_givens("[channels.edge]\non_each_publish = true\n");
     assert_eq!(
         policy.cache_kept(&none),
         Err(Not::unreadable(

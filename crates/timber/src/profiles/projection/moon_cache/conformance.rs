@@ -18,9 +18,9 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::profiles::projection::moon_cache::MoonCache;
+use crate::profiles::store::layout::Layout;
 use tempfile::TempDir;
-use timber::profiles::projection::moon_cache::MoonCache;
-use timber::profiles::store::layout::Layout;
 use timber_conformance::seams::projection::{self, ProjectionRig};
 use timber_conformance::{run, Rig, Scenario};
 use timber_seams::{
@@ -84,7 +84,7 @@ impl MoonCacheRig {
 
 impl Rig for MoonCacheRig {
     fn profile(&self) -> String {
-        timber::profiles::projection::moon_cache::ECOSYSTEM.into()
+        crate::profiles::projection::moon_cache::ECOSYSTEM.into()
     }
 }
 
@@ -132,7 +132,7 @@ impl ProjectionRig for MoonCacheRig {
         let held = Artifact {
             digest: Digest::of(b"moon's archive of b7e1"),
             meta: ArtifactMeta::new(
-                Ecosystem::new(timber::profiles::projection::moon_cache::ECOSYSTEM),
+                Ecosystem::new(crate::profiles::projection::moon_cache::ECOSYSTEM),
                 EcosystemName::new("site"),
                 Version::new("1.0.0"),
             )

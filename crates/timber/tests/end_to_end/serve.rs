@@ -6,8 +6,6 @@
 //! ledger on `origin`, with promotions appended to the ledger as the
 //! fake signer seals them. Needs git alone, so it is in the fast layer.
 
-mod scratch;
-
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -17,8 +15,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::scratch::{Repo, Scratch, MAIN, POLICY_FILE};
 use clap::Parser;
-use scratch::{Repo, Scratch, MAIN, POLICY_FILE};
 use serde_json::Value;
 use ssh_key::rand_core::OsRng;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};

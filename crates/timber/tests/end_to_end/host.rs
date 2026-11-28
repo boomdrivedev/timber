@@ -5,14 +5,12 @@
 //! host key made fresh (118; design D7). Needs git alone, so it is in the
 //! fast layer.
 
-mod scratch;
-
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use scratch::recorder::Recorder;
-use scratch::{Scratch, MAIN};
+use crate::scratch::recorder::Recorder;
+use crate::scratch::{Scratch, MAIN};
 use ssh_key::rand_core::OsRng;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use timber::bindings::{self, For};
