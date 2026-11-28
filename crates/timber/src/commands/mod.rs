@@ -12,3 +12,6 @@ pub mod serve;
 pub mod status;
 pub mod sync;
 pub mod verify;
+
+#[cfg(test)]
+mod command_line;
