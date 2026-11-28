@@ -2,12 +2,10 @@
 //! a bare remote and clones of it in a scratch directory, and the suite's
 //! keeper group over it. Needs git alone, so it is in the fast layer.
 
-mod scratch;
-
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-use scratch::{git, git_fails, Repo, Scratch};
+use crate::scratch::{git, git_fails, Repo, Scratch};
 use timber::profiles::ledger::git_ref::GitRef;
 use timber_conformance::seams::keeper::{self, KeeperRig};
 use timber_conformance::{run, Rig};

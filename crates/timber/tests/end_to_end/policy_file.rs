@@ -4,12 +4,10 @@
 //! the revision asked alone. Needs git alone, so it is in the fast layer;
 //! the profile's judgment of the text is its unit tests'.
 
-mod scratch;
-
 use std::collections::BTreeMap;
 use std::fs;
 
-use scratch::{git_fails, Scratch, POLICY_FILE};
+use crate::scratch::{git_fails, Scratch, POLICY_FILE};
 use timber::profiles::policy::file::PolicyFile;
 use timber_conformance::seams::policy::{self, Declares, PolicyRig};
 use timber_conformance::{run, Rig};
@@ -19,7 +17,7 @@ use timber_seams::{
 };
 
 /// The given channels as timber ships them, beside the profile (C.10).
-const GIVENS: &str = include_str!("../src/profiles/policy/file/givens.toml");
+const GIVENS: &str = include_str!("../../src/profiles/policy/file/givens.toml");
 
 /// A scratch repository and the policy file over it.
 struct PolicyFileRig {

@@ -1,7 +1,7 @@
 //! Spec policy-file: the policy judged from the file's text at a
 //! revision, with the fragment beneath it. git's answer for the text is
 //! held in memory, so no test starts git; the profile's reading of the
-//! text with git is the contract test's, `tests/policy_file.rs`.
+//! text with git is the contract test's, `tests/end_to_end/policy_file.rs`.
 
 use std::cell::RefCell;
 

@@ -10,14 +10,13 @@
 //! the given ledger on `origin`. Needs git alone, so it is in the fast
 //! layer.
 
-mod scratch;
-
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::scratch;
+use crate::scratch::{Repo, Scratch, MAIN, POLICY_FILE};
 use clap::Parser;
-use scratch::{Repo, Scratch, MAIN, POLICY_FILE};
 use ssh_key::rand_core::OsRng;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use timber::bindings::{self, For};

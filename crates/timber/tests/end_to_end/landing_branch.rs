@@ -4,12 +4,11 @@
 //! layer; S13 over a plain branch and moon is in the tools layer
 //! (`landings_end_to_end.rs`).
 
-mod scratch;
-
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-use scratch::{git_fails, Scratch, MAIN};
+use crate::scratch;
+use crate::scratch::{git_fails, Scratch, MAIN};
 use timber::profiles::landing::branch::PlainBranch;
 use timber_conformance::seams::landing::{self, LandingRig, Recorded};
 use timber_conformance::{run, Rig};

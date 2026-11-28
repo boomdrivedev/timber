@@ -4,14 +4,13 @@
 //! of a commit stamps the commit before it. Needs git alone, so it is in
 //! the fast layer.
 
-#[path = "../build/revision.rs"]
+#[path = "../../build/revision.rs"]
 mod revision;
-mod scratch;
 
 use std::fs;
 use std::path::PathBuf;
 
-use scratch::{Repo, Scratch, MAIN};
+use crate::scratch::{Repo, Scratch, MAIN};
 
 /// Each file the build watches in `repo`, and what it holds, `None` where
 /// it is missing.
