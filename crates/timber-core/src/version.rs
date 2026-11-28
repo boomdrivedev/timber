@@ -10,10 +10,9 @@ use git_cliff_core::config::{Bump, ChangelogConfig, Config, GitConfig, RemoteCon
 use git_cliff_core::release::Release;
 use semver::{BuildMetadata, Prerelease, Version};
 use timber_seams::{
-    Answer, Component, ComponentName, Not, Revision, Source, Version as Named, Why,
+    Answer, Component, ComponentName, Not, PushedRef, Revision, Source, Version as Named, Why,
 };
 
-use crate::history::Pushed;
 use crate::{Commit, Declared, History, Landed, Rule, Tag, LOCAL};
 
 /// Whether a version is a release or a prerelease of the next one.
@@ -280,8 +279,8 @@ pub fn claim(history: &History, landed: &Landed, versioned: &Versioned) -> Answe
         return Ok(claimed(None));
     };
     match history.push_tag(&remote, name)? {
-        Pushed::Held => Ok(claimed(Some(remote))),
-        Pushed::Rejected(words) => match history.remote_tag(&remote, name)? {
+        PushedRef::Held => Ok(claimed(Some(remote))),
+        PushedRef::Rejected(words) => match history.remote_tag(&remote, name)? {
             Some(other) if other == revision => Ok(claimed(Some(remote))),
             other => {
                 if made {

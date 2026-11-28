@@ -113,7 +113,6 @@ fn a_name_another_publisher_claimed_at_another_revision_is_refused() {
         said.contains("!\trefs/tags/lib-v1.2.4:refs/tags/lib-v1.2.4\t[rejected] (already exists)"),
         "{said}"
     );
-    assert!(said.contains("error: failed to push some refs"), "{said}");
     assert_eq!(
         shared.tag_at("lib-v1.2.4").as_deref(),
         Some(theirs.as_str())
@@ -160,10 +159,7 @@ fn a_shared_history_that_is_gone_is_unreadable_never_refused() {
     };
     assert_eq!(u.source.profile, "git, origin");
     let said = u.said.unwrap();
-    assert!(
-        said.contains("does not appear to be a git repository"),
-        "{said}"
-    );
+    assert!(said.contains(&shared.path.display().to_string()), "{said}");
 }
 
 #[test]

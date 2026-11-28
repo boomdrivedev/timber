@@ -9,26 +9,29 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use git2::{ErrorCode, Object, ObjectType, Oid, Repository};
 use git_cliff_core::commit::Commit as CliffCommit;
 use glob::Pattern;
 use regex::Regex;
 use semver::Version;
-use timber_seams::{Answer, Branch, Not, RepositoryName, Revision, Source, Why};
+use timber_seams::{
+    Answer, Branch, Not, PushedRef, RepositoryName, Revision, SharedHistory, Source, Why,
+};
 
-use crate::Landed;
+use crate::{GitCommand, Landed};
 
 /// What the history's source names when the history read is the
 /// repository's own, not a remote's.
 pub const LOCAL: &str = "local";
 
-/// A repository's history, opened at one path.
+/// A repository's history, opened at one path, and the shared history
+/// its remotes are reached as.
 pub struct History {
     path: PathBuf,
     git: Repository,
     cliff: git_cliff_core::repo::Repository,
+    shared: Box<dyn SharedHistory>,
 }
 
 /// A commit: its revision and its message as written.
@@ -45,14 +48,6 @@ pub struct Tag {
     pub name: String,
     pub version: Version,
     pub revision: Revision,
-}
-
-/// What a push of a tag to the shared history came to.
-pub(crate) enum Pushed {
-    /// The shared history holds the tag where it was pushed from.
-    Held,
-    /// The shared history refused it, in git's words.
-    Rejected(String),
 }
 
 /// 123: whether a component's `paths` hold a path of the repository,
@@ -85,22 +80,30 @@ fn words(error: &git2::Error) -> Option<String> {
     Some(error.message().to_string())
 }
 
-fn said(output: &Output) -> Option<String> {
-    Some(String::from_utf8_lossy(&output.stderr).into_owned())
-}
-
 impl History {
     /// The repository at `path`, a working tree or a bare repository,
-    /// with no search of its parents; unreadable naming the path with
-    /// git's words when it is none.
+    /// with no search of its parents, its remotes reached with the git
+    /// command; unreadable naming the path with git's words when it is
+    /// none.
     pub fn open(path: impl AsRef<Path>) -> Answer<History> {
+        History::reaching(path, Box::new(GitCommand))
+    }
+
+    /// The repository at `path`, as [`History::open`] opens it, its
+    /// remotes reached as `shared`.
+    pub fn reaching(path: impl AsRef<Path>, shared: Box<dyn SharedHistory>) -> Answer<History> {
         let path = path.as_ref().to_path_buf();
         let what = format!("the repository at {}", path.display());
         let git = Repository::open(&path)
             .map_err(|e| Not::unreadable(&local(), what.clone(), words(&e)))?;
         let cliff = git_cliff_core::repo::Repository::init(path.clone())
             .map_err(|e| Not::unreadable(&local(), what, Some(e.to_string())))?;
-        Ok(History { path, git, cliff })
+        Ok(History {
+            path,
+            git,
+            cliff,
+            shared,
+        })
     }
 
     /// The commit the landed revision names; unreadable when this
@@ -310,32 +313,13 @@ impl History {
         }
     }
 
-    /// The git command at this repository, with no prompt, so a remote
-    /// asks the host's own credential helper and never a terminal (rule
-    /// core.21).
-    fn git(&self, at: &str, what: &str, args: &[&str]) -> Answer<Output> {
-        Command::new("git")
-            .arg("-C")
-            .arg(&self.path)
-            .args(args)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map_err(|e| Not::unreadable(&Source::history(at), what, Some(e.to_string())))
-    }
-
     /// The tags `remote` holds matching `pattern`, each peeled to the
     /// revision it names.
     fn remote_tags(&self, remote: &str, pattern: &str) -> Answer<Vec<(String, Oid)>> {
         let what = format!("the tags of {remote}");
-        let out = self.git(remote, &what, &["ls-remote", "--tags", remote, pattern])?;
-        if !out.status.success() {
-            return Err(Not::unreadable(&Source::history(remote), what, said(&out)));
-        }
+        let listed = self.shared.list(&self.path, remote, pattern, &what)?;
         let mut tags: Vec<(String, Oid)> = Vec::new();
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            let Some((oid, name)) = line.split_once('\t') else {
-                continue;
-            };
+        for (name, oid) in &listed {
             let Some(name) = name.strip_prefix("refs/tags/") else {
                 continue;
             };
@@ -386,28 +370,12 @@ impl History {
             .map_err(|e| Not::unreadable(&local(), format!("the tag {name}"), words(&e)))
     }
 
-    /// Pushes the local tag `name` to `remote` without force, by the git
-    /// command, so the host's own credential helper answers (rule
-    /// core.21).
-    pub(crate) fn push_tag(&self, remote: &str, name: &str) -> Answer<Pushed> {
+    /// Pushes the local tag `name` to `remote` without force, as the
+    /// shared history is reached (rule core.21).
+    pub(crate) fn push_tag(&self, remote: &str, name: &str) -> Answer<PushedRef> {
         let what = format!("{remote}, pushing {name}");
-        let refspec = format!("refs/tags/{name}:refs/tags/{name}");
-        let out = self.git(remote, &what, &["push", "--porcelain", remote, &refspec])?;
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        // Each ref's line is its flag, the refspec and git's summary.
-        let flag = stdout.lines().find_map(|line| {
-            let mut fields = line.split('\t');
-            let flag = fields.next()?;
-            (fields.next()? == refspec).then_some(flag)
-        });
-        match flag {
-            Some("*" | "=") if out.status.success() => Ok(Pushed::Held),
-            Some("!") => Ok(Pushed::Rejected(format!(
-                "{stdout}{}",
-                String::from_utf8_lossy(&out.stderr)
-            ))),
-            _ => Err(Not::unreadable(&Source::history(remote), what, said(&out))),
-        }
+        let tag = format!("refs/tags/{name}");
+        self.shared.push(&self.path, remote, &tag, &tag, &what)
     }
 
     /// The revision the tag `name` names in `remote`'s history, peeled,
@@ -435,13 +403,6 @@ const ROOT_FILE: &str = "root";
 struct RootRecord {
     tip: Option<Oid>,
     roots: Vec<RepositoryName>,
-}
-
-/// What a push of the record's next commit came to: held, or refused
-/// in git's words.
-enum PushedRoot {
-    Held,
-    Rejected(String),
 }
 
 impl History {
@@ -477,13 +438,13 @@ impl History {
             };
         };
         match self.push_root(&remote, commit)? {
-            PushedRoot::Held => {
+            PushedRef::Held => {
                 // The remote holds it; the copy follows, and a copy moved
                 // meanwhile is brought forward by the next read.
                 let _ = self.move_root(commit, read.tip);
                 Ok(())
             }
-            PushedRoot::Rejected(words) => {
+            PushedRef::Rejected(words) => {
                 self.recorded_after_all(landed, &root, Source::history(&remote), words)
             }
         }
@@ -517,15 +478,12 @@ impl History {
         };
         let at = Source::history(&remote);
         let what = format!("the record of roots on {remote}");
-        let out = self.git(&remote, &what, &["ls-remote", &remote, ROOT_REF])?;
-        if !out.status.success() {
-            return Err(Not::unreadable(&at, what, said(&out)));
-        }
-        let listed = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|line| line.split_once('\t'))
-            .find(|(_, name)| *name == ROOT_REF)
-            .map(|(oid, _)| Oid::from_str(oid))
+        let listed = self
+            .shared
+            .list(&self.path, &remote, ROOT_REF, &what)?
+            .into_iter()
+            .find(|(name, _)| name == ROOT_REF)
+            .map(|(_, oid)| Oid::from_str(&oid))
             .transpose()
             .map_err(|e| Not::unreadable(&at, what.clone(), words(&e)))?;
         let Some(theirs) = listed else {
@@ -537,21 +495,7 @@ impl History {
                 Some(copy) => Err(self.lost(&remote, copy, None)),
             };
         };
-        let out = self.git(
-            &remote,
-            &what,
-            &[
-                "fetch",
-                "--quiet",
-                "--no-tags",
-                "--no-write-fetch-head",
-                &remote,
-                ROOT_REF,
-            ],
-        )?;
-        if !out.status.success() {
-            return Err(Not::unreadable(&at, what, said(&out)));
-        }
+        self.shared.fetch(&self.path, &remote, ROOT_REF, &what)?;
         let unreadable = |e: git2::Error| Not::unreadable(&local(), ROOT_REF, words(&e));
         match copy {
             Some(copy) if copy == theirs => {}
@@ -688,30 +632,12 @@ impl History {
             .map_err(unreadable)
     }
 
-    /// The record's next commit pushed to `remote` without force, by the
-    /// git command (rule core.21).
-    fn push_root(&self, remote: &str, commit: Oid) -> Answer<PushedRoot> {
+    /// The record's next commit pushed to `remote` without force, as the
+    /// shared history is reached (rule core.21).
+    fn push_root(&self, remote: &str, commit: Oid) -> Answer<PushedRef> {
         let what = format!("{remote}, pushing {ROOT_REF}");
-        let refspec = format!("{commit}:{ROOT_REF}");
-        let out = self.git(remote, &what, &["push", "--porcelain", remote, &refspec])?;
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        // Each ref's line is its flag, the refspec and git's summary.
-        let flag = stdout.lines().find_map(|line| {
-            let mut fields = line.split('\t');
-            let flag = fields.next()?;
-            fields
-                .next()?
-                .ends_with(&format!(":{ROOT_REF}"))
-                .then_some(flag)
-        });
-        match flag {
-            Some(" " | "*" | "=") if out.status.success() => Ok(PushedRoot::Held),
-            Some("!") => Ok(PushedRoot::Rejected(format!(
-                "{stdout}{}",
-                String::from_utf8_lossy(&out.stderr)
-            ))),
-            _ => Err(Not::unreadable(&Source::history(remote), what, said(&out))),
-        }
+        self.shared
+            .push(&self.path, remote, &commit.to_string(), ROOT_REF, &what)
     }
 }
 
