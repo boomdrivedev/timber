@@ -1,0 +1,27 @@
+{
+  "schema": "sluice/submission@1",
+  "id": 5,
+  "branch": "main",
+  "head": "85616a312bb3f4c686bddd7cf37a296d1a5084f9",
+  "from": {
+    "agent": "fix/each-gate-task-builds-in-its-own-folder",
+    "worktree": "pull/62",
+    "head": "fix/each-gate-task-builds-in-its-own-folder"
+  },
+  "submitted": "2026-11-27T09:21:02Z",
+  "after": [],
+  "priority": 0,
+  "attempt": 1,
+  "state": "landed",
+  "tested": {
+    "combination": "df7f35228c3741fc7b32f101373cba2308e32af2",
+    "on": "fbc917e17eb63be3480f0f351b47cdaa56d2bb31",
+    "submissions": [
+      5
+    ]
+  },
+  "result": "passed",
+  "landed_as": "f408bbfe37922c1b7474dadc8c0ffb9ff3d75a4b",
+  "subject": "fix/each-gate-task-builds-in-its-own-folder",
+  "under_test_ms": 428000
+}

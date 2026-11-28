@@ -1,0 +1,27 @@
+{
+  "schema": "sluice/submission@1",
+  "id": 11,
+  "branch": "main",
+  "head": "db59f1bb7a06674e03ae33c7c5479d36718a99e9",
+  "from": {
+    "agent": "chore/timber-tests-its-logic-as-units",
+    "worktree": "pull/68",
+    "head": "chore/timber-tests-its-logic-as-units"
+  },
+  "submitted": "2026-11-28T09:50:54Z",
+  "after": [],
+  "priority": 0,
+  "attempt": 1,
+  "state": "landed",
+  "tested": {
+    "combination": "293e2f474006b5462caf49d2e7ee33e9c44a3e2e",
+    "on": "2e4e2d54274ec1156f7c8124e2eb0dd3364652e2",
+    "submissions": [
+      11
+    ]
+  },
+  "result": "passed",
+  "landed_as": "62f1d0b380c699503963c7a0598ad5f6ef8f2400",
+  "subject": "chore/timber-tests-its-logic-as-units",
+  "under_test_ms": 221000
+}

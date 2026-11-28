@@ -1,0 +1,26 @@
+{
+  "schema": "sluice/submission@1",
+  "id": 2,
+  "branch": "main",
+  "head": "dca2114a81210bfa0d89c8801e1df5998a3f951c",
+  "from": {
+    "agent": "bolt/timber-publishes-github-releases-and-to-cachix",
+    "worktree": "pull/59",
+    "head": "bolt/timber-publishes-github-releases-and-to-cachix"
+  },
+  "submitted": "2026-11-19T19:08:48Z",
+  "after": [],
+  "priority": 0,
+  "attempt": 2,
+  "state": "landed",
+  "tested": {
+    "combination": "688a9bcac8b9d47ae30313cf5a0d41eb7f7bbc26",
+    "on": "c02c62d97feda7738216c73ae7fd9fa661550d4e",
+    "submissions": [
+      2
+    ]
+  },
+  "result": "passed",
+  "landed_as": "f7343e17fd1b0627bd6b486891ec569d3ae4d68f",
+  "subject": "bolt/timber-publishes-github-releases-and-to-cachix"
+}
