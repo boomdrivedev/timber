@@ -261,12 +261,12 @@ fn a_checkout_ahead_of_the_branch_answers_the_revision_it_branched_from() {
     let repo = fixture.repo("repo");
     repo.commit("chore: start", &[("a", "a")]);
     let landed = repo.commit("feat: landed", &[("b", "b")]);
-    repo.git(&["checkout", "-q", "-b", "work"]);
+    repo.branch("work", None);
     repo.commit("feat: mine", &[("c", "c")]);
     repo.commit("feat: mine again", &[("d", "d")]);
-    repo.git(&["checkout", "-q", "main"]);
+    repo.checkout("main");
     let after = repo.commit("feat: landed after", &[("e", "e")]);
-    repo.git(&["checkout", "-q", "work"]);
+    repo.checkout("work");
 
     let history = repo.history();
     let main = Branch::new("main");
@@ -274,7 +274,7 @@ fn a_checkout_ahead_of_the_branch_answers_the_revision_it_branched_from() {
     assert_ne!(history.head(&main).unwrap(), landed);
     assert_eq!(history.head(&main).unwrap(), after);
 
-    repo.git(&["checkout", "-q", "main"]);
+    repo.checkout("main");
     assert_eq!(repo.history().base(&main).unwrap(), after);
 }
 
@@ -310,7 +310,7 @@ fn a_branch_that_shares_no_history_with_the_checkout_is_absent_naming_it() {
     let fixture = Fixture::new();
     let repo = fixture.repo("repo");
     repo.commit("chore: start", &[("a", "a")]);
-    repo.git(&["checkout", "-q", "--orphan", "apart"]);
+    repo.orphan("apart");
     repo.commit("chore: apart", &[("z", "z")]);
     match repo.history().base(&Branch::new("main")) {
         Err(Not::Absent(a)) => assert!(a.what.contains("branch main"), "{}", a.what),

@@ -78,7 +78,7 @@ fn a_tag_another_publisher_claimed_is_the_last_release() {
     first.push(&["refs/tags/lib-v1.2.3"]);
 
     let second = fixture.clone_of(&shared, "second");
-    second.git(&["tag", "-d", "lib-v1.2.3"]);
+    second.delete_tag("lib-v1.2.3");
     second.touch("fix: lib", &["crates/lib"]);
     let v = versioned(at_head(&second, &lib()));
     assert_eq!(v.version.as_str(), "1.2.4");

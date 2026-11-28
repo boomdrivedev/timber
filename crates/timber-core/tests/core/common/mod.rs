@@ -1,13 +1,13 @@
-//! Repositories in a temporary directory, made, committed to, tagged and
-//! pushed in the test's own process with libgit2, by a fixed author, for
-//! the core's tests over real history (design D8). [`git`] runs the git
-//! command for the few states a test makes that the fixture does not.
+//! Repositories in a temporary directory, made, committed to, tagged,
+//! branched, pushed and read in the test's own process with libgit2, by
+//! a fixed author, for the core's tests over real history (design D8).
+//! No test of the core runs the git command but the one contract test
+//! holding the fake shared history to it.
 
 #![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature};
 
@@ -56,32 +56,6 @@ commit_parsers = [
 #[derive(Clone, Debug)]
 pub struct Repo {
     pub path: PathBuf,
-}
-
-/// The git command at `dir`, by the fixed author, with no configuration
-/// of the host's, so no host's signing or hooks reach a test.
-pub fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "A. Uthor")
-        .env("GIT_AUTHOR_EMAIL", "author@example.com")
-        .env("GIT_COMMITTER_NAME", "A. Uthor")
-        .env("GIT_COMMITTER_EMAIL", "author@example.com")
-        .output()
-        .expect("git runs");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout)
-        .unwrap()
-        .trim_end()
-        .to_string()
 }
 
 impl Fixture {
@@ -144,10 +118,6 @@ fn cleaned(message: &str) -> String {
 }
 
 impl Repo {
-    pub fn git(&self, args: &[&str]) -> String {
-        git(&self.path, args)
-    }
-
     fn open(&self) -> Repository {
         Repository::open(&self.path).unwrap()
     }
@@ -245,6 +215,158 @@ impl Repo {
     /// test's own process.
     pub fn history(&self) -> History {
         History::reaching(&self.path, std::sync::Arc::new(FakeSharedHistory)).unwrap()
+    }
+
+    /// The branch `name` checked out, its tree written over the working
+    /// tree and the index, as `git checkout` does.
+    pub fn checkout(&self, name: &str) {
+        let repo = self.open();
+        let branch = format!("refs/heads/{name}");
+        let tree = repo.revparse_single(&branch).unwrap();
+        repo.checkout_tree(&tree, Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        repo.set_head(&branch).unwrap();
+    }
+
+    /// A branch `name` made at `at`, or at HEAD where none is named, and
+    /// checked out, as `git checkout -b` does.
+    pub fn branch(&self, name: &str, at: Option<&Revision>) {
+        let repo = self.open();
+        let commit = match at {
+            Some(at) => repo.find_commit(Oid::from_str(at.as_str()).unwrap()),
+            None => repo.head().unwrap().peel_to_commit(),
+        }
+        .unwrap();
+        repo.branch(name, &commit, false).unwrap();
+        self.checkout(name);
+    }
+
+    /// HEAD on `name`, a branch with no commit yet, the index and the
+    /// working tree as they stand, as `git checkout --orphan` leaves them.
+    pub fn orphan(&self, name: &str) {
+        self.open().set_head(&format!("refs/heads/{name}")).unwrap();
+    }
+
+    /// The tag `name` deleted here alone.
+    pub fn delete_tag(&self, name: &str) {
+        self.open().tag_delete(name).unwrap();
+    }
+
+    /// Every tag's name here matching `pattern`, git's glob, or every
+    /// tag's where none is given, in order.
+    pub fn tags(&self, pattern: Option<&str>) -> Vec<String> {
+        let names = self.open().tag_names(pattern).unwrap();
+        let mut names: Vec<String> = names
+            .iter()
+            .flatten()
+            .flatten()
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Every ref here with the object it names, in order of name.
+    pub fn refs(&self) -> Vec<(String, String)> {
+        let repo = self.open();
+        let mut all: Vec<(String, String)> = repo
+            .references()
+            .unwrap()
+            .map(|r| {
+                let r = r.unwrap();
+                let at = r.resolve().unwrap().target().unwrap();
+                (r.name().unwrap().to_string(), at.to_string())
+            })
+            .collect();
+        all.sort();
+        all
+    }
+
+    /// The object `spec` names, as `git rev-parse` names it.
+    pub fn rev_parse(&self, spec: &str) -> String {
+        self.open().revparse_single(spec).unwrap().id().to_string()
+    }
+
+    /// The text of the blob `spec` names, as `git cat-file blob` prints
+    /// it, its trailing whitespace trimmed.
+    pub fn blob(&self, spec: &str) -> String {
+        let repo = self.open();
+        let blob = repo.revparse_single(spec).unwrap().peel_to_blob().unwrap();
+        String::from_utf8(blob.content().to_vec())
+            .unwrap()
+            .trim_end()
+            .to_string()
+    }
+
+    /// The commit `spec` names as `git log -1
+    /// --format='%an <%ae>|%cn <%ce>|%s|%P'` prints it.
+    pub fn commit_line(&self, spec: &str) -> String {
+        let repo = self.open();
+        let commit = repo
+            .revparse_single(spec)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let (author, committer) = (commit.author(), commit.committer());
+        let parents: Vec<String> = commit.parent_ids().map(|p| p.to_string()).collect();
+        format!(
+            "{} <{}>|{} <{}>|{}|{}",
+            author.name().unwrap(),
+            author.email().unwrap(),
+            committer.name().unwrap(),
+            committer.email().unwrap(),
+            commit.summary().unwrap().unwrap(),
+            parents.join(" ")
+        )
+    }
+
+    /// The ref `name` moved to `to`, as `git update-ref` moves it.
+    pub fn update_ref(&self, name: &str, to: &str) {
+        self.open()
+            .reference(name, Oid::from_str(to).unwrap(), true, "moved")
+            .unwrap();
+    }
+
+    /// The ref `name` deleted.
+    pub fn delete_ref(&self, name: &str) {
+        self.open().find_reference(name).unwrap().delete().unwrap();
+    }
+
+    /// The name of every remote here.
+    pub fn remotes(&self) -> Vec<String> {
+        let names = self.open().remotes().unwrap();
+        names
+            .iter()
+            .flatten()
+            .flatten()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// A remote `name` at `url`.
+    pub fn remote_add(&self, name: &str, url: &str) {
+        self.open().remote(name, url).unwrap();
+    }
+
+    /// The remote `name` moved to `url`.
+    pub fn remote_set_url(&self, name: &str, url: &str) {
+        self.open().remote_set_url(name, url).unwrap();
+    }
+
+    /// `key` set to `value` in the repository's own configuration.
+    pub fn config(&self, key: &str, value: &str) {
+        self.open().config().unwrap().set_str(key, value).unwrap();
+    }
+
+    /// `key` removed from the repository's own configuration.
+    pub fn config_unset(&self, key: &str) {
+        self.open().config().unwrap().remove(key).unwrap();
+    }
+
+    /// A worktree `name` at `path`, on a new branch of its name at HEAD,
+    /// as `git worktree add -b <name>` makes it.
+    pub fn worktree(&self, name: &str, path: &Path) {
+        self.open().worktree(name, path, None).unwrap();
     }
 }
 

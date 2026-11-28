@@ -40,8 +40,8 @@ fn two_publishers(fixture: &Fixture) -> (Repo, Repo, Repo) {
     (shared, first, second)
 }
 
-fn refs(repo: &Repo) -> String {
-    repo.git(&["for-each-ref", "--format=%(refname) %(objectname)"])
+fn refs(repo: &Repo) -> Vec<(String, String)> {
+    repo.refs()
 }
 
 #[test]

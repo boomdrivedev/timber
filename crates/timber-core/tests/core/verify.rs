@@ -622,7 +622,7 @@ fn a_verify_puts_attaches_names_signs_and_records_nothing() {
             (path, bytes)
         })
         .collect();
-    let tags = world.repo.git(&["tag", "-l"]);
+    let tags = world.repo.tags(None);
 
     let verified = verified(&world, &ask("0.2.0")).unwrap();
     assert!(
@@ -652,5 +652,5 @@ fn a_verify_puts_attaches_names_signs_and_records_nothing() {
         })
         .collect();
     assert_eq!(now, record);
-    assert_eq!(world.repo.git(&["tag", "-l"]), tags);
+    assert_eq!(world.repo.tags(None), tags);
 }

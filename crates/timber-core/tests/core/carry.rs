@@ -580,8 +580,13 @@ fn no_root_bound_reads_nothing_and_writes_nothing() {
     );
     assert_eq!(roots_ops(&world), [RootsOp::Bound]);
     assert_eq!(
-        world.shared.git(&["for-each-ref", ROOT_REF]),
-        "",
+        world
+            .shared
+            .refs()
+            .iter()
+            .filter(|(name, _)| name == ROOT_REF)
+            .count(),
+        0,
         "the record was written"
     );
 }
